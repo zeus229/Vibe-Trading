@@ -4,7 +4,7 @@ import threading
 from types import SimpleNamespace
 
 from src.agent.loop import AgentLoop
-from src.agent.tool_progress import ToolProgress
+from src.agent.tool_progress import NO_PROGRESS_LIMIT, ToolProgress
 from src.tools.web_reader_tool import WebReaderTool
 
 
@@ -56,6 +56,7 @@ def _loop(registry=None):
     loop._called_identical = {}
     loop._readonly_replay_cache = {}
     loop._readonly_replay_ready = set()
+    loop._readonly_replay_protected = set()
     loop._grounding = None
     loop._cancel_event = threading.Event()
     loop._event_callback = None
@@ -73,9 +74,10 @@ def test_compaction_marks_lost_readonly_result_for_run_scoped_replay():
     assert reopened == ["read_url"]
     assert key not in loop._called_ok
     assert key in loop._readonly_replay_ready
+    assert key in loop._readonly_replay_protected
 
 
-def test_replay_restores_result_without_external_execution_or_stall_increment():
+def test_replay_restores_result_without_external_execution():
     registry = _Registry()
     loop = _loop(registry)
     args = {"url": "https://example.test/report"}
@@ -84,6 +86,7 @@ def test_replay_restores_result_without_external_execution_or_stall_increment():
     cached = '{"status":"ok","body":"report"}'
     loop._readonly_replay_cache[key] = cached
     loop._readonly_replay_ready.add(key)
+    loop._readonly_replay_protected.add(key)
     tc = SimpleNamespace(name="read_url", arguments=args, id="replay-1")
     messages = []
     trace = _Trace()
@@ -93,6 +96,7 @@ def test_replay_restores_result_without_external_execution_or_stall_increment():
     assert messages[-1]["content"] == cached
     assert key in loop._called_ok
     assert key not in loop._readonly_replay_ready
+    assert key in loop._readonly_replay_protected
     assert trace.events[-1]["type"] == "tool_result_replayed"
     assert loop._tool_progress.finish_iteration() is False
     assert loop._tool_progress.stalled_iterations == 0
@@ -125,35 +129,83 @@ def test_no_cache_bypasses_repeatable_compaction_replay():
     )
 
 
-def test_repeatable_opt_in_replays_only_after_compaction_loss():
+def test_repeatable_opt_in_runs_normally_before_compaction_then_stays_replay_protected():
     registry = _Registry(repeatable=True, replay_after_compaction=True)
     loop = _loop(registry)
     args = {"url": "https://example.test/report"}
-    tc1 = SimpleNamespace(name="read_url", arguments=args, id="call-1")
     messages = []
     trace = _Trace()
     react_trace = []
 
+    tc1 = SimpleNamespace(name="read_url", arguments=args, id="call-1")
     loop._process_tool_calls([tc1], _Context(), messages, trace, react_trace, 1)
     assert registry.execute_calls == 1
 
-    # While the original result is still visible, repeatable keeps its normal
-    # semantics and may execute again.
+    # Before compaction loss, repeatable keeps its ordinary refresh semantics.
     tc2 = SimpleNamespace(name="read_url", arguments=args, id="call-2")
     loop._process_tool_calls([tc2], _Context(), messages, trace, react_trace, 2)
     assert registry.execute_calls == 2
 
     key = loop._identical_call_key("read_url", args)
     assert key is not None
-    # Simulate compaction removing every readable successful copy.
     reopened = loop._unblock_lost_readonly_results([], {key})
     assert reopened == ["read_url"]
     assert key in loop._readonly_replay_ready
+    assert key in loop._readonly_replay_protected
 
+    # First exact call after loss is restored from the run-scoped cache.
     tc3 = SimpleNamespace(name="read_url", arguments=args, id="call-3")
     loop._process_tool_calls([tc3], _Context(), messages, trace, react_trace, 3)
     assert registry.execute_calls == 2
-    assert any(event["type"] == "tool_result_replayed" for event in trace.events)
+    assert key not in loop._readonly_replay_ready
+
+    # An immediate identical repeat must not escape to the external source just
+    # because the tool is repeatable; protection lasts for the rest of the run.
+    tc4 = SimpleNamespace(name="read_url", arguments=args, id="call-4")
+    loop._process_tool_calls([tc4], _Context(), messages, trace, react_trace, 4)
+    assert registry.execute_calls == 2
+    assert sum(e["type"] == "tool_result_replayed" for e in trace.events) == 2
+
+    # If compaction removes the replay again, the same key can be restored again
+    # without a network fetch.
+    loop._unblock_lost_readonly_results([], {key})
+    tc5 = SimpleNamespace(name="read_url", arguments=args, id="call-5")
+    loop._process_tool_calls([tc5], _Context(), messages, trace, react_trace, 5)
+    assert registry.execute_calls == 2
+    assert sum(e["type"] == "tool_result_replayed" for e in trace.events) == 3
+
+
+def test_no_cache_executes_externally_even_after_normal_read_is_protected():
+    registry = _Registry(repeatable=True, replay_after_compaction=True)
+    loop = _loop(registry)
+    normal_args = {"url": "https://example.test/report"}
+    normal_key = loop._identical_call_key("read_url", normal_args)
+    assert normal_key is not None
+    loop._readonly_replay_cache[normal_key] = '{"status":"ok","body":"cached"}'
+    loop._readonly_replay_protected.add(normal_key)
+
+    fresh_args = {"url": "https://example.test/report", "no_cache": True}
+    tc = SimpleNamespace(name="read_url", arguments=fresh_args, id="fresh-1")
+    loop._process_tool_calls([tc], _Context(), [], _Trace(), [], 6)
+    assert registry.execute_calls == 1
+
+
+def test_different_repeatable_arguments_still_execute_externally_after_protection():
+    registry = _Registry(repeatable=True, replay_after_compaction=True)
+    loop = _loop(registry)
+    protected_args = {"url": "https://example.test/a"}
+    protected_key = loop._identical_call_key("read_url", protected_args)
+    assert protected_key is not None
+    loop._readonly_replay_cache[protected_key] = '{"status":"ok","body":"a"}'
+    loop._readonly_replay_protected.add(protected_key)
+
+    tc = SimpleNamespace(
+        name="read_url",
+        arguments={"url": "https://example.test/b"},
+        id="different-1",
+    )
+    loop._process_tool_calls([tc], _Context(), [], _Trace(), [], 7)
+    assert registry.execute_calls == 1
 
 
 def test_web_reader_declares_repeatable_compaction_replay_contract():
@@ -171,12 +223,13 @@ def test_mutating_tools_and_existing_deterministic_cache_stay_separate():
     assert loop._readonly_replay_allowed(deterministic, {}) is False
 
 
-def test_context_restore_resets_only_the_current_stall_chain():
+def test_replay_only_iterations_remain_bounded_by_no_progress_limit():
     progress = ToolProgress()
-    assert progress.finish_iteration() is False
-    assert progress.stalled_iterations == 1
-    progress.mark_context_restored()
-    assert progress.finish_iteration() is False
-    assert progress.stalled_iterations == 0
-    assert progress.finish_iteration() is False
-    assert progress.stalled_iterations == 1
+    for iteration in range(NO_PROGRESS_LIMIT + 1):
+        progress.mark_context_restored()
+        stopped = progress.finish_iteration()
+        if stopped:
+            break
+    assert stopped is True
+    assert progress.stalled_iterations == NO_PROGRESS_LIMIT
+    assert iteration <= NO_PROGRESS_LIMIT
