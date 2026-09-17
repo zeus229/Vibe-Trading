@@ -39,17 +39,17 @@ def test_identical_readonly_observation_is_not_new_progress() -> None:
     assert progress.stalled_iterations == 1
 
 
-def test_context_restore_resets_only_current_stall_chain() -> None:
+def test_context_restore_grants_one_grace_without_resetting_stall_history() -> None:
     progress = ToolProgress()
     assert progress.finish_iteration() is False
     assert progress.stalled_iterations == 1
 
     progress.mark_context_restored()
     assert progress.finish_iteration() is False
-    assert progress.stalled_iterations == 0
+    assert progress.stalled_iterations == 1
 
     assert progress.finish_iteration() is False
-    assert progress.stalled_iterations == 1
+    assert progress.stalled_iterations == 2
 
 
 def test_context_restore_does_not_create_external_observation() -> None:
@@ -58,6 +58,20 @@ def test_context_restore_does_not_create_external_observation() -> None:
     assert progress._observations == set()
     assert progress.finish_iteration() is False
     assert progress.stalled_iterations == 0
+
+
+def test_repeated_context_restore_cannot_make_no_progress_unbounded() -> None:
+    progress = ToolProgress()
+    # The first restore may hold the counter for one iteration. Every later
+    # replay-only iteration must consume the ordinary no-progress budget.
+    for iteration in range(NO_PROGRESS_LIMIT + 1):
+        progress.mark_context_restored()
+        stopped = progress.finish_iteration()
+        if stopped:
+            break
+    assert stopped is True
+    assert progress.stalled_iterations == NO_PROGRESS_LIMIT
+    assert iteration <= NO_PROGRESS_LIMIT
 
 
 def test_exact_failure_is_blocked_only_after_threshold() -> None:
