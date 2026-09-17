@@ -46,11 +46,27 @@ class _Trace:
     def write(self, event):
         self.events.append(event)
 
+    def write_tool_result(self, *, call_id, result, tool_name, status, elapsed_ms, iteration):
+        self.events.append(
+            {
+                "type": "tool_result",
+                "call_id": call_id,
+                "result": result,
+                "tool": tool_name,
+                "status": status,
+                "elapsed_ms": elapsed_ms,
+                "iter": iteration,
+            }
+        )
+
 
 def _loop(registry=None):
     loop = object.__new__(AgentLoop)
     loop.registry = registry or _Registry()
-    loop.memory = SimpleNamespace(run_dir="/tmp/test-run")
+    loop.memory = SimpleNamespace(
+        run_dir="/tmp/test-run",
+        increment=lambda *_args, **_kwargs: None,
+    )
     loop._called_ok = set()
     loop._successful_call_keys = {}
     loop._called_identical = {}
@@ -74,7 +90,7 @@ def test_compaction_marks_lost_readonly_result_for_run_scoped_replay():
     assert reopened == ["read_url"]
     assert key not in loop._called_ok
     assert key in loop._readonly_replay_ready
-    assert key in loop._readonly_replay_protected
+    assert key not in loop._readonly_replay_protected
 
 
 def test_replay_restores_result_without_external_execution():

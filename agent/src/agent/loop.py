@@ -467,7 +467,8 @@ def _cleared_text(original_len: int) -> str:
         f"{_CLEARED_PREFIX} this tool call SUCCEEDED and returned "
         f"{original_len} characters, which were removed to free context "
         "space. This is NOT a tool failure and NOT an empty result. If you "
-        "need these values, call the tool again with the same arguments.]"
+        "need these values, request the same tool call again; the loop may "
+        "restore the prior successful result without refetching it.]"
     )
 
 
@@ -1111,11 +1112,13 @@ class AgentLoop:
         # 5-9x each (2026-08-20 INTC run) because it could no longer see its
         # own verification records.
         self._called_identical: dict[tuple[str, str], str] = {}
-        # Successful non-repeatable readonly results are retained only for
-        # this run. If compaction removes the visible result, an exact repeat
-        # can restore it without hitting the external source again.
+        # Successful readonly results are retained only for this run. If
+        # compaction removes the visible result, an exact repeat can restore it
+        # without hitting the external source again. Repeatable tools require an
+        # explicit replay policy for persistent post-compaction replay.
         self._readonly_replay_cache: dict[tuple[str, str], str] = {}
         self._readonly_replay_ready: set[tuple[str, str]] = set()
+        self._readonly_replay_protected: set[tuple[str, str]] = set()
         self._tool_progress = ToolProgress()
 
     def cancel(self) -> None:
@@ -1214,6 +1217,7 @@ class AgentLoop:
         self._called_identical = {}
         self._readonly_replay_cache = {}
         self._readonly_replay_ready = set()
+        self._readonly_replay_protected = set()
         self._tool_progress = ToolProgress()
         run_started_wall = _time.time()
 
@@ -2397,18 +2401,6 @@ class AgentLoop:
                     iteration,
                 )
                 continue
-            if (
-                dedup_key is not None
-                and dedup_key in self._called_ok
-                and not is_repeatable
-            ):
-                logger.warning(f"Blocked duplicate call: {tc.name} (already succeeded)")
-                skip_msg = json.dumps({"skipped": True, "reason": f"{tc.name} already completed successfully. Use the previous result."})
-                messages.append(context.format_tool_result(tc.id, tc.name, skip_msg))
-                trace.write({"type": "tool_skipped", "iter": iteration, "tool": tc.name})
-                react_trace.append({"type": "tool_skipped", "tool": tc.name})
-                continue
-
             if self._grounding is not None:
                 authorization = self._grounding.authorize_tool_call(
                     tc.name,
@@ -2432,11 +2424,14 @@ class AgentLoop:
             # A successful readonly call whose visible result was removed by
             # micro/auto-compaction can be replayed from this run's memory. This
             # extends the existing deterministic-cache pattern without declaring
-            # mutable web resources deterministic. Fresh/no-cache and repeatable
-            # calls deliberately bypass this path. Authorization stays above it.
+            # mutable web resources deterministic. Fresh/no-cache calls bypass
+            # this path, while repeatable calls must explicitly opt in.
             if (
                 dedup_key is not None
-                and dedup_key in self._readonly_replay_ready
+                and (
+                    dedup_key in self._readonly_replay_ready
+                    or dedup_key in self._readonly_replay_protected
+                )
                 and self._readonly_replay_allowed(tool_def, tc.arguments)
                 and dedup_key in self._readonly_replay_cache
             ):
@@ -2471,6 +2466,21 @@ class AgentLoop:
                         "replayed": True,
                     },
                 )
+                continue
+
+            if (
+                dedup_key is not None
+                and dedup_key in self._called_ok
+                and (
+                    not is_repeatable
+                    or dedup_key in self._readonly_replay_protected
+                )
+            ):
+                logger.warning(f"Blocked duplicate call: {tc.name} (already succeeded)")
+                skip_msg = json.dumps({"skipped": True, "reason": f"{tc.name} already completed successfully. Use the previous result."})
+                messages.append(context.format_tool_result(tc.id, tc.name, skip_msg))
+                trace.write({"type": "tool_skipped", "iter": iteration, "tool": tc.name})
+                react_trace.append({"type": "tool_skipped", "tool": tc.name})
                 continue
 
             # Deterministic tools (e.g. financial_rigor calc) return the same
@@ -2938,13 +2948,12 @@ class AgentLoop:
     def _readonly_replay_allowed(self, tool_def: Any, arguments: Mapping[str, Any]) -> bool:
         """Whether an exact readonly result may be restored after compaction.
 
-        This is intentionally narrower than ``is_readonly``: repeatable calls
-        may be intentionally refreshed, deterministic calls already use the
-        existing cache, and ``no_cache=True`` explicitly requests a fresh read.
+        This is intentionally narrower than ``is_readonly``: deterministic
+        calls already use the existing cache, and ``no_cache=True`` explicitly
+        requests a fresh read. Repeatable calls require explicit opt-in because
+        they may otherwise be intentionally refreshed.
         """
         if tool_def is None or not getattr(tool_def, "is_readonly", False):
-            return False
-        if getattr(tool_def, "repeatable", False):
             return False
         if getattr(tool_def, "deterministic", False):
             return False
@@ -2953,6 +2962,8 @@ class AgentLoop:
                 return False
         except AttributeError:
             return False
+        if getattr(tool_def, "repeatable", False):
+            return bool(getattr(tool_def, "replay_after_compaction", False))
         return True
 
     def _record_written_target(self, arguments: Mapping[str, Any]) -> None:
@@ -3075,9 +3086,17 @@ class AgentLoop:
             key for key in lost & self._called_ok if self._is_tool_readonly(key[0])
         }
         self._called_ok.difference_update(reopened)
-        self._readonly_replay_ready.update(
-            key for key in reopened if key in self._readonly_replay_cache
-        )
+        replayable = {key for key in reopened if key in self._readonly_replay_cache}
+        self._readonly_replay_ready.update(replayable)
+        for key in replayable:
+            tool_def = self.registry.get(key[0])
+            if (
+                getattr(tool_def, "is_readonly", False)
+                and getattr(tool_def, "repeatable", False)
+                and getattr(tool_def, "replay_after_compaction", False)
+                and not getattr(tool_def, "deterministic", False)
+            ):
+                self._readonly_replay_protected.add(key)
         return sorted({key[0] for key in reopened})
 
     def _identical_call_key(self, tool_name: str, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -3172,9 +3191,10 @@ class AgentLoop:
 
         # Cache successful deterministic results so an identical later call is
         # served without re-execution (regression: repeated financial_rigor
-        # calcs after compaction, 2026-08-20 INTC run). Non-repeatable readonly
-        # results use a separate run-scoped replay cache: it is only consulted
-        # after compaction has made that exact result unreadable.
+        # calcs after compaction, 2026-08-20 INTC run). Readonly results use a
+        # separate run-scoped replay cache: it is only consulted after
+        # compaction has made that exact result unreadable, and only for tools
+        # whose replay policy allows it.
         if success:
             try:
                 tool_def = self.registry.get(tc.name)
