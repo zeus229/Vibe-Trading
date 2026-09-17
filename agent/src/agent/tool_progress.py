@@ -29,6 +29,7 @@ class ToolProgress:
         self.failed: dict[tuple[str, str], int] = {}
         self._observations: set[tuple[str, str | None, str]] = set()
         self._new_observation = False
+        self._context_restored = False
         self.stalled_iterations = 0
 
     def record(
@@ -63,6 +64,16 @@ class ToolProgress:
             self._observations.add(observation)
             self._new_observation = True
 
+    def mark_context_restored(self) -> None:
+        """Mark an iteration that restored evidence removed by compaction.
+
+        A replay is not a new external observation, but it does repair the
+        model's working context. Resetting the consecutive-stall chain here
+        prevents compaction recovery itself from consuming the no-progress
+        budget.
+        """
+        self._context_restored = True
+
     def is_blocked(self, key: tuple[str, str]) -> bool:
         """Whether this exact call failed often enough to refuse a repeat.
 
@@ -77,8 +88,10 @@ class ToolProgress:
 
     def finish_iteration(self) -> bool:
         """Return whether the run exhausted its consecutive no-progress budget."""
+        made_progress = self._new_observation or self._context_restored
         self.stalled_iterations = (
-            0 if self._new_observation else self.stalled_iterations + 1
+            0 if made_progress else self.stalled_iterations + 1
         )
         self._new_observation = False
+        self._context_restored = False
         return self.stalled_iterations >= NO_PROGRESS_LIMIT

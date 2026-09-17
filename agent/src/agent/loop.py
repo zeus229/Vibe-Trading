@@ -1111,6 +1111,11 @@ class AgentLoop:
         # 5-9x each (2026-08-20 INTC run) because it could no longer see its
         # own verification records.
         self._called_identical: dict[tuple[str, str], str] = {}
+        # Successful non-repeatable readonly results are retained only for
+        # this run. If compaction removes the visible result, an exact repeat
+        # can restore it without hitting the external source again.
+        self._readonly_replay_cache: dict[tuple[str, str], str] = {}
+        self._readonly_replay_ready: set[tuple[str, str]] = set()
         self._tool_progress = ToolProgress()
 
     def cancel(self) -> None:
@@ -1207,6 +1212,8 @@ class AgentLoop:
         self._last_activity_wall = _time.time()
         self._run_done = threading.Event()
         self._called_identical = {}
+        self._readonly_replay_cache = {}
+        self._readonly_replay_ready = set()
         self._tool_progress = ToolProgress()
         run_started_wall = _time.time()
 
@@ -2422,6 +2429,46 @@ class AgentLoop:
                     )
                     continue
 
+            # A successful readonly call whose visible result was removed by
+            # micro/auto-compaction can be replayed from this run's memory. This
+            # extends the existing deterministic-cache pattern without declaring
+            # mutable web resources deterministic. Fresh/no-cache and repeatable
+            # calls deliberately bypass this path. Authorization stays above it.
+            if (
+                dedup_key is not None
+                and dedup_key in self._readonly_replay_ready
+                and self._readonly_replay_allowed(tool_def, tc.arguments)
+                and dedup_key in self._readonly_replay_cache
+            ):
+                cached = self._readonly_replay_cache[dedup_key]
+                messages.append(context.format_tool_result(tc.id, tc.name, cached))
+                self._successful_call_keys[tc.id] = dedup_key
+                self._called_ok.add(dedup_key)
+                self._readonly_replay_ready.discard(dedup_key)
+                # Restoring data that compaction removed is forward progress for
+                # the working context, but not a new external observation.
+                self._tool_progress.mark_context_restored()
+                trace.write({
+                    "type": "tool_result_replayed",
+                    "iter": iteration,
+                    "tool": tc.name,
+                    "call_id": tc.id,
+                })
+                react_trace.append({"type": "tool_result_replayed", "tool": tc.name})
+                self._emit(
+                    "tool_result",
+                    {
+                        "tool": tc.name,
+                        "status": "ok",
+                        "elapsed_ms": 0,
+                        "preview": redact_tool_result(cached)[:200],
+                        "call_id": tc.id,
+                        "cached": True,
+                        "replayed": True,
+                    },
+                )
+                continue
+
             # Deterministic tools (e.g. financial_rigor calc) return the same
             # result for the same args. Checked AFTER authorization above so a
             # cached repeat can never bypass the identity gate. After auto-compact cleared earlier
@@ -2884,6 +2931,26 @@ class AgentLoop:
             return False
         return bool(tool_def and getattr(tool_def, "is_readonly", False))
 
+    def _readonly_replay_allowed(self, tool_def: Any, arguments: Mapping[str, Any]) -> bool:
+        """Whether an exact readonly result may be restored after compaction.
+
+        This is intentionally narrower than ``is_readonly``: repeatable calls
+        may be intentionally refreshed, deterministic calls already use the
+        existing cache, and ``no_cache=True`` explicitly requests a fresh read.
+        """
+        if tool_def is None or not getattr(tool_def, "is_readonly", False):
+            return False
+        if getattr(tool_def, "repeatable", False):
+            return False
+        if getattr(tool_def, "deterministic", False):
+            return False
+        try:
+            if bool((arguments or {}).get("no_cache")):
+                return False
+        except AttributeError:
+            return False
+        return True
+
     def _record_written_target(self, arguments: Mapping[str, Any]) -> None:
         """Remember a file written by write_file/edit_file for completion checks."""
         raw = arguments.get("path") or arguments.get("file_path")
@@ -3004,6 +3071,9 @@ class AgentLoop:
             key for key in lost & self._called_ok if self._is_tool_readonly(key[0])
         }
         self._called_ok.difference_update(reopened)
+        self._readonly_replay_ready.update(
+            key for key in reopened if key in self._readonly_replay_cache
+        )
         return sorted({key[0] for key in reopened})
 
     def _identical_call_key(self, tool_name: str, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
@@ -3098,16 +3168,23 @@ class AgentLoop:
 
         # Cache successful deterministic results so an identical later call is
         # served without re-execution (regression: repeated financial_rigor
-        # calcs after compaction, 2026-08-20 INTC run).
+        # calcs after compaction, 2026-08-20 INTC run). Non-repeatable readonly
+        # results use a separate run-scoped replay cache: it is only consulted
+        # after compaction has made that exact result unreadable.
         if success:
             try:
                 tool_def = self.registry.get(tc.name)
             except Exception:  # noqa: BLE001
                 tool_def = None
+            cache_key = self._identical_call_key(tc.name, tc.arguments)
             if tool_def is not None and getattr(tool_def, "deterministic", False):
-                cache_key = self._identical_call_key(tc.name, tc.arguments)
                 if cache_key is not None:
                     self._called_identical[cache_key] = result
+            elif (
+                cache_key is not None
+                and self._readonly_replay_allowed(tool_def, tc.arguments)
+            ):
+                self._readonly_replay_cache[cache_key] = result
 
         status = "ok" if success else "error"
         truncated = truncate_tool_result(result)
