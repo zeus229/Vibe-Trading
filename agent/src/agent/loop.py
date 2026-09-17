@@ -2441,7 +2441,11 @@ class AgentLoop:
                 and dedup_key in self._readonly_replay_cache
             ):
                 cached = self._readonly_replay_cache[dedup_key]
-                messages.append(context.format_tool_result(tc.id, tc.name, cached))
+                messages.append(
+                    context.format_tool_result(
+                        tc.id, tc.name, truncate_tool_result(cached)
+                    )
+                )
                 self._successful_call_keys[tc.id] = dedup_key
                 self._called_ok.add(dedup_key)
                 self._readonly_replay_ready.discard(dedup_key)
