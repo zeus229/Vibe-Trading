@@ -200,6 +200,15 @@ class _ReleaseMixin:
                 "the arithmetic itself, with one operand this session observed; "
                 "proposed must be derived or lie inside the observed price range; "
                 "cited needs a source in its note; count is not checked.",
+                "For observed/derived refs, use ONLY exact literal tool names or exact "
+                "call ids from this session. Do not append labels, scopes, parentheses "
+                "or prose to a ref. If a formula uses operands from multiple calls, its "
+                "ref must include every operand source separated by `; `; when one tool "
+                "was called multiple times for different scopes, prefer exact call ids.",
+                "Return the FULL revised answer, not just corrected prose. Preserve or "
+                "rebuild the final figures block on every revision; do not drop it after "
+                "fixing precision, wording, or refs. Every measured figure that remains "
+                "in the prose must still have a valid declaration in that block.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
