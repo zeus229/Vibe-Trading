@@ -157,3 +157,96 @@ def test_nav_path_does_not_infer_nav_as_a_currency(tmp_path: Path) -> None:
     )
 
     assert result.valid is True, result.issues
+
+@pytest.mark.parametrize(
+    ("claim", "formula", "scope_payload", "calc_value"),
+    [
+        (
+            "37.44560101737263%",
+            "78767665 / 210352251.96 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 78_767_665.0,
+                    "total_value_ars": 210_352_251.95999998,
+                }
+            },
+            37.44560101737263,
+        ),
+        (
+            "13.766674580458817%",
+            "124735167 × 0.23215994892603142 / 210352251.95999998 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 124_735_167.0,
+                    "total_value_ars": 210_352_251.95999998,
+                },
+                "portfolio_positions": [
+                    {"ticker": "YPFD", "weight_scope": 0.30},
+                    {"ticker": "PAMP", "weight_scope": 0.23215994892603142},
+                ],
+            },
+            13.766674580458817,
+        ),
+        (
+            "6.827012720895808%",
+            "124735167 × 0.11513012204489212 / 210352251.95999998 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 124_735_167.0,
+                    "total_value_ars": 210_352_251.95999998,
+                },
+                "portfolio_positions": [
+                    {"ticker": "GGAL", "weight_scope": 0.11513012204489212},
+                ],
+            },
+            6.827012720895808,
+        ),
+        (
+            "6.548216085948672%",
+            "124735167 × 0.1104285209318716 / 210352251.95999998 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 124_735_167.0,
+                    "total_value_ars": 210_352_251.95999998,
+                },
+                "portfolio_positions": [
+                    {"ticker": "TGSU2", "weight_scope": 0.1104285209318716},
+                ],
+            },
+            6.548216085948672,
+        ),
+    ],
+)
+def test_real_xray_derivations_require_refs_for_all_operand_sources(
+    tmp_path: Path,
+    claim: str,
+    formula: str,
+    scope_payload: dict[str, Any],
+    calc_value: float,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        ("asistente_casa_portfolio_risk_xray", scope_payload, "xray-call"),
+        ("financial_rigor", {"result": calc_value}, "calc-call"),
+    )
+
+    incomplete = ledger.validate_final_answer(
+        f"Derived figure: {claim}."
+        + _figures(f"{claim} | derived | {formula} | financial_rigor")
+    )
+    assert incomplete.valid is False
+    assert any(
+        issue.get("reason") == "formula_not_anchored"
+        or issue.get("code") == "formula_not_anchored"
+        for issue in incomplete.issues
+    ), incomplete.issues
+
+    complete = ledger.validate_final_answer(
+        f"Derived figure: {claim}."
+        + _figures(
+            f"{claim} | derived | {formula} | "
+            "financial_rigor; asistente_casa_portfolio_risk_xray"
+        )
+    )
+    assert complete.valid is True, complete.issues
+
