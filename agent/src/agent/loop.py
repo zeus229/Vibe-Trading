@@ -2428,10 +2428,7 @@ class AgentLoop:
             # this path, while repeatable calls must explicitly opt in.
             if (
                 dedup_key is not None
-                and (
-                    dedup_key in self._readonly_replay_ready
-                    or dedup_key in self._readonly_replay_protected
-                )
+                and dedup_key in self._readonly_replay_ready
                 and self._readonly_replay_allowed(tool_def, tc.arguments)
                 and dedup_key in self._readonly_replay_cache
             ):
@@ -2477,7 +2474,16 @@ class AgentLoop:
                 )
             ):
                 logger.warning(f"Blocked duplicate call: {tc.name} (already succeeded)")
-                skip_msg = json.dumps({"skipped": True, "reason": f"{tc.name} already completed successfully. Use the previous result."})
+                replay_restored = dedup_key in self._readonly_replay_protected
+                reason = (
+                    f"{tc.name} was just restored from the run-scoped replay cache after "
+                    "compaction. The payload is already visible in context; use that "
+                    "result and continue the analysis instead of requesting the same "
+                    "call again."
+                    if replay_restored
+                    else f"{tc.name} already completed successfully. Use the previous result."
+                )
+                skip_msg = json.dumps({"skipped": True, "reason": reason})
                 messages.append(context.format_tool_result(tc.id, tc.name, skip_msg))
                 trace.write({"type": "tool_skipped", "iter": iteration, "tool": tc.name})
                 react_trace.append({"type": "tool_skipped", "tool": tc.name})
