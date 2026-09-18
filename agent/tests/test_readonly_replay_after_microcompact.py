@@ -3,7 +3,7 @@ from __future__ import annotations
 import threading
 from types import SimpleNamespace
 
-from src.agent.loop import AgentLoop
+from src.agent.loop import AgentLoop, MAX_READONLY_REPLAY_RECOVERIES
 from src.agent.tool_progress import NO_PROGRESS_LIMIT, ToolProgress
 from src.tools.web_reader_tool import WebReaderTool
 
@@ -73,6 +73,7 @@ def _loop(registry=None):
     loop._readonly_replay_cache = {}
     loop._readonly_replay_ready = set()
     loop._readonly_replay_protected = set()
+    loop._readonly_replay_recoveries = 0
     loop._grounding = None
     loop._cancel_event = threading.Event()
     loop._event_callback = None
@@ -259,3 +260,32 @@ def test_replay_only_iterations_remain_bounded_by_no_progress_limit():
     assert stopped is True
     assert progress.stalled_iterations == NO_PROGRESS_LIMIT
     assert iteration <= NO_PROGRESS_LIMIT
+
+
+def test_run_scoped_replay_recovery_budget_keeps_lost_calls_locked() -> None:
+    registry = _Registry(repeatable=True, replay_after_compaction=True)
+    loop = _loop(registry)
+    args = {"url": "https://example.test/report"}
+    key = loop._identical_call_key("read_url", args)
+    assert key is not None
+    loop._called_ok.add(key)
+    loop._readonly_replay_cache[key] = '{"status":"ok","body":"report"}'
+    loop._readonly_replay_protected.add(key)
+    loop._readonly_replay_recoveries = MAX_READONLY_REPLAY_RECOVERIES
+
+    reopened = loop._unblock_lost_readonly_results([], {key})
+
+    assert reopened == []
+    assert key in loop._called_ok
+    assert key not in loop._readonly_replay_ready
+
+    messages = []
+    trace = _Trace()
+    tc = SimpleNamespace(name="read_url", arguments=args, id="budget-exhausted")
+    loop._process_tool_calls([tc], _Context(), messages, trace, [], 9)
+
+    assert registry.execute_calls == 0
+    payload = __import__("json").loads(messages[-1]["content"])
+    assert payload["skipped"] is True
+    assert "restored from the run-scoped replay cache" in payload["reason"]
+    assert not any(e["type"] == "tool_result_replayed" for e in trace.events)
