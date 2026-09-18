@@ -175,20 +175,25 @@ def test_repeatable_opt_in_runs_normally_before_compaction_then_stays_replay_pro
     assert registry.execute_calls == 2
     assert key not in loop._readonly_replay_ready
 
-    # An immediate identical repeat must not escape to the external source just
-    # because the tool is repeatable; protection lasts for the rest of the run.
+    # An immediate identical repeat must not escape to the external source or
+    # replay the same payload again just because the tool is repeatable. The
+    # restored result is already visible, so the exact-call protection gate
+    # returns a synthetic skip and tells the planner to continue with it.
     tc4 = SimpleNamespace(name="read_url", arguments=args, id="call-4")
     loop._process_tool_calls([tc4], _Context(), messages, trace, react_trace, 4)
     assert registry.execute_calls == 2
-    assert sum(e["type"] == "tool_result_replayed" for e in trace.events) == 2
+    assert sum(e["type"] == "tool_result_replayed" for e in trace.events) == 1
+    assert messages[-1]["content"]
+    assert '"skipped": true' in messages[-1]["content"]
+    assert "restored from the run-scoped replay cache" in messages[-1]["content"]
 
-    # If compaction removes the replay again, the same key can be restored again
-    # without a network fetch.
+    # If compaction removes the replay again, the same key can be restored once
+    # more without a network fetch.
     loop._unblock_lost_readonly_results([], {key})
     tc5 = SimpleNamespace(name="read_url", arguments=args, id="call-5")
     loop._process_tool_calls([tc5], _Context(), messages, trace, react_trace, 5)
     assert registry.execute_calls == 2
-    assert sum(e["type"] == "tool_result_replayed" for e in trace.events) == 3
+    assert sum(e["type"] == "tool_result_replayed" for e in trace.events) == 2
 
 
 def test_no_cache_executes_externally_even_after_normal_read_is_protected():
