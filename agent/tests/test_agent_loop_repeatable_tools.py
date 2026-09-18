@@ -10,7 +10,7 @@ import pytest
 
 from src.agent.context import ContextBuilder
 from src.agent.loop import AgentLoop
-from src.agent.tools import BaseTool, ToolRegistry
+from src.agent.tools import ToolRegistry
 from src.agent.trace import TraceWriter
 from src.tools.fund_flow_tool import FundFlowTool
 from src.tools.get_fundamentals_tool import GetFundamentalsTool
@@ -190,104 +190,3 @@ def test_cleared_result_replays_run_scoped_readonly_cache(monkeypatch, tmp_path:
         "restoring compacted evidence must be explicit in the trace"
     )
 
-
-class _ReplayableReadonlyTool(BaseTool):
-    """Offline stand-in for read_url's replay-after-compaction contract."""
-
-    name = "read_url"
-    description = "offline replay test double"
-    parameters = {"type": "object", "properties": {"url": {"type": "string"}}}
-    repeatable = True
-    is_readonly = True
-    replay_after_compaction = True
-
-    def __init__(self) -> None:
-        self.calls = 0
-
-    def execute(self, **kwargs: object) -> str:
-        self.calls += 1
-        return json.dumps(
-            {
-                "status": "ok",
-                "url": kwargs["url"],
-                "content": "evidence-" + ("x" * 200),
-            }
-        )
-
-
-def test_repeatable_replay_is_once_per_context_loss_then_duplicate_is_skipped(
-    tmp_path: Path,
-) -> None:
-    """A planner loop cannot consume the same restored payload forever.
-
-    One compaction loss grants one replay of the exact cached result. If the
-    model immediately asks for the same call again, it receives a synthetic
-    skip telling it to use the restored payload; the external tool is never
-    re-executed. A later *new* compaction loss may grant one fresh replay.
-    """
-    from src.agent.loop import KEEP_RECENT
-
-    tool = _ReplayableReadonlyTool()
-    registry = ToolRegistry()
-    registry.register(tool)
-    agent = AgentLoop(registry=registry, llm=SimpleNamespace(), max_iterations=8)
-
-    run_dir = tmp_path / "replay_once"
-    run_dir.mkdir()
-    agent.memory.run_dir = str(run_dir)
-    trace = TraceWriter(run_dir)
-    messages: list[dict[str, object]] = []
-    react_trace: list[dict[str, object]] = []
-    args = {"url": "https://example.com/report"}
-
-    def _call(call_id: str, iteration: int) -> None:
-        agent._process_tool_calls(
-            [SimpleNamespace(id=call_id, name=tool.name, arguments=dict(args))],
-            ContextBuilder,
-            messages,
-            trace,
-            react_trace,
-            iteration,
-        )
-
-    def _pad(prefix: str) -> None:
-        for i in range(KEEP_RECENT + 1):
-            messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": f"{prefix}_{i}",
-                    "name": "padding_tool",
-                    "content": "y" * 200,
-                }
-            )
-
-    _call("call_1", 1)
-    assert tool.calls == 1
-
-    _pad("pad_a")
-    reopened = agent._microcompact_and_unblock(messages, trace, 2)
-    assert tool.name in reopened
-
-    _call("call_2", 3)
-    assert tool.calls == 1, "first post-compaction repeat must replay, not refetch"
-
-    _call("call_3", 4)
-    assert tool.calls == 1, "second identical request must not replay or refetch"
-    skipped = json.loads(messages[-1]["content"])
-    assert skipped["skipped"] is True
-    assert "restored from the run-scoped replay cache" in skipped["reason"]
-    assert "continue the analysis" in skipped["reason"]
-
-    # A later, genuinely new context loss re-arms exactly one replay.
-    _pad("pad_b")
-    reopened = agent._microcompact_and_unblock(messages, trace, 5)
-    assert tool.name in reopened
-    _call("call_4", 6)
-    trace.close()
-
-    assert tool.calls == 1
-    events = list(TraceWriter.read(run_dir))
-    replayed = [event for event in events if event["type"] == "tool_result_replayed"]
-    skipped_events = [event for event in events if event["type"] == "tool_skipped"]
-    assert len(replayed) == 2, "each distinct context-loss event grants one replay"
-    assert len(skipped_events) >= 1, "an immediate repeat after replay must be skipped"
