@@ -78,6 +78,13 @@ SUMMARY_CHUNK_CHARS = 80_000
 # retry once with a nudge before failing the run on a second consecutive one.
 MAX_CONSECUTIVE_EMPTY_RESPONSE_SKIPS = 1
 
+# Compaction recovery is a bounded reliability aid, not an alternate research
+# loop. This mirrors the grounding recovery design: once the run has restored
+# enough lost readonly payloads, later context loss keeps those exact calls
+# locked so the planner must continue from summaries/other evidence instead of
+# churning through replay forever.
+MAX_READONLY_REPLAY_RECOVERIES = 6
+
 
 def _override(name: str):
     """Return a monkeypatched module-level override if present."""
@@ -1148,6 +1155,7 @@ class AgentLoop:
         self._readonly_replay_cache: dict[tuple[str, str], str] = {}
         self._readonly_replay_ready: set[tuple[str, str]] = set()
         self._readonly_replay_protected: set[tuple[str, str]] = set()
+        self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
 
     def cancel(self) -> None:
@@ -1247,6 +1255,7 @@ class AgentLoop:
         self._readonly_replay_cache = {}
         self._readonly_replay_ready = set()
         self._readonly_replay_protected = set()
+        self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
         run_started_wall = _time.time()
 
@@ -2471,6 +2480,7 @@ class AgentLoop:
                 self._successful_call_keys[tc.id] = dedup_key
                 self._called_ok.add(dedup_key)
                 self._readonly_replay_ready.discard(dedup_key)
+                self._readonly_replay_recoveries += 1
                 # Restoring data that compaction removed is forward progress for
                 # the working context, but not a new external observation.
                 self._tool_progress.mark_context_restored()
@@ -2479,6 +2489,8 @@ class AgentLoop:
                     "iter": iteration,
                     "tool": tc.name,
                     "call_id": tc.id,
+                    "recovery_count": self._readonly_replay_recoveries,
+                    "recovery_limit": MAX_READONLY_REPLAY_RECOVERIES,
                 })
                 react_trace.append({"type": "tool_result_replayed", "tool": tc.name})
                 self._emit(
@@ -3118,9 +3130,13 @@ class AgentLoop:
     ) -> list[str]:
         """Recover only lost exact queries; context loss cannot replay writes."""
         lost = readable_before - self._readable_success_keys(messages)
-        reopened = {
+        candidates = {
             key for key in lost & self._called_ok if self._is_tool_readonly(key[0])
         }
+        replay_budget_available = (
+            self._readonly_replay_recoveries < MAX_READONLY_REPLAY_RECOVERIES
+        )
+        reopened = candidates if replay_budget_available else set()
         self._called_ok.difference_update(reopened)
         replayable = {key for key in reopened if key in self._readonly_replay_cache}
         self._readonly_replay_ready.update(replayable)
