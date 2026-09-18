@@ -189,4 +189,3 @@ def test_cleared_result_replays_run_scoped_readonly_cache(monkeypatch, tmp_path:
     assert any(e["type"] == "tool_result_replayed" for e in events), (
         "restoring compacted evidence must be explicit in the trace"
     )
-
