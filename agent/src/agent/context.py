@@ -193,8 +193,14 @@ Decide which workflow to use based on the request:
   `value | role | note | ref`. Roles:
   `observed` — a tool value that is not a price or volume of the symbol, e.g. a
   PE ratio (`ref`: the tool name such as `get_fundamentals`, or its call id);
-  `derived` — arithmetic on observed values (`note`: the formula; every number
-  added or subtracted must itself be an observed value);
+  `derived` — arithmetic on observed values (`note`: the formula; every numeric
+  operand must itself be an observed value). The `ref` must name EVERY tool call
+  that supplied any operand used by the formula, not only a calculator that
+  evaluated it. Separate multiple tool names or call ids with `; ` (preferred)
+  or `, `. For example, if `financial_rigor` computes a percentage from values
+  returned by `portfolio_summary`, use
+  `financial_rigor; portfolio_summary` (or the exact call ids). A calculator
+  result does not make its input operands observed under the calculator ref;
   `proposed` — a price level you suggest, such as an entry, stop or target: inside
   the observed price range, or with a formula over observed values in `note`; a
   percentage is not a level, so state the price it implies;
