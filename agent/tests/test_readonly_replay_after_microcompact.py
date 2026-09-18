@@ -109,7 +109,12 @@ def test_replay_restores_result_without_external_execution():
     react_trace = []
     loop._process_tool_calls([tc], _Context(), messages, trace, react_trace, 22)
     assert registry.execute_calls == 0
-    assert messages[-1]["content"] == cached
+    replayed_payload = __import__("json").loads(messages[-1]["content"])
+    assert replayed_payload["status"] == "ok"
+    assert replayed_payload["body"] == "report"
+    assert replayed_payload["_vibe_replay"]["restored"] is True
+    assert "continue the analysis" in replayed_payload["_vibe_replay"]["notice"]
+    assert "freshness arguments" in replayed_payload["_vibe_replay"]["notice"]
     assert key in loop._called_ok
     assert key not in loop._readonly_replay_ready
     assert key in loop._readonly_replay_protected
