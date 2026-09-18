@@ -477,6 +477,35 @@ def _is_cleared(content: Any) -> bool:
     return isinstance(content, str) and content.startswith(_CLEARED_PREFIX)
 
 
+def _replay_context_result(result: str) -> str:
+    """Annotate a restored readonly result with planner guidance.
+
+    Replay exists to recover evidence that context compaction removed, not to
+    trigger another fetch under slightly different freshness arguments. Keep
+    the original payload intact and add a reserved metadata field when the
+    result is a JSON object; non-JSON results get a short textual suffix.
+    """
+    notice = (
+        "Exact prior successful result restored after context compaction. "
+        "Treat this payload as available evidence and continue the analysis. "
+        "Do not change cache/freshness arguments merely to bypass replay; "
+        "request a fresh fetch only when the evidence itself is stale/cached "
+        "or the task genuinely requires newer data."
+    )
+    try:
+        payload = json.loads(result)
+    except (TypeError, ValueError):
+        return f"{result}\n\n[Replay notice: {notice}]"
+    if not isinstance(payload, dict):
+        return f"{result}\n\n[Replay notice: {notice}]"
+    replay_payload = dict(payload)
+    replay_payload["_vibe_replay"] = {
+        "restored": True,
+        "notice": notice,
+    }
+    return json.dumps(replay_payload, ensure_ascii=False)
+
+
 def _microcompact(messages: list) -> list:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
 
@@ -2433,9 +2462,10 @@ class AgentLoop:
                 and dedup_key in self._readonly_replay_cache
             ):
                 cached = self._readonly_replay_cache[dedup_key]
+                restored = _replay_context_result(cached)
                 messages.append(
                     context.format_tool_result(
-                        tc.id, tc.name, truncate_tool_result(cached)
+                        tc.id, tc.name, truncate_tool_result(restored)
                     )
                 )
                 self._successful_call_keys[tc.id] = dedup_key
