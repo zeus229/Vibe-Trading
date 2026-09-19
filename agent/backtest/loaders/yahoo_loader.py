@@ -64,7 +64,7 @@ def _is_supported(code: str) -> bool:
         return True
     return upper.endswith(
         (
-            ".US", ".HK", ".NS", ".BO", ".KS", ".KQ", ".TO", ".V", ".VN",
+            ".US", ".HK", ".NS", ".BO", ".KS", ".KQ", ".BA", ".TO", ".V", ".VN",
             ".L", "=F", "=X",
         )
     )
