@@ -437,7 +437,7 @@ def _numbers(text: str) -> list[_Token]:
                 body, end = f"{body}.{fraction}", stop
         # An unambiguous period-grouped thousands figure ("1.618.596")
         # is ``_NUMBER_RE``'s own second alternative. es-AR/es-ES may append
-        # a decimal comma ("210.065.669,185"); consume that fraction before
+        # a decimal comma ("123.456.789,125"); consume that fraction before
         # stripping grouping dots so the whole rendered amount stays one token.
         # The two-or-more grouping requirement keeps genuine one-decimal values
         # such as "45.850" out of this path.
