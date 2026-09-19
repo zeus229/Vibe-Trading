@@ -650,9 +650,10 @@ class _PolicyMixin:
         symbol: str | None,
         figure: Figure | None,
     ) -> tuple[list[EvidenceRecord], list[float]] | None:
-        """The evidence one call, or every call of one tool, produced.
+        """The evidence named by an exact field, one call, or one tool.
 
-        A ``ref`` naming a call id or a tool name is the tightest scoping, and the
+        An exact evidence-field ref is the tightest scope. Otherwise a ``ref``
+        naming a call id or a tool name keeps the existing call/tool scope, and the
         only one that can ground a non-price figure (revenue, IC, volume). Records
         of another symbol are dropped when the figure's symbol is known; a
         currency-marked figure keeps only money-denominated records, a percent
@@ -665,24 +666,41 @@ class _PolicyMixin:
                 operands of a derivation.
 
         Returns:
-            ``(records, metric values)``, or None when ``ref`` names no call or tool.
+            ``(records, metric values)``, or None when ``ref`` names no field, call, or tool.
         """
         key = (ref or "").strip()
         if not key:
             return None
-        records = [
+        field_records = [
             record
             for record in self._evidence
-            if key in (record.call_id, record.tool)
+            if record.field == key
             and record.status == "observed"
             and record.value is not None
         ]
-        metrics = [
+        field_metrics = [
             float(entry["value"])
             for entry in self._analysis_metrics
-            if key in (entry.get("call_id"), entry.get("tool"))
-            and entry.get("value") is not None
+            if entry.get("field") == key and entry.get("value") is not None
         ]
+        field_scoped = bool(field_records or field_metrics)
+        if field_scoped:
+            records = field_records
+            metrics = field_metrics
+        else:
+            records = [
+                record
+                for record in self._evidence
+                if key in (record.call_id, record.tool)
+                and record.status == "observed"
+                and record.value is not None
+            ]
+            metrics = [
+                float(entry["value"])
+                for entry in self._analysis_metrics
+                if key in (entry.get("call_id"), entry.get("tool"))
+                and entry.get("value") is not None
+            ]
         if not records and not metrics:
             return None
         if symbol:
