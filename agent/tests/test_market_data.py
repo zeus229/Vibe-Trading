@@ -71,6 +71,17 @@ def test_detect_source(code: str, expected: str) -> None:
     assert detect_source(code) == expected
 
 
+def test_argentina_ba_source_and_market_detection() -> None:
+    """BYMA .BA symbols must route to Yahoo and never fall to China defaults."""
+    from backtest.engines._market_hooks import _detect_market, code_currency
+
+    for symbol in ("GGAL.BA", "PAMP.BA", "TGSU2.BA"):
+        assert detect_source(symbol) == "yahoo"
+        assert _detect_market(symbol) == "arg_equity"
+        assert code_currency(symbol) == "ARS"
+
+
+
 def test_yahoo_loader_accepts_futures_and_forex_suffixes() -> None:
     """The yahoo direct loader must accept =F/=X, not just equity suffixes (#718)."""
     from backtest.loaders.yahoo_loader import _is_supported
