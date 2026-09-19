@@ -128,7 +128,11 @@ _ANALYSIS_KIND_ALIASES = {
     "historical_var": "tail_risk",
     "parametric_var": "tail_risk",
     "cvar": "tail_risk",
+    "cvar_95": "tail_risk",
+    "cvar_99": "tail_risk",
     "es": "tail_risk",
+    "es_95": "tail_risk",
+    "es_99": "tail_risk",
     "expected_shortfall": "tail_risk",
     # Chinese TOOL FIELD NAMES from A-share tools, not answer prose.
     "最大回撤": "drawdown",
@@ -362,36 +366,70 @@ _QUALIFIER_SUFFIXES = frozenset(
 )
 
 
-def _metric_kind_for_path(path: str) -> str | None:
-    """Map an evidence JSON path to an analysis metric kind.
-
-    A metadata count leaf (:func:`_is_metadata_count_leaf`) has no kind.
-    """
+def _metric_alias_key_for_path(path: str) -> str | None:
+    """Return the alias-table key an evidence path resolves to, or None."""
     if _is_metadata_count_leaf(path):
         return None
     leaf = _leaf_name(path)
-    kind = _ANALYSIS_KIND_ALIASES.get(leaf)
-    if kind is not None:
-        return kind
-    # Compound leaves ("strategy_max_drawdown"): scan tokens from the right,
-    # where English puts the head noun, so "return_vol" is vol, not return.
-    # Only the head of a compound leaf says what it measures (#1426):
-    # "strategy_max_drawdown" is a drawdown, while "sharpe_sample_size" and
-    # "drawdown_threshold" are a size and a threshold. A trailing numeric
-    # parameter or period qualifies the head ("cvar_95", "hit_rate_daily").
+    if leaf in _ANALYSIS_KIND_ALIASES:
+        return leaf
     tokens = [token for token in re.split(r"[_.]", leaf) if token]
     stripped = list(tokens)
-    while stripped and (stripped[-1].isdigit() or stripped[-1] in _QUALIFIER_SUFFIXES):
+    while stripped and (
+        stripped[-1].isdigit() or stripped[-1] in _QUALIFIER_SUFFIXES
+    ):
         stripped.pop()
     for candidate in (tokens, stripped):
         for size in (2, 1):
             if len(candidate) < size:
                 continue
             key = "_".join(candidate[-size:])
-            kind = None if key in _EXACT_ONLY_ALIASES else _ANALYSIS_KIND_ALIASES.get(key)
-            if kind is not None:
-                return kind
+            if key in _EXACT_ONLY_ALIASES:
+                continue
+            if key in _ANALYSIS_KIND_ALIASES:
+                return key
     return None
+
+
+def _metric_kind_for_path(path: str) -> str | None:
+    """Map an evidence JSON path to an analysis metric kind."""
+    key = _metric_alias_key_for_path(path)
+    return _ANALYSIS_KIND_ALIASES.get(key) if key is not None else None
+
+
+_TAIL_RISK_MEASURES = {
+    "var": "var",
+    "historical_var": "var",
+    "parametric_var": "var",
+    "cvar": "es",
+    "es": "es",
+    "expected_shortfall": "es",
+}
+
+
+def _tail_risk_identity_for_path(path: str) -> tuple[str, int | None] | None:
+    """Return structured measure/confidence identity for tail-risk evidence."""
+    key = _metric_alias_key_for_path(path)
+    if key is None or _ANALYSIS_KIND_ALIASES.get(key) != "tail_risk":
+        return None
+
+    direct = _TAIL_RISK_MEASURES.get(key)
+    if direct is not None:
+        tokens = [token for token in re.split(r"[_.]", _leaf_name(path)) if token]
+        key_tokens = key.split("_")
+        for index in range(len(tokens) - len(key_tokens), -1, -1):
+            if tokens[index : index + len(key_tokens)] != key_tokens:
+                continue
+            following_index = index + len(key_tokens)
+            following = tokens[following_index] if following_index < len(tokens) else ""
+            return direct, int(following) if following.isdigit() else None
+        return direct, None
+
+    head, _, confidence = key.rpartition("_")
+    measure = _TAIL_RISK_MEASURES.get(head)
+    if measure is None or not confidence.isdigit():
+        return None
+    return measure, int(confidence)
 
 
 @dataclass(frozen=True)
