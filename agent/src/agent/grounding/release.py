@@ -209,6 +209,12 @@ class _ReleaseMixin:
                 "rebuild the final figures block on every revision; do not drop it after "
                 "fixing precision, wording, or refs. Every measured figure that remains "
                 "in the prose must still have a valid declaration in that block.",
+                "In each figures declaration, write the value as a normalized raw number "
+                "without a currency prefix or thousands separators and with a dot decimal "
+                "(for example 210065669.185, not ARS 210.065.669,185). Derived notes must "
+                "use raw tool-result operands and plain arithmetic only. If a derived "
+                "figure previously needed multiple refs, preserve ALL of those refs in "
+                "the corrected declaration; never collapse it back to the calculator alone.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
