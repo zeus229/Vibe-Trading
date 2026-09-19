@@ -37,15 +37,15 @@ def test_derived_percent_already_scaled_by_100_is_not_scaled_twice(tmp_path: Pat
         tmp_path,
         (
             "portfolio_risk",
-            {"data": {"volatility": {"annualized_vol": 0.240791109055723}}},
+            {"data": {"volatility": {"annualized_vol": 0.24}}},
             "risk-call",
         ),
     )
 
     result = ledger.validate_final_answer(
-        "Annualized volatility is 24.079111%."
+        "Annualized volatility is 24%."
         + _figures(
-            "24.079111% | derived | 0.240791109055723 × 100 | portfolio_risk"
+            "24% | derived | 0.24 × 100 | portfolio_risk"
         )
     )
 
@@ -57,15 +57,15 @@ def test_negative_derived_operand_keeps_its_sign_for_grounding(tmp_path: Path) -
         tmp_path,
         (
             "portfolio_risk",
-            {"data": {"drawdown": {"max_drawdown": -0.09310091567275514}}},
+            {"data": {"drawdown": {"max_drawdown": -0.093}}},
             "risk-call",
         ),
     )
 
     result = ledger.validate_final_answer(
-        "Maximum drawdown is -9.310092%."
+        "Maximum drawdown is -9.3%."
         + _figures(
-            "-9.310092% | derived | -0.09310091567275514 × 100 | portfolio_risk"
+            "-9.3% | derived | -0.093 × 100 | portfolio_risk"
         )
     )
 
@@ -75,14 +75,14 @@ def test_negative_derived_operand_keeps_its_sign_for_grounding(tmp_path: Path) -
 def test_derived_formula_can_scope_operands_to_multiple_refs(tmp_path: Path) -> None:
     ledger = _ledger(
         tmp_path,
-        ("portfolio_scope", {"totals": {"value": 78_894_720.0}}, "scope-call"),
-        ("portfolio_summary", {"totals": {"value": 224_780_341.158}}, "summary-call"),
+        ("portfolio_scope", {"totals": {"value": 350.0}}, "scope-call"),
+        ("portfolio_summary", {"totals": {"value": 1000.0}}, "summary-call"),
     )
 
     result = ledger.validate_final_answer(
-        "The scoped portfolio is 35.098576%."
+        "The scoped portfolio is 35%."
         + _figures(
-            "35.098576% | derived | 78894720.0 / 224780341.158 × 100 | "
+            "35% | derived | 350.0 / 1000.0 × 100 | "
             "portfolio_scope; portfolio_summary"
         )
     )
@@ -127,15 +127,15 @@ def test_currency_keyed_totals_ground_an_ars_amount(tmp_path: Path) -> None:
         tmp_path,
         (
             "portfolio_summary",
-            {"totals": {"native_by_currency": {"ARS": 224780341.158}}},
+            {"totals": {"native_by_currency": {"ARS": 1234.5}}},
             "summary-call",
         ),
     )
 
     result = ledger.validate_final_answer(
-        "The portfolio value is ARS 224780341.158."
+        "The portfolio value is ARS 1234.5."
         + _figures(
-            "224780341.158 | observed | totals.native_by_currency.ARS | "
+            "1234.5 | observed | totals.native_by_currency.ARS | "
             "portfolio_summary"
         )
     )
@@ -162,58 +162,58 @@ def test_nav_path_does_not_infer_nav_as_a_currency(tmp_path: Path) -> None:
     ("claim", "formula", "scope_payload", "calc_value"),
     [
         (
-            "37.44560101737263%",
-            "78767665 / 210352251.96 × 100",
+            "37.5%",
+            "375.0 / 1000.0 × 100",
             {
                 "meta": {
-                    "scope_value_ars": 78_767_665.0,
-                    "total_value_ars": 210_352_251.95999998,
+                    "scope_value_ars": 375.0,
+                    "total_value_ars": 1000.0,
                 }
             },
-            37.44560101737263,
+            37.5,
         ),
         (
-            "13.766674580458817%",
-            "124735167 × 0.23215994892603142 / 210352251.95999998 × 100",
+            "15%",
+            "600.0 × 0.25 / 1000.0 × 100",
             {
                 "meta": {
-                    "scope_value_ars": 124_735_167.0,
-                    "total_value_ars": 210_352_251.95999998,
+                    "scope_value_ars": 600.0,
+                    "total_value_ars": 1000.0,
                 },
                 "portfolio_positions": [
                     {"ticker": "YPFD", "weight_scope": 0.30},
-                    {"ticker": "PAMP", "weight_scope": 0.23215994892603142},
+                    {"ticker": "PAMP", "weight_scope": 0.25},
                 ],
             },
-            13.766674580458817,
+            15.0,
         ),
         (
-            "6.827012720895808%",
-            "124735167 × 0.11513012204489212 / 210352251.95999998 × 100",
+            "7.5%",
+            "600.0 × 0.125 / 1000.0 × 100",
             {
                 "meta": {
-                    "scope_value_ars": 124_735_167.0,
-                    "total_value_ars": 210_352_251.95999998,
+                    "scope_value_ars": 600.0,
+                    "total_value_ars": 1000.0,
                 },
                 "portfolio_positions": [
-                    {"ticker": "GGAL", "weight_scope": 0.11513012204489212},
+                    {"ticker": "GGAL", "weight_scope": 0.125},
                 ],
             },
-            6.827012720895808,
+            7.5,
         ),
         (
-            "6.548216085948672%",
-            "124735167 × 0.1104285209318716 / 210352251.95999998 × 100",
+            "6%",
+            "600.0 × 0.10 / 1000.0 × 100",
             {
                 "meta": {
-                    "scope_value_ars": 124_735_167.0,
-                    "total_value_ars": 210_352_251.95999998,
+                    "scope_value_ars": 600.0,
+                    "total_value_ars": 1000.0,
                 },
                 "portfolio_positions": [
-                    {"ticker": "TGSU2", "weight_scope": 0.1104285209318716},
+                    {"ticker": "TGSU2", "weight_scope": 0.10},
                 ],
             },
-            6.548216085948672,
+            6.0,
         ),
     ],
 )
@@ -255,30 +255,30 @@ def test_observed_ref_must_match_exact_session_tool_or_call_id(tmp_path: Path) -
         tmp_path,
         (
             "asistente_casa_portfolio_risk_xray",
-            {"meta": {"total_value_ars": 210065669.185}},
+            {"meta": {"total_value_ars": 123456789.125}},
             "xray-call",
         ),
     )
 
     valid_tool = ledger.validate_final_answer(
-        "Portfolio value is ARS 210065669.185."
+        "Portfolio value is ARS 123456789.125."
         + _figures(
-            "210065669.185 | observed | meta.total_value_ars | "
+            "123456789.125 | observed | meta.total_value_ars | "
             "asistente_casa_portfolio_risk_xray"
         )
     )
     valid_call = ledger.validate_final_answer(
-        "Portfolio value is ARS 210065669.185."
-        + _figures("210065669.185 | observed | meta.total_value_ars | xray-call")
+        "Portfolio value is ARS 123456789.125."
+        + _figures("123456789.125 | observed | meta.total_value_ars | xray-call")
     )
     missing = ledger.validate_final_answer(
-        "Portfolio value is ARS 210065669.185."
-        + _figures("210065669.185 | observed | meta.total_value_ars | missing-call")
+        "Portfolio value is ARS 123456789.125."
+        + _figures("123456789.125 | observed | meta.total_value_ars | missing-call")
     )
     decorated = ledger.validate_final_answer(
-        "Portfolio value is ARS 210065669.185."
+        "Portfolio value is ARS 123456789.125."
         + _figures(
-            "210065669.185 | observed | meta.total_value_ars | "
+            "123456789.125 | observed | meta.total_value_ars | "
             "asistente_casa_portfolio_risk_xray (ACCIONES)"
         )
     )
@@ -302,36 +302,36 @@ def test_derived_ref_rejects_unknown_or_decorated_sources_even_when_value_exists
             "asistente_casa_portfolio_risk_xray",
             {
                 "meta": {
-                    "scope_value_ars": 78_710_490.0,
-                    "total_value_ars": 210_065_669.185,
+                    "scope_value_ars": 375.0,
+                    "total_value_ars": 1000.0,
                 }
             },
             "xray-call",
         ),
-        ("financial_rigor", {"result": 37.4694686}, "calc-call"),
+        ("financial_rigor", {"result": 37.5}, "calc-call"),
     )
-    formula = "78710490.0 / 210065669.185 × 100"
+    formula = "78710490.0 / 123456789.125 × 100"
 
     valid = ledger.validate_final_answer(
-        "CEDEAR weight is 37.4694686%."
+        "CEDEAR weight is 37.5%."
         + _figures(
-            "37.4694686% | derived | "
+            "37.5% | derived | "
             + formula
             + " | financial_rigor; asistente_casa_portfolio_risk_xray"
         )
     )
     missing = ledger.validate_final_answer(
-        "CEDEAR weight is 37.4694686%."
+        "CEDEAR weight is 37.5%."
         + _figures(
-            "37.4694686% | derived | "
+            "37.5% | derived | "
             + formula
             + " | financial_rigor; missing-call"
         )
     )
     decorated = ledger.validate_final_answer(
-        "CEDEAR weight is 37.4694686%."
+        "CEDEAR weight is 37.5%."
         + _figures(
-            "37.4694686% | derived | "
+            "37.5% | derived | "
             + formula
             + " | financial_rigor; asistente_casa_portfolio_risk_xray (CEDEARS)"
         )
