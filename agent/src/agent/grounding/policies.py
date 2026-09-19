@@ -21,6 +21,7 @@ from src.agent.grounding.identity import (
 from src.agent.grounding.evidence import (
     EvidenceRecord,
     _is_metadata_count_leaf,
+    _metric_qualifiers,
     _is_number,
     _is_price_kind,
     _metric_kind_for_path,
@@ -1031,6 +1032,31 @@ class _PolicyMixin:
         )
         return values
 
+    @staticmethod
+    def _qualifier_pool(records: Iterable[EvidenceRecord]) -> list[float]:
+        """Label numbers (confidence levels, windows) carried by observed metric leaves."""
+        return [
+            qualifier
+            for record in records
+            if record.status == "observed" and record.value is not None
+            for qualifier in _metric_qualifiers(record.field, record.value)
+        ]
+
+    @staticmethod
+    def _is_qualifier_claim(figure: Figure, qualifiers: Sequence[float]) -> bool:
+        """Whether a figure is exactly a label a metric leaf carries ("95%" for ``var_95``).
+
+        A whole number only: a decimal, a currency amount or a table cell is a
+        measurement and never a label, so this cannot ground a return or a price.
+        """
+        return (
+            bool(qualifiers)
+            and not figure.currency
+            and not figure.column
+            and "." not in (figure.digits or figure.text)
+            and _close_any(figure.value, qualifiers)
+        )
+
     def _matches_evidence(
         self,
         figure: Figure,
@@ -1090,6 +1116,8 @@ class _PolicyMixin:
             money = figure.currency and not figure.percent
             if self._matches_evidence(figure, values, [] if money else values):
                 return []
+            if self._is_qualifier_claim(figure, self._qualifier_pool(scoped_records)):
+                return []
             if scope_kind == "symbol":
                 observed = sorted(values)
                 return [
@@ -1130,6 +1158,15 @@ class _PolicyMixin:
                     market_price=market_price,
                 )
             ]
+        if self._is_qualifier_claim(
+            figure,
+            self._qualifier_pool(
+                record
+                for record in self._evidence
+                if not symbol or not record.symbol or record.symbol == symbol
+            ),
+        ):
+            return []
         candidates = self._price_candidates(
             symbol, records, column=figure.column, date=figure.date
         )
@@ -1271,6 +1308,33 @@ class _PolicyMixin:
             if not sign or target * sign >= 0
         )
 
+    def _is_observed_metric(
+        self,
+        figure: Figure,
+        declaration: Declaration,
+        symbol: str | None,
+    ) -> bool:
+        """Whether a figure equals an analysis metric a tool returned (within its reference).
+
+        Only metric-named leaves count (``effective_n``, ``hhi``, ``var_95``): a
+        price print or an amount is never grounded this way, so a proposed price
+        or a restated quote declared ``derived`` still needs its arithmetic.
+        """
+        if figure.currency and not figure.percent:
+            return False
+        if declaration.ref.strip():
+            scoped = self._referenced(declaration.ref, symbol, figure)
+            if scoped is None:
+                return False
+            metrics = scoped[1] + [
+                float(record.value)
+                for record in scoped[0]
+                if _metric_kind_for_path(record.field) is not None and not _is_price_kind(record)
+            ]
+        else:
+            metrics = self._metric_pool(symbol)
+        return self._matches_evidence(figure, metrics, metrics)
+
     def _check_derived(
         self,
         figure: Figure,
@@ -1280,6 +1344,15 @@ class _PolicyMixin:
     ) -> list[dict[str, Any]]:
         """A derived figure must be the arithmetic its note states."""
         derivation = self._derivation(declaration, symbol, records, money=figure.currency)
+        if (
+            derivation in ("no_formula", "formula_not_evaluable")
+            and declaration is not None
+            and self._is_observed_metric(figure, declaration, symbol)
+        ):
+            # A metric the tool itself returned ("effective_n") needs no formula: it
+            # is grounded as the observation it is. A note that IS a formula over
+            # operands the run never observed keeps failing below.
+            return []
         if isinstance(derivation, str):
             return [
                 self._figure_issue(

@@ -398,7 +398,7 @@ def _digit_run(text: str, index: int) -> str:
     return text[index:end]
 
 
-def _numbers(text: str) -> list[_Token]:
+def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
     """Every number in normalized text, with a decimal comma read as one (#1418).
 
     A comma is a decimal point when the integer part is exactly "0" ("0,666"),
@@ -425,6 +425,7 @@ def _numbers(text: str) -> list[_Token]:
             if fraction and (
                 body == "0"
                 or comma_decimals
+                or _is_long_decimal_comma(body, fraction)
                 or (
                     len(fraction) <= 2
                     and (
@@ -450,17 +451,55 @@ def _numbers(text: str) -> list[_Token]:
             body = body.replace(".", "")
             if fraction:
                 body = f"{body}.{fraction}"
+        elif _SINGLE_DOTTED_GROUP_RE.fullmatch(body) and text[end : end + 1] == ",":
+            # "1.234,56": a number has one decimal separator, so the dot groups
+            # thousands and the comma is the decimal. A fraction that runs into
+            # another dotted number ("1.234,5.6") is a list, not a decimal.
+            fraction = _digit_run(text, end + 1)
+            stop = end + 1 + len(fraction)
+            if fraction and not re.match(r"\.\d", text[stop : stop + 2]):
+                body, end = f"{body.replace('.', '')}.{fraction}", stop
         tokens.append(_Token(match.start(), end, sign, body.replace(",", "")))
         cursor = end
     return tokens
+
+
+# One dotted group of exactly three digits behind a non-zero lead: "1.234", never
+# "0.500" (a decimal) and never a two-group figure (that one is ``_NUMBER_RE``'s own).
+_SINGLE_DOTTED_GROUP_RE = re.compile(r"^[1-9]\d{0,2}\.\d{3}$")
+
+
+def _is_long_decimal_comma(body: str, fraction: str) -> bool:
+    """Whether ``body,fraction`` can only be a decimal: four or more digits follow the comma.
+
+    A comma that groups thousands is always followed by exactly three digits, so a
+    longer run ("2,639499655314571") is unambiguous. The one lookalike is a pair of
+    years written without a space ("2023,2024"), which stays two numbers.
+    """
+    if len(fraction) < 4:
+        return False
+    years = len(body) == 4 and len(fraction) == 4 and body[:2] in ("19", "20") and fraction[:2] in ("19", "20")
+    return not years
+
+
+def _is_whole_cell(text: str, start: int, stop: int) -> bool:
+    """Whether the number at ``[start, stop)`` is the entire content of its line or table cell."""
+    line_start = text.rfind("\n", 0, start) + 1
+    line_end = text.find("\n", stop)
+    line_end = len(text) if line_end == -1 else line_end
+    before = text[line_start:start].rsplit("|", 1)[-1]
+    after = text[stop:line_end].split("|", 1)[0]
+    return not before.strip() and not after.strip()
 
 
 def _writes_decimal_commas(text: str) -> bool:
     """Whether a document writes decimal commas and never a thousands grouping.
 
     Evidence for a decimal comma is unambiguous on its own: a "0," integer part,
-    or a one- or two-digit fraction carrying a percent, pp/bp or currency mark
-    ("1,57%", "3,95 EUR"). An unmarked "1,50" could be a list and proves nothing.
+    a fraction of four or more digits, or a one- or two-digit fraction carrying a
+    percent, pp/bp or currency mark ("1,57%", "3,95 EUR") or filling a whole
+    declaration/table cell ("2,64 | observed | ..."). An unmarked "1,50" inside a
+    sentence could be a list and proves nothing.
     Evidence for grouping is two or more comma groups or a grouped number with a
     dot fraction.
     """
@@ -474,10 +513,14 @@ def _writes_decimal_commas(text: str) -> bool:
         elif body.isdigit() and text[match.end() : match.end() + 1] == ",":
             fraction = _digit_run(text, match.end() + 1)
             stop = match.end() + 1 + len(fraction)
-            if 1 <= len(fraction) <= 2 and (
-                _currency_before(text, match.start())
-                or _currency_after(text, stop)
-                or _percent_mark(text, stop)[0] > 0
+            if _is_long_decimal_comma(body, fraction) or (
+                1 <= len(fraction) <= 2
+                and (
+                    _currency_before(text, match.start())
+                    or _currency_after(text, stop)
+                    or _percent_mark(text, stop)[0] > 0
+                    or _is_whole_cell(text, match.start(), stop)
+                )
             ):
                 decimal = True
     return decimal and not grouped
@@ -579,7 +622,7 @@ def _is_currency_mark(word: str) -> bool:
     )
 
 
-def _parse_value(text: str) -> tuple[float, bool, str] | None:
+def _parse_value(text: str, decimal_commas: bool | None = None) -> tuple[float, bool, str] | None:
     """Read a declared value: one number with its currency, magnitude and percent marks.
 
     Returns:
@@ -587,7 +630,7 @@ def _parse_value(text: str) -> tuple[float, bool, str] | None:
         exactly one number and its marks.
     """
     field = _normalize(text).text.strip()
-    tokens = _numbers(field)
+    tokens = _numbers(field, decimal_commas=decimal_commas)
     if len(tokens) != 1:
         return None
     token = tokens[0]
@@ -636,6 +679,9 @@ def parse_figures_block(content: str) -> FiguresBlock:
     raw = "".join(content[start:end] for _, _, _, (start, end) in blocks)
     declarations: list[Declaration] = []
     malformed: list[tuple[int, str]] = []
+    # The prose decides whether "2,639" is a decimal; a declaration cell must agree
+    # with it. ``None`` (no document evidence) lets the cell speak for itself.
+    document_reading = _writes_decimal_commas(_normalize(content).text) or None
     for number, line in enumerate(raw.splitlines(), start=1):
         stripped = line.strip().replace("｜", "|")
         if not stripped:
@@ -648,7 +694,7 @@ def parse_figures_block(content: str) -> FiguresBlock:
         parts = [part.strip() for part in parts]
         if _is_header_or_rule(parts):
             continue
-        parsed = _parse_value(parts[0]) if parts else None
+        parsed = _parse_value(parts[0], document_reading) if parts else None
         role = parts[1].casefold() if len(parts) > 1 else ""
         if parsed is None or role not in ROLES:
             malformed.append((number, line.strip()[:120]))
