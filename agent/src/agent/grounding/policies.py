@@ -25,7 +25,6 @@ from src.agent.grounding.evidence import (
     _is_price_kind,
     _metric_kind_for_path,
     _price_field_for_path,
-    _tail_risk_identity_for_path,
     _timestamp_matches_claim_date,
 )
 from src.agent.grounding.figures import (
