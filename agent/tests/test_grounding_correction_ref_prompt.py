@@ -23,5 +23,5 @@ def test_correction_prompt_requires_literal_refs_and_full_figures_block(tmp_path
     assert "Return the FULL revised answer" in prompt
     assert "Preserve or rebuild the final figures block on every revision" in prompt
     assert "normalized raw number" in prompt
-    assert "not ARS 210.065.669,185" in prompt
+    assert "not ARS 123.456.789,125" in prompt
     assert "preserve ALL of those refs" in prompt
