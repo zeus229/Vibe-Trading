@@ -784,13 +784,33 @@ class _PolicyMixin:
             for identifier in (entry.get("call_id"), entry.get("tool"))
             if identifier
         )
-        if not keys <= known_refs:
+
+        # Historical figures declarations may scope directly to a canonical
+        # instrument symbol (for example `159516.SZ`). Keep that contract,
+        # but only when the symbol was actually handled by successful evidence
+        # in this session. This is still fail-closed: arbitrary/decorated refs
+        # do not become aliases for the global evidence pool.
+        known_symbols = {
+            record.symbol
+            for record in self._evidence
+            if record.status == "observed" and record.symbol
+        }
+        symbol_keys = {
+            key
+            for key in keys
+            if _normalize_symbol(key) in known_symbols
+        }
+        invalid_keys = keys - known_refs - symbol_keys
+        if invalid_keys:
             return None
 
         records = [
             record
             for record in self._evidence
-            if any(key in (record.call_id, record.tool) for key in keys)
+            if (
+                any(key in (record.call_id, record.tool) for key in keys)
+                or any(_normalize_symbol(key) == record.symbol for key in symbol_keys)
+            )
             and record.status == "observed"
             and record.value is not None
         ]
