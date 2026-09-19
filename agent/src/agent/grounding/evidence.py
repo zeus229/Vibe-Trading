@@ -503,6 +503,41 @@ def _metric_kind_for_path(path: str) -> str | None:
     return None
 
 
+# Leaves that state the level a tail metric was computed at ("confidence_level": 0.95).
+_CONFIDENCE_LEAVES = frozenset({"confidence", "confidence_level", "confidence_levels"})
+
+
+def _metric_qualifiers(path: str, value: Any) -> tuple[float, ...]:
+    """The label numbers a metric leaf carries besides its own value.
+
+    The "95" of ``var_95`` / ``expected_shortfall_95`` and the level a
+    ``confidence_level`` leaf holds are parameters of the measurement, printed
+    next to it ("VaR 95%"), never a measurement of the portfolio. They are
+    evidence of what the tool computed, so a figure equal to one is grounded in
+    that tool's result without being a claim about the portfolio. Only the
+    trailing numeric qualifier of a leaf that already reads as a metric counts
+    (:func:`_metric_kind_for_path`), the same rule that classifies ``cvar_95``.
+
+    Args:
+        path: The evidence leaf path.
+        value: The leaf's numeric value.
+
+    Returns:
+        The qualifier numbers, in the units the answer prints them (95, not 0.95).
+    """
+    leaf = _leaf_name(path)
+    if leaf in _CONFIDENCE_LEAVES:
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            return ()
+        if 0 < value <= 1:
+            return (float(value) * 100.0,)
+        return (float(value),) if 1 < value <= 100 else ()
+    tokens = [token for token in re.split(r"[_.]", leaf) if token]
+    if len(tokens) >= 2 and tokens[-1].isdigit() and len(tokens[-1]) <= 3 and _metric_kind_for_path(path):
+        return (float(tokens[-1]),)
+    return ()
+
+
 @dataclass(frozen=True)
 class EvidenceRecord:
     """One observed, unavailable, or derived numeric evidence item."""
