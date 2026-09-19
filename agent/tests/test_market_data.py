@@ -453,6 +453,34 @@ def test_fetch_auto_india_walks_india_chain() -> None:
     assert "RELIANCE.NS" in out
 
 
+def test_fetch_auto_argentina_walks_argentine_chain() -> None:
+    """BYMA symbols use yahoo -> yfinance, never the China fallback chain."""
+    from backtest.loaders.base import NoAvailableSourceError
+
+    attempts: list[str] = []
+
+    def resolver(src: str):
+        attempts.append(src)
+        if src == "yfinance":
+            return _StubLoader
+        raise NoAvailableSourceError(f"{src} unavailable in test")
+
+    out = fetch_market_data(
+        codes=["GGAL.BA", "PAMP.BA", "TGSU2.BA"],
+        start_date="2026-01-01",
+        end_date="2026-01-02",
+        source="auto",
+        loader_resolver=resolver,
+    )
+
+    assert attempts == ["yahoo", "yfinance"]
+    assert "_unresolved" not in out
+    assert all(symbol in out for symbol in ("GGAL.BA", "PAMP.BA", "TGSU2.BA"))
+    assert "tushare" not in attempts
+    assert "tencent" not in attempts
+
+
+
 def test_fetch_auto_us_still_walks_us_chain() -> None:
     """US routing is unchanged by the market-aware chain selection."""
     from backtest.loaders.base import NoAvailableSourceError
