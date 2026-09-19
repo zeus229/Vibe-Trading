@@ -375,9 +375,7 @@ def _metric_alias_key_for_path(path: str) -> str | None:
         return leaf
     tokens = [token for token in re.split(r"[_.]", leaf) if token]
     stripped = list(tokens)
-    while stripped and (
-        stripped[-1].isdigit() or stripped[-1] in _QUALIFIER_SUFFIXES
-    ):
+    while stripped and (stripped[-1].isdigit() or stripped[-1] in _QUALIFIER_SUFFIXES):
         stripped.pop()
     for candidate in (tokens, stripped):
         for size in (2, 1):
@@ -395,41 +393,6 @@ def _metric_kind_for_path(path: str) -> str | None:
     """Map an evidence JSON path to an analysis metric kind."""
     key = _metric_alias_key_for_path(path)
     return _ANALYSIS_KIND_ALIASES.get(key) if key is not None else None
-
-
-_TAIL_RISK_MEASURES = {
-    "var": "var",
-    "historical_var": "var",
-    "parametric_var": "var",
-    "cvar": "es",
-    "es": "es",
-    "expected_shortfall": "es",
-}
-
-
-def _tail_risk_identity_for_path(path: str) -> tuple[str, int | None] | None:
-    """Return structured measure/confidence identity for tail-risk evidence."""
-    key = _metric_alias_key_for_path(path)
-    if key is None or _ANALYSIS_KIND_ALIASES.get(key) != "tail_risk":
-        return None
-
-    direct = _TAIL_RISK_MEASURES.get(key)
-    if direct is not None:
-        tokens = [token for token in re.split(r"[_.]", _leaf_name(path)) if token]
-        key_tokens = key.split("_")
-        for index in range(len(tokens) - len(key_tokens), -1, -1):
-            if tokens[index : index + len(key_tokens)] != key_tokens:
-                continue
-            following_index = index + len(key_tokens)
-            following = tokens[following_index] if following_index < len(tokens) else ""
-            return direct, int(following) if following.isdigit() else None
-        return direct, None
-
-    head, _, confidence = key.rpartition("_")
-    measure = _TAIL_RISK_MEASURES.get(head)
-    if measure is None or not confidence.isdigit():
-        return None
-    return measure, int(confidence)
 
 
 @dataclass(frozen=True)
