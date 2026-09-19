@@ -249,3 +249,99 @@ def test_real_xray_derivations_require_refs_for_all_operand_sources(
         )
     )
     assert complete.valid is True, complete.issues
+
+def test_observed_ref_must_match_exact_session_tool_or_call_id(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {"meta": {"total_value_ars": 210065669.185}},
+            "xray-call",
+        ),
+    )
+
+    valid_tool = ledger.validate_final_answer(
+        "Portfolio value is ARS 210065669.185."
+        + _figures(
+            "210065669.185 | observed | meta.total_value_ars | "
+            "asistente_casa_portfolio_risk_xray"
+        )
+    )
+    valid_call = ledger.validate_final_answer(
+        "Portfolio value is ARS 210065669.185."
+        + _figures("210065669.185 | observed | meta.total_value_ars | xray-call")
+    )
+    missing = ledger.validate_final_answer(
+        "Portfolio value is ARS 210065669.185."
+        + _figures("210065669.185 | observed | meta.total_value_ars | missing-call")
+    )
+    decorated = ledger.validate_final_answer(
+        "Portfolio value is ARS 210065669.185."
+        + _figures(
+            "210065669.185 | observed | meta.total_value_ars | "
+            "asistente_casa_portfolio_risk_xray (ACCIONES)"
+        )
+    )
+
+    assert valid_tool.valid is True, valid_tool.issues
+    assert valid_call.valid is True, valid_call.issues
+    for rejected in (missing, decorated):
+        assert rejected.valid is False
+        assert any(
+            issue.get("reason") == "not_in_referenced_call"
+            for issue in rejected.issues
+        ), rejected.issues
+
+
+def test_derived_ref_rejects_unknown_or_decorated_sources_even_when_value_exists_globally(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {
+                "meta": {
+                    "scope_value_ars": 78_710_490.0,
+                    "total_value_ars": 210_065_669.185,
+                }
+            },
+            "xray-call",
+        ),
+        ("financial_rigor", {"result": 37.4694686}, "calc-call"),
+    )
+    formula = "78710490.0 / 210065669.185 × 100"
+
+    valid = ledger.validate_final_answer(
+        "CEDEAR weight is 37.4694686%."
+        + _figures(
+            "37.4694686% | derived | "
+            + formula
+            + " | financial_rigor; asistente_casa_portfolio_risk_xray"
+        )
+    )
+    missing = ledger.validate_final_answer(
+        "CEDEAR weight is 37.4694686%."
+        + _figures(
+            "37.4694686% | derived | "
+            + formula
+            + " | financial_rigor; missing-call"
+        )
+    )
+    decorated = ledger.validate_final_answer(
+        "CEDEAR weight is 37.4694686%."
+        + _figures(
+            "37.4694686% | derived | "
+            + formula
+            + " | financial_rigor; asistente_casa_portfolio_risk_xray (CEDEARS)"
+        )
+    )
+
+    assert valid.valid is True, valid.issues
+    for rejected in (missing, decorated):
+        assert rejected.valid is False
+        assert any(
+            issue.get("reason") == "no_evidence"
+            for issue in rejected.issues
+        ), rejected.issues
+
