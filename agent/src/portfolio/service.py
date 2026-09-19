@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
 import socket
 import subprocess
 import sys
@@ -47,6 +48,33 @@ _RISK_XRAY_MAX_SYMBOLS = 50
 PORTFOLIO_VALUATION_VERSION = 2
 _LOADER_MARKET_SUFFIXES = frozenset({"US", "HK", "SZ", "SH", "BJ", "KS", "KQ", "NS", "BO", "TO", "V"})
 _NON_EQUITY_ASSET_TYPES = frozenset({"crypto", "stablecoin", "cash"})
+_ASISTENTE_CASA_NATIVE_EQUITY_PILOT_SYMBOLS = frozenset({"GGAL", "PAMP", "TGSU2"})
+_ASISTENTE_CASA_NATIVE_EQUITY_PILOT_ENV = "ASISTENTE_CASA_NATIVE_EQUITY_RISK_PILOT"
+
+
+def _asistente_casa_native_equity_pilot_enabled() -> bool:
+    """Return whether the narrow BYMA→generic-market Risk X-Ray pilot is enabled.
+
+    The pilot is deliberately opt-in and fixed to three validated Argentine
+    equities.  With the environment variable absent/false, the production
+    Asistente Casa persisted-history route is unchanged.
+    """
+    return str(os.environ.get(_ASISTENTE_CASA_NATIVE_EQUITY_PILOT_ENV) or "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
+def _is_asistente_casa_native_equity_pilot_position(position: dict[str, Any]) -> bool:
+    """Return whether one Asistente Casa row belongs to the narrow pilot basket."""
+    return (
+        str(position.get("broker") or "").strip().lower() == "asistente-casa"
+        and str(position.get("source_instrument_type") or "").strip().upper() == "ACCIONES"
+        and str(position.get("symbol") or "").strip().upper()
+        in _ASISTENTE_CASA_NATIVE_EQUITY_PILOT_SYMBOLS
+    )
 
 
 _AUTH_REQUIRED_MARKERS = (
@@ -815,6 +843,21 @@ class PortfolioService:
             isin = str(position.get("isin") or "").strip().upper()
             if not instrument_id or instrument_type not in {"ACCIONES", "CEDEARS", "BONOS", "FCI"}:
                 return None
+
+            # Experimental broker-native pilot: only the three explicitly
+            # validated BYMA equities are handed to Vibe's generic market-data
+            # chain, using the provider-qualified Yahoo/YFinance convention
+            # already proven by the GGAL.BA experiment.  Every other Asistente
+            # Casa row is excluded from this pilot basket rather than guessed.
+            if _asistente_casa_native_equity_pilot_enabled():
+                if (
+                    _is_asistente_casa_native_equity_pilot_position(position)
+                    and market == "BYMA"
+                    and bool(isin)
+                ):
+                    return f"{symbol}.BA"
+                return None
+
             if instrument_type == "FCI":
                 return symbol if not market and not isin else None
             return symbol if market == "BYMA" and bool(isin) else None
@@ -875,7 +918,12 @@ class PortfolioService:
             if symbol is None:
                 continue
             row_data_source = (
-                "asistente-casa"
+                "auto"
+                if (
+                    _asistente_casa_native_equity_pilot_enabled()
+                    and _is_asistente_casa_native_equity_pilot_position(position)
+                )
+                else "asistente-casa"
                 if str(position.get("broker") or "").strip().lower() == "asistente-casa"
                 else "auto"
             )
