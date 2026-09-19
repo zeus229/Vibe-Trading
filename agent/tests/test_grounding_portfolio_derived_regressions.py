@@ -249,4 +249,3 @@ def test_real_xray_derivations_require_refs_for_all_operand_sources(
         )
     )
     assert complete.valid is True, complete.issues
-
