@@ -765,6 +765,28 @@ class _PolicyMixin:
         }
         if not keys:
             return None
+
+        # A declared ref is a fail-closed provenance scope, not a hint. Every
+        # token must exactly identify a tool name or call id that contributed
+        # numeric evidence in this session. Previously one invalid/decorated
+        # token (or an entirely unknown ref) fell through to the global
+        # evidence pool, allowing the same numeric value to validate despite a
+        # false provenance declaration.
+        known_refs = {
+            identifier
+            for record in self._evidence
+            for identifier in (record.call_id, record.tool)
+            if identifier
+        }
+        known_refs.update(
+            identifier
+            for entry in self._analysis_metrics
+            for identifier in (entry.get("call_id"), entry.get("tool"))
+            if identifier
+        )
+        if not keys <= known_refs:
+            return None
+
         records = [
             record
             for record in self._evidence
@@ -1023,6 +1045,20 @@ class _PolicyMixin:
         ``get_market_data`` could never answer either way.
         """
         scoped = self._referenced(declaration.ref, symbol, figure) if declaration else None
+        if declaration is not None and declaration.ref.strip() and scoped is None:
+            return [
+                self._figure_issue(
+                    "numeric_claim_conflict",
+                    figure,
+                    "observed",
+                    symbol,
+                    "not_in_referenced_call",
+                    f"is declared observed from {declaration.ref}, but that ref does not "
+                    "exactly identify evidence from this session",
+                    source_tool_call_ids=[declaration.ref],
+                    market_price=market_price,
+                )
+            ]
         if scoped is not None:
             scoped_records, metric_values = scoped
             values = [float(record.value) for record in scoped_records] + metric_values
@@ -1133,6 +1169,8 @@ class _PolicyMixin:
         if not money:
             anchors += self._metric_pool(symbol)
         scoped = self._referenced(declaration.ref, symbol, None)
+        if declaration.ref.strip() and scoped is None:
+            return "no_evidence"
         if scoped is not None:
             anchors.extend(
                 float(record.value)
