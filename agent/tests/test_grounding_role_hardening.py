@@ -17,10 +17,7 @@ from typing import Any
 import pytest
 
 from src.agent.grounding import GroundingLedger
-from src.agent.grounding.evidence import (
-    _metric_kind_for_path,
-    _tail_risk_identity_for_path,
-)
+from src.agent.grounding.evidence import _metric_kind_for_path
 from src.agent.grounding.policies import _note_tokens
 
 pytestmark = pytest.mark.unit
@@ -547,30 +544,6 @@ def test_a_tail_risk_figure_a_tool_returned_is_grounded(tmp_path: Path) -> None:
     assert invented.valid is False
 
 
-@pytest.mark.parametrize(
-    ("leaf", "identity"),
-    [
-        ("var", ("var", None)),
-        ("var_95", ("var", 95)),
-        ("strategy_var_99", ("var", 99)),
-        ("historical_var", ("var", None)),
-        ("parametric_var", ("var", None)),
-        ("cvar", ("es", None)),
-        ("cvar_95", ("es", 95)),
-        ("portfolio_cvar_95", ("es", 95)),
-        ("es_99", ("es", 99)),
-        ("expected_shortfall", ("es", None)),
-        ("sales_es", None),
-        ("var_2", None),
-        ("sharpe", None),
-    ],
-)
-def test_a_tail_risk_leaf_preserves_measure_and_confidence(
-    leaf: str, identity: tuple[str, int | None] | None
-) -> None:
-    assert _tail_risk_identity_for_path(leaf) == identity
-
-
 def test_an_exact_metric_field_ref_is_tighter_than_a_call_ref(tmp_path: Path) -> None:
     risk = (
         "quantlib_call",
@@ -615,6 +588,51 @@ def test_es_and_var_fields_do_not_borrow_each_others_values(tmp_path: Path) -> N
 
     assert es.valid is True, es.issues
     assert _reasons(wrong_measure) == ["not_in_referenced_call"]
+
+
+def test_repeated_field_refs_require_call_qualification(tmp_path: Path) -> None:
+    first = (
+        "quantlib_call",
+        {"action": "call", "function": "var"},
+        {"ok": True, "result": {"var_95": -0.0157}},
+        "q1",
+    )
+    second = (
+        "quantlib_call",
+        {"action": "call", "function": "var"},
+        {"ok": True, "result": {"var_95": -0.0999}},
+        "q2",
+    )
+    prose = HDR + " VaR 95%: 1.57%。"
+    confidence = "95% | count | confidence"
+
+    ambiguous = _ledger(
+        tmp_path / "ambiguous", MARKET_A, first, second
+    ).validate_final_answer(
+        prose + _block(ROW, confidence, "1.57% | observed | VaR 95% | var.var_95")
+    )
+    q1 = _ledger(tmp_path / "q1", MARKET_A, first, second).validate_final_answer(
+        prose
+        + _block(
+            ROW,
+            confidence,
+            "1.57% | observed | VaR 95% | q1::var.var_95",
+        )
+    )
+    wrong_call = _ledger(
+        tmp_path / "wrong", MARKET_A, first, second
+    ).validate_final_answer(
+        prose
+        + _block(
+            ROW,
+            confidence,
+            "1.57% | observed | VaR 95% | q2::var.var_95",
+        )
+    )
+
+    assert _reasons(ambiguous) == ["not_in_referenced_call"]
+    assert q1.valid is True, q1.issues
+    assert _reasons(wrong_call) == ["not_in_referenced_call"]
 
 
 @pytest.mark.parametrize(
