@@ -28,6 +28,11 @@ from src.agent.grounding.evidence import (
     _price_field_for_path,
     _timestamp_matches_claim_date,
 )
+from src.agent.grounding.series_formula import (
+    SeriesFormulaError,
+    evaluate_series_formula,
+    parse_series_formula,
+)
 from src.agent.grounding.figures import (
     Declaration,
     Figure,
@@ -395,6 +400,19 @@ def _formula_in_note(note: str) -> tuple[float, list[float], ast.Expression] | N
     return None
 
 
+#: Operands of a result the gate recomputed itself from observed series: it has none to
+#: round, so the figure must be that value correctly rounded (not within the flat band).
+_RECOMPUTED = ()
+
+_DERIVATION_MESSAGES = {
+    "additive_operand_not_observed": "is declared derived, but its note adds or subtracts an operand "
+    "this session did not observe",
+    "series_not_observed": "is declared derived from a series of bars this session never observed",
+    "series_too_short": "is declared derived over a window longer than the observed history",
+    "series_conflict": "is declared derived from bars whose observations of one session disagree",
+}
+
+
 def _has_explicit_percent_scale(note: str) -> bool:
     """Whether a percentage formula explicitly converts a fraction by 100."""
     return bool(re.search(r"(?:×|✕|\*)\s*100(?:\.0+)?\b", note))
@@ -514,7 +532,7 @@ class _PolicyMixin:
         for figure in figures:
             if figure.shape not in ("measured", "bare"):
                 continue
-            declaration = block.match(figure.value, figure.percent)
+            declaration = block.match(figure.value, figure.percent, figure.digits)
             symbol = self._figure_symbol(
                 content, figure, declaration, line_symbols, document_symbol, records
             )
@@ -1062,19 +1080,60 @@ class _PolicyMixin:
         figure: Figure,
         direct: Sequence[float],
         scaled: Sequence[float],
+        *,
+        legacy_direct: bool = False,
     ) -> bool:
         """Whether a figure equals evidence, at its own scale or a metric's.
 
         ``direct`` is compared literally. ``scaled`` absorbs fraction vs percent
         (0.182 vs 18.2%) and the sign of a fall (drawdown -0.094 quoted as 9.4%).
+        Both are held to the digits the figure was written with
+        (:meth:`_within_written_precision`); ``legacy_direct`` keeps the flat evidence
+        band for ``direct`` when it is an undeclared price checked against prints.
         """
-        if _close_any(figure.value, direct):
+        if legacy_direct:
+            if _close_any(figure.value, direct):
+                return True
+            if figure.scale != 1.0 and _close_any(figure.value * figure.scale, direct):
+                return True
+        elif any(self._within_written_precision(figure, figure.value, target) for target in direct):
             return True
-        if figure.scale != 1.0 and _close_any(figure.value * figure.scale, direct):
+        elif figure.scale != 1.0 and any(
+            self._within_written_precision(figure, figure.value * figure.scale, target, figure.scale)
+            for target in direct
+        ):
             return True
-        candidates = {abs(figure.value), abs(figure.value) / 100.0}
         magnitudes = [abs(target) for target in scaled]
-        return any(_close_any(candidate, magnitudes) for candidate in candidates)
+        return any(
+            self._within_written_precision(figure, candidate, target, unit)
+            for candidate, unit in ((abs(figure.value), 1.0), (abs(figure.value) / 100.0, 0.01))
+            for target in magnitudes
+        )
+
+    @staticmethod
+    def _within_written_precision(
+        figure: Figure, candidate: float, target: float, unit: float = 1.0
+    ) -> bool:
+        """Whether a figure is ``target`` correctly rounded to the digits it was written with.
+
+        The evidence band is relative (:data:`_TOLERANCE`). A figure written with
+        decimals is held to half a unit of its last decimal as well, so "38,50" no
+        longer passes for 38.6784 (0.46% away) while "38,68" still does. A figure
+        written without decimals keeps the relative band alone: an integer's
+        precision is not known ("6,700" may be rounded to hundreds).
+
+        Args:
+            figure: The prose figure.
+            candidate: The figure's value in the units being compared.
+            target: The evidence value.
+            unit: How many compared units one written unit is (0.01 when a percent
+                is compared as a fraction).
+        """
+        band = abs(target) * _TOLERANCE
+        written = figure.digits or figure.text
+        if "." in written:
+            band = min(band, _written_half_unit(written) * unit * (1 + 1e-9))
+        return abs(candidate - target) <= max(band, 1e-9)
 
     def _check_observed(
         self,
@@ -1197,7 +1256,7 @@ class _PolicyMixin:
                     market_price=market_price,
                 )
             ]
-        if self._matches_evidence(figure, direct, scaled):
+        if self._matches_evidence(figure, direct, scaled, legacy_direct=True):
             return []
         observed = sorted(direct or scaled)
         attributable = symbol is not None or len(
@@ -1226,6 +1285,71 @@ class _PolicyMixin:
             )
         ]
 
+    def _observed_series(self, symbol: str, name: str, ref: str) -> list[float]:
+        """One symbol's observed daily ``name`` bars, oldest first, from this session's tools.
+
+        Bars fetched by several overlapping calls are merged by session timestamp. Two
+        observations of a session that differ by more than data noise (1e-6 relative:
+        float32 prices from one provider differ in the seventh digit) are a conflict,
+        not a choice; the session is marked NaN, and the formula fails only if it reads
+        that session. A ``ref`` narrows the bars to the calls/tools it names.
+
+        Raises:
+            SeriesFormulaError: ``series_not_observed`` when no such bars exist.
+        """
+        keys = {key.strip() for key in re.split(r"[;,]", ref or "") if key.strip()}
+        by_time: dict[str, float] = {}
+        for record in self._evidence:
+            if (
+                record.status != "observed"
+                or record.value is None
+                or record.symbol != symbol
+                or record.field != name
+                or not record.timestamp
+                or (keys and not any(key in (record.call_id, record.tool) for key in keys))
+            ):
+                continue
+            value = float(record.value)
+            seen = by_time.setdefault(record.timestamp, value)
+            if abs(seen - value) > max(abs(seen) * 1e-6, 1e-9):
+                by_time[record.timestamp] = math.nan
+        if not by_time:
+            raise SeriesFormulaError("series_not_observed")
+        return [by_time[stamp] for stamp in sorted(by_time)]
+
+    def _series_derivation(
+        self, declaration: Declaration, symbol: str | None
+    ) -> tuple[float, list[float]] | str | None:
+        """Evaluate a note written in the series grammar against this session's own bars.
+
+        The value is recomputed from evidence, so it is anchored by construction: the
+        declared figure is compared with what the observed series give. A note outside
+        the grammar returns None and is handled as plain arithmetic.
+
+        Returns:
+            ``(value, [value])``, a reason code, or None when the note is not a series formula.
+        """
+        parsed = parse_series_formula(declaration.note)
+        if parsed is None:
+            return None
+        tree, names = parsed
+        subject = symbol
+        if subject is None:
+            holders = {
+                record.symbol
+                for record in self._evidence
+                if record.symbol and record.field in names and record.status == "observed"
+            }
+            if len(holders) != 1:
+                return "no_symbol" if holders else "series_not_observed"
+            subject = next(iter(holders))
+        try:
+            series = {name: self._observed_series(subject, name, declaration.ref) for name in names}
+            value = evaluate_series_formula(tree, series)
+        except SeriesFormulaError as error:
+            return error.reason
+        return value, _RECOMPUTED  # type: ignore[return-value]
+
     def _derivation(
         self,
         declaration: Declaration | None,
@@ -1243,6 +1367,9 @@ class _PolicyMixin:
         """
         if declaration is None or not declaration.note.strip():
             return "no_formula"
+        series = self._series_derivation(declaration, symbol)
+        if series is not None:
+            return series
         evaluated = _formula_in_note(declaration.note)
         if evaluated is None:
             return "formula_not_evaluable"
@@ -1280,11 +1407,14 @@ class _PolicyMixin:
         return result, operands
 
     @staticmethod
-    def _result_matches(figure: Figure, result: float, note: str = "") -> bool:
+    def _result_matches(figure: Figure, result: float, note: str = "", *, exact: bool = False) -> bool:
         """Whether a formula's result is the value the prose figure states.
 
         The band is half a unit of the last digit the PROSE was written with
-        ("约 37%" for 36.75%), so a coarser declaration cannot widen it. A "%"
+        ("约 37%" for 36.75%), so a coarser declaration cannot widen it. A formula
+        over literal operands also gets the flat evidence band (its operands were
+        themselves rounded); a value the gate recomputed from observed series
+        (``exact``) has no such slack and must be correctly rounded. A "%"
         figure is compared in percentage points. A formula that explicitly
         multiplies by 100 is already in those units; otherwise the observed
         fraction is converted once. A bare figure is tried both ways.
@@ -1303,7 +1433,7 @@ class _PolicyMixin:
         sign = _explicit_sign(figure.sign or figure.text)
         value = abs(figure.value)
         return any(
-            abs(value - abs(target)) <= max(abs(target) * _TOLERANCE, half_unit, 1e-9)
+            abs(value - abs(target)) <= max(0.0 if exact else abs(target) * _TOLERANCE, half_unit, 1e-9)
             for target in targets
             if not sign or target * sign >= 0
         )
@@ -1363,15 +1493,15 @@ class _PolicyMixin:
                     "derived",
                     symbol,
                     derivation,
-                    "is declared derived, but its note adds or subtracts an operand "
-                    "this session did not observe"
-                    if derivation == "additive_operand_not_observed"
-                    else "is declared derived, but its note is not arithmetic over at "
-                    "least two operands with one of them observed in this session",
+                    _DERIVATION_MESSAGES.get(
+                        derivation,
+                        "is declared derived, but its note is not arithmetic over at "
+                        "least two operands with one of them observed in this session",
+                    ),
                 )
             ]
-        result, _ = derivation
-        if self._result_matches(figure, result, declaration.note):
+        result, operands = derivation
+        if self._result_matches(figure, result, declaration.note, exact=operands is _RECOMPUTED):
             return []
         # Reported in the figure's own units, as ``_result_matches`` compares it.
         scaled = (
@@ -1551,7 +1681,7 @@ class _PolicyMixin:
             if not carried:
                 continue
             if all(
-                (block.match(figure.value, figure.percent) or _NO_DECLARATION).role
+                (block.match(figure.value, figure.percent, figure.digits) or _NO_DECLARATION).role
                 == "cited"
                 for figure in carried
             ):
@@ -1567,7 +1697,7 @@ class _PolicyMixin:
             line_currency = any(figure.currency for figure in carried)
             line_market_price = any(
                 self._figure_is_market_price(
-                    content, figure, block.match(figure.value, figure.percent)
+                    content, figure, block.match(figure.value, figure.percent, figure.digits)
                 )
                 for figure in carried
             )

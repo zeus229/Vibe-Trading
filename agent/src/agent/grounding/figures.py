@@ -23,6 +23,10 @@ from typing import Iterable, Sequence
 
 from src.agent.grounding.identity import _CANONICAL_SYMBOL_RE
 
+#: Widest relative gap between a written figure and the value it rounds. Same band as the
+#: evidence tolerance (``policies._TOLERANCE``); the digits written narrow it further.
+ROUNDED_BAND = 0.005
+
 #: The five roles a declaration may carry (spec §2).
 ROLES = ("observed", "derived", "proposed", "cited", "count")
 
@@ -178,25 +182,42 @@ class FiguresBlock:
     malformed: tuple[tuple[int, str], ...]
     spans: tuple[tuple[int, int], ...] = ()
 
-    def match(self, value: float, percent: bool) -> Declaration | None:
+    def match(self, value: float, percent: bool, digits: str | None = None) -> Declaration | None:
         """Return the declaration covering ``value``, or None.
 
-        Matching is numeric (tolerance 1e-9) and percent-ness must agree:
-        ``37%`` and ``0.37`` are different assertions.
+        Matching is numeric and percent-ness must agree: ``37%`` and ``0.37`` are
+        different assertions. An exact value (tolerance 1e-9) always wins. Failing
+        that, a figure written with decimals ("38,68") covers a declaration holding
+        the precise observation ("38.6784123") when it is that value correctly rounded
+        to the digits written: within half a unit of its last decimal, and never
+        further than :data:`ROUNDED_BAND` of the declared value. A figure written
+        without decimals is only ever an exact match, so a coarse "39" cannot
+        borrow 38.68's declaration.
 
         Args:
             value: The prose figure's numeric value.
             percent: Whether the prose figure carries a percent sign.
+            digits: The prose figure's normalized digits ("38.68"), or None to
+                require an exact match.
 
         Returns:
-            The first matching declaration, or None.
+            The matching declaration (the nearest one when several round to the
+            same figure), or None.
         """
-        for declaration in self.declarations:
-            if declaration.percent != percent:
-                continue
+        candidates = [item for item in self.declarations if item.percent == percent]
+        for declaration in candidates:
             if abs(declaration.value - value) <= max(abs(value) * 1e-9, 1e-9):
                 return declaration
-        return None
+        if not digits or "." not in digits:
+            return None
+        half_unit = 0.5 * 10.0 ** -len(digits.split(".", 1)[1])
+        rounded = [
+            (abs(item.value - value), item)
+            for item in candidates
+            if abs(item.value - value) <= half_unit * (1 + 1e-9)
+            and abs(item.value - value) <= abs(item.value) * ROUNDED_BAND
+        ]
+        return min(rounded, key=lambda pair: pair[0])[1] if rounded else None
 
 
 @dataclass(frozen=True)

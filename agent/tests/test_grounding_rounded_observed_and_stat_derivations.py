@@ -173,7 +173,7 @@ def test_annualized_sample_volatility_is_recomputed_from_observed_closes(tmp_pat
     closes = _closes()
     expected = _vol(closes, window)
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        f"Volatilidad de {window} ruedas: {_es(expected)}."
+        f"GGAL.BA Volatilidad de {window} ruedas: {_es(expected)}."
         + _figures(f"{expected:.2f}% | derived | {note} | {TOOL}")
     )
     assert result.valid is True, result.issues
@@ -183,7 +183,7 @@ def test_daily_sample_volatility_without_annualization(tmp_path: Path) -> None:
     closes = _closes()
     expected = _vol(closes, 20, periods=1)
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        f"Desvío diario: {_es(expected)}."
+        f"GGAL.BA Desvío diario: {_es(expected)}."
         + _figures(f"{expected:.2f}% | derived | std_sample(returns(close[-21:])) * 100 | {TOOL}")
     )
     assert result.valid is True, result.issues
@@ -193,10 +193,22 @@ def test_a_wrong_sample_std_is_rejected_as_a_result_mismatch(tmp_path: Path) -> 
     closes = _closes()
     wrong = _vol(closes, 20) + 1.5
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        f"Volatilidad de 20 ruedas: {_es(wrong)}." + _figures(f"{wrong:.2f}% | derived | {ANNUAL_20} | {TOOL}")
+        f"GGAL.BA Volatilidad de 20 ruedas: {_es(wrong)}." + _figures(f"{wrong:.2f}% | derived | {ANNUAL_20} | {TOOL}")
     )
     assert result.valid is False
     assert _reasons(result) == ["derivation_result_mismatch"], result.issues
+
+
+def test_a_recomputed_statistic_must_be_correctly_rounded_not_merely_close(tmp_path: Path) -> None:
+    closes = _closes()
+    exact = _vol(closes, 20)
+    rounded = round(exact, 2)
+    slightly_off = rounded + 0.02  # inside the flat 0.5% evidence band, outside the rounding of the digits written
+    ledger = _bars_ledger(tmp_path, closes)
+    ok = ledger.validate_final_answer(f"GGAL.BA Vol: {_es(rounded)}." + _figures(f"{rounded:.2f}% | derived | {ANNUAL_20} | {TOOL}"))
+    off = ledger.validate_final_answer(f"GGAL.BA Vol: {_es(slightly_off)}." + _figures(f"{slightly_off:.2f}% | derived | {ANNUAL_20} | {TOOL}"))
+    assert ok.valid is True, ok.issues
+    assert _reasons(off) == ["derivation_result_mismatch"], off.issues
 
 
 def test_the_population_std_is_not_the_sample_std(tmp_path: Path) -> None:
@@ -205,7 +217,7 @@ def test_the_population_std_is_not_the_sample_std(tmp_path: Path) -> None:
     returns = [tail[i] / tail[i - 1] - 1 for i in range(1, len(tail))]
     population = statistics.pstdev(returns) * math.sqrt(252) * 100
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        f"Volatilidad de 20 ruedas: {_es(population)}." + _figures(f"{population:.2f}% | derived | {ANNUAL_20} | {TOOL}")
+        f"GGAL.BA Volatilidad de 20 ruedas: {_es(population)}." + _figures(f"{population:.2f}% | derived | {ANNUAL_20} | {TOOL}")
     )
     assert _reasons(result) == ["derivation_result_mismatch"], result.issues
 
@@ -214,7 +226,7 @@ def test_the_wrong_window_is_rejected(tmp_path: Path) -> None:
     closes = _closes()
     vol60 = _vol(closes, 60)
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        f"Volatilidad de 20 ruedas: {_es(vol60)}." + _figures(f"{vol60:.2f}% | derived | {ANNUAL_20} | {TOOL}")
+        f"GGAL.BA Volatilidad de 20 ruedas: {_es(vol60)}." + _figures(f"{vol60:.2f}% | derived | {ANNUAL_20} | {TOOL}")
     )
     assert _reasons(result) == ["derivation_result_mismatch"], result.issues
 
@@ -223,7 +235,7 @@ def test_a_wrong_annualization_factor_is_rejected(tmp_path: Path) -> None:
     closes = _closes()
     calendar = _vol(closes, 20, periods=365)
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        f"Volatilidad de 20 ruedas: {_es(calendar)}."
+        f"GGAL.BA Volatilidad de 20 ruedas: {_es(calendar)}."
         + _figures(f"{calendar:.2f}% | derived | std_sample(returns(close[-21:])) * sqrt(252) * 100 | {TOOL}")
     )
     assert _reasons(result) == ["derivation_result_mismatch"], result.issues
@@ -235,7 +247,7 @@ def test_a_series_the_run_never_observed_cannot_ground_a_derivation(tmp_path: Pa
     ledger = GroundingLedger(run_dir=tmp_path, user_message="vol")
     ledger.ingest_tool_result(tool_name="other_tool", arguments={}, result=json.dumps({"x": 1.5, "y": 2.5}), call_id="other_tool", success=True)
     result = ledger.validate_final_answer(
-        f"Volatilidad: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {ANNUAL_20} | other_tool")
+        f"GGAL.BA Volatilidad: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {ANNUAL_20} | other_tool")
     )
     assert result.valid is False
     assert _reasons(result) == ["series_not_observed"], result.issues
@@ -244,7 +256,7 @@ def test_a_series_the_run_never_observed_cannot_ground_a_derivation(tmp_path: Pa
 def test_a_window_longer_than_the_observed_history_is_rejected(tmp_path: Path) -> None:
     closes = _closes(30)
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        "Volatilidad: 20,00%." + _figures(f"20.00% | derived | std_sample(returns(close[-61:])) * sqrt(252) * 100 | {TOOL}")
+        "GGAL.BA Volatilidad: 20,00%." + _figures(f"20.00% | derived | std_sample(returns(close[-61:])) * sqrt(252) * 100 | {TOOL}")
     )
     assert _reasons(result) == ["series_too_short"], result.issues
 
@@ -263,14 +275,37 @@ def test_a_series_of_another_symbol_is_not_used(tmp_path: Path) -> None:
     assert result.valid is False, "GGAL.BA must be checked against GGAL.BA's series, not PAMP.BA's"
 
 
-def test_conflicting_observations_for_one_session_are_refused(tmp_path: Path) -> None:
+def _later_observation(ledger: GroundingLedger, day_offset: int, close: float, call_id: str) -> None:
+    stamp = (date(2026, 1, 1) + timedelta(days=day_offset)).isoformat() + "T00:00:00"
+    row = {"trade_date": stamp, "open": 1, "high": 1, "low": 1, "close": close, "volume": 1}
+    ledger.ingest_tool_result(tool_name=TOOL, arguments={"codes": [SYMBOL]}, result=json.dumps({SYMBOL: [row]}), call_id=call_id, success=True)
+
+
+def test_a_session_two_results_disagree_on_is_refused_when_the_window_reads_it(tmp_path: Path) -> None:
     closes = _closes()
     ledger = _bars_ledger(tmp_path, closes)
-    tampered = [{"trade_date": "2026-01-05T00:00:00", "open": 1, "high": 1, "low": 1, "close": 9999.0, "volume": 1}]
-    ledger.ingest_tool_result(tool_name=TOOL, arguments={"codes": [SYMBOL]}, result=json.dumps({SYMBOL: tampered}), call_id="second", success=True)
+    _later_observation(ledger, 80, 9999.0, "second")  # inside the last 21 sessions
     expected = _vol(closes, 20)
-    result = ledger.validate_final_answer(f"Vol: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {ANNUAL_20} | {TOOL}"))
+    result = ledger.validate_final_answer(f"GGAL.BA Vol: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {ANNUAL_20} | {TOOL}"))
     assert _reasons(result) == ["series_conflict"], result.issues
+
+
+def test_a_disagreement_outside_the_window_does_not_matter(tmp_path: Path) -> None:
+    closes = _closes()
+    ledger = _bars_ledger(tmp_path, closes)
+    _later_observation(ledger, 4, 9999.0, "second")  # a session far outside the last 21
+    expected = _vol(closes, 20)
+    result = ledger.validate_final_answer(f"GGAL.BA Vol: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {ANNUAL_20} | {TOOL}"))
+    assert result.valid is True, result.issues
+
+
+def test_float32_noise_between_overlapping_calls_is_not_a_conflict(tmp_path: Path) -> None:
+    closes = _closes()
+    ledger = _bars_ledger(tmp_path, closes)
+    _later_observation(ledger, 80, closes[80] * (1 + 6e-8), "second")  # seventh-digit noise, as yfinance returns
+    expected = _vol(closes, 20)
+    result = ledger.validate_final_answer(f"GGAL.BA Vol: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {ANNUAL_20} | {TOOL}"))
+    assert result.valid is True, result.issues
 
 
 @pytest.mark.parametrize(
@@ -288,7 +323,7 @@ def test_free_text_and_unknown_operations_are_still_not_derivations(tmp_path: Pa
     closes = _closes()
     expected = _vol(closes, 20)
     result = _bars_ledger(tmp_path, closes).validate_final_answer(
-        f"Vol: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {note} | {TOOL}")
+        f"GGAL.BA Vol: {_es(expected)}." + _figures(f"{expected:.2f}% | derived | {note} | {TOOL}")
     )
     assert result.valid is False
     assert _reasons(result) == ["formula_not_evaluable"], result.issues
@@ -300,11 +335,11 @@ def test_the_grammar_is_general_not_a_volatility_special_case(tmp_path: Path) ->
     total3 = sum(closes[-3:])
     ledger = _bars_ledger(tmp_path, closes)
     ok = ledger.validate_final_answer(
-        f"Media de 5 cierres: {mean5:.2f}. Suma de 3 cierres: {total3:.2f}."
+        f"GGAL.BA Media de 5 cierres: {mean5:.2f}. Suma de 3 cierres: {total3:.2f}."
         + _figures(f"{mean5:.2f} | derived | mean(close[-5:]) | {TOOL}", f"{total3:.2f} | derived | sum(close[-3:]) | {TOOL}")
     )
     assert ok.valid is True, ok.issues
     bad = ledger.validate_final_answer(
-        f"Media de 5 cierres: {mean5 + 40:.2f}." + _figures(f"{mean5 + 40:.2f} | derived | mean(close[-5:]) | {TOOL}")
+        f"GGAL.BA Media de 5 cierres: {mean5 + 40:.2f}." + _figures(f"{mean5 + 40:.2f} | derived | mean(close[-5:]) | {TOOL}")
     )
     assert _reasons(bad) == ["derivation_result_mismatch"], bad.issues

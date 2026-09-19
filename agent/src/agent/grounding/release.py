@@ -74,7 +74,11 @@ _CORRECTION_REASONS = {
     "value_mismatch": "the observed evidence is {range}",
     "not_in_referenced_call": "call {ref} returned no such value",
     "no_formula": "its note states no arithmetic",
-    "formula_not_evaluable": "its note is not an arithmetic expression over two or more operands",
+    "formula_not_evaluable": "its note is not an arithmetic expression over two or more operands, "
+    "nor a series formula such as std_sample(returns(close[-21:])) * sqrt(252) * 100",
+    "series_not_observed": "no tool call in this session returned that series of bars for the symbol",
+    "series_too_short": "the observed history is shorter than the window its note asks for",
+    "series_conflict": "two tool results disagree on the value of one session in that series",
     "formula_not_anchored": "no operand of its note is a value this session observed",
     "no_symbol": "the run holds evidence for more than one instrument and the note names none",
     "derivation_result_mismatch": "its own note evaluates to {result}",
