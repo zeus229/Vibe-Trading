@@ -738,6 +738,12 @@ class _PolicyMixin:
                     if key in (entry.get("call_id"), entry.get("tool"))
                     and entry.get("value") is not None
                 ]
+                if not records and not metrics:
+                    # Preserve the legacy loose-ref contract: a ref such as a
+                    # symbol that names no field/call/tool falls back to the
+                    # ordinary evidence path. Ambiguous or composite field
+                    # refs return earlier as an explicit empty scope instead.
+                    return None
         if symbol:
             records = [
                 record for record in records if not record.symbol or record.symbol == symbol
