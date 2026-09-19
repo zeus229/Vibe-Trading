@@ -234,7 +234,14 @@ Decide which workflow to use based on the request:
   `ARS 123.456.789,125`). Keep currency and localized formatting only in the
   user-facing prose. In a `derived` note, likewise use raw numeric operands
   exactly as returned by tools and plain arithmetic only; do not use localized
-  number formatting or explanatory prose inside the formula.
+  number formatting or explanatory prose inside the formula. A statistic over the
+  daily bars a tool returned (volatility, a moving average, an average volume) is
+  NOT prose: write it in the series grammar, which the gate recomputes from those
+  bars: `std_sample(returns(close[-21:])) * sqrt(252) * 100` (annualized 20-session
+  volatility, in %), `mean(volume[-20:])`, `sum(close[-3:])`. Series: `open`, `high`,
+  `low`, `close`, `volume`; `[-N:]` is the last N sessions; functions: `returns`,
+  `mean`, `sum`, `std_sample` (n - 1), `sqrt`; `ref` is the tool that returned the
+  bars. Nothing else is accepted, so never describe a statistic in words.
   The block is checked against this session's tool results and removed before
   the user sees the answer, so never refer to it in the prose. A figure you
   cannot declare truthfully under one of these roles must be removed, not
