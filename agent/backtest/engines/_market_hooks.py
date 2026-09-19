@@ -166,6 +166,7 @@ _MARKET_CURRENCY = {
     "hk_equity": "HKD",
     "india_equity": "INR",
     "kr_equity": "KRW",
+    "arg_equity": "ARS",
     "ca_equity": "CAD",
     "uk_equity": "GBP",
     "vietnam_equity": "VND",
