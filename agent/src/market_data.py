@@ -26,6 +26,9 @@ _SOURCE_PATTERNS = [
     # India: NSE (RELIANCE.NS) / BSE (500325.BO). Tickers may carry '&' and '-'
     # (e.g. M&M.NS, BAJAJ-AUTO.NS). Served by Yahoo's public chart endpoint.
     (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "yahoo"),
+    # Argentina: BYMA equities (GGAL.BA, PAMP.BA, TGSU2.BA). Yahoo serves
+    # the .BA suffix verbatim; without this they fall through to tushare.
+    (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "yahoo"),
     # Canada: Toronto Stock Exchange (TD.TO) / TSX Venture (PNG.V).
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "yahoo"),
     # UK: London Stock Exchange (VOD.L, SHEL.L). Yahoo serves the suffix
