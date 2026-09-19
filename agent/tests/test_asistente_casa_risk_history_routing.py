@@ -61,6 +61,37 @@ def test_mixed_ac_and_generic_market_sources_fail_closed():
     assert PortfolioService._risk_xray_args([_ac_position("YPFD", 50), legacy]) == {"symbols": [], "weights": {}}
 
 
+def test_ac_native_equity_pilot_routes_only_three_symbols_through_generic_market_data(monkeypatch):
+    monkeypatch.setenv("ASISTENTE_CASA_NATIVE_EQUITY_RISK_PILOT", "1")
+    args = PortfolioService._risk_xray_args(
+        [
+            _ac_position("GGAL", 60, isin="ARP495251018"),
+            _ac_position("PAMP", 30, isin="ARP432631215"),
+            _ac_position("TGSU2", 10, isin="ARP9308R1039"),
+            _ac_position("YPFD", 50, isin="ARP9897X1319"),
+            _ac_position("SBS.FIXUSD.FPN", 25, instrument_type="FCI", market="", isin=""),
+        ]
+    )
+
+    assert args["symbols"] == ["GGAL.BA", "PAMP.BA", "TGSU2.BA"]
+    assert args["weights"]["GGAL.BA"] == pytest.approx(0.6)
+    assert args["weights"]["PAMP.BA"] == pytest.approx(0.3)
+    assert args["weights"]["TGSU2.BA"] == pytest.approx(0.1)
+    assert "source" not in args
+
+
+def test_ac_native_equity_pilot_keeps_identity_gate_fail_closed(monkeypatch):
+    monkeypatch.setenv("ASISTENTE_CASA_NATIVE_EQUITY_RISK_PILOT", "true")
+    ggal = _ac_position("GGAL", 60, isin="")
+    pamp = _ac_position("PAMP", 40, isin="ARP432631215")
+
+    args = PortfolioService._risk_xray_args([ggal, pamp])
+
+    assert args["symbols"] == ["PAMP.BA"]
+    assert args["weights"] == {"PAMP.BA": pytest.approx(1.0)}
+    assert "source" not in args
+
+
 class _Response:
     def __init__(self, payload):
         self.payload = payload
