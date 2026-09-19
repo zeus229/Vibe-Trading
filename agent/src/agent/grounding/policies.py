@@ -25,6 +25,7 @@ from src.agent.grounding.evidence import (
     _is_price_kind,
     _metric_kind_for_path,
     _price_field_for_path,
+    _tail_risk_identity_for_path,
     _timestamp_matches_claim_date,
 )
 from src.agent.grounding.figures import (
@@ -670,19 +671,34 @@ class _PolicyMixin:
         key = (ref or "").strip()
         if not key:
             return None
+        call_or_tool = any(
+            key in (record.call_id, record.tool) for record in self._evidence
+        ) or any(
+            key in (entry.get("call_id"), entry.get("tool"))
+            for entry in self._analysis_metrics
+        )
         records = [
             record
             for record in self._evidence
-            if key in (record.call_id, record.tool)
+            if (
+                key in (record.call_id, record.tool)
+                if call_or_tool
+                else record.field == key
+            )
             and record.status == "observed"
             and record.value is not None
         ]
-        metrics = [
-            float(entry["value"])
+        metric_entries = [
+            entry
             for entry in self._analysis_metrics
-            if key in (entry.get("call_id"), entry.get("tool"))
+            if (
+                key in (entry.get("call_id"), entry.get("tool"))
+                if call_or_tool
+                else entry.get("field") == key
+            )
             and entry.get("value") is not None
         ]
+        metrics = [float(entry["value"]) for entry in metric_entries]
         if not records and not metrics:
             return None
         if symbol:

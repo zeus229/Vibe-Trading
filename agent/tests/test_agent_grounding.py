@@ -3393,3 +3393,53 @@ def test_crypto_pair_tables_match_the_resolver() -> None:
     # gold and forex are quoted in it too); grounding decides it by the base
     # whitelist instead, so it is the only permitted difference.
     assert set(g._CRYPTO_QUOTE_ASSETS) | {"USD"} == set(ss._CRYPTO_QUOTE_ASSETS)
+
+
+@pytest.mark.parametrize(
+    ("field", "identity"),
+    [
+        ("var_95", ("var", 95)),
+        ("strategy_var_99", ("var", 99)),
+        ("cvar_95", ("es", 95)),
+        ("portfolio_cvar_99", ("es", 99)),
+        ("es_95", ("es", 95)),
+        ("expected_shortfall", ("es", None)),
+        ("historical_var", ("var", None)),
+        ("parametric_var", ("var", None)),
+        ("sales_es", None),
+    ],
+)
+def test_tail_risk_evidence_preserves_measure_and_confidence(field, identity) -> None:
+    from src.agent.grounding.evidence import _tail_risk_identity_for_path
+
+    assert _tail_risk_identity_for_path(field) == identity
+
+
+def test_tail_risk_field_ref_scopes_same_value_to_exact_metric(tmp_path: Path) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio tail risk")
+    ledger.ingest_tool_result(
+        tool_name="quantlib_call",
+        arguments={"action": "call", "function": "var"},
+        result=json.dumps({"ok": True, "result": {"var_95": -0.0157, "var_99": -0.0263, "es_95": -0.0211, "es_99": -0.0342}}),
+        call_id="risk",
+        success=True,
+    )
+    for label, field, value in (("VaR 95%", "var_95", "1.57%"), ("VaR 99%", "var_99", "2.63%"), ("ES 95%", "es_95", "2.11%"), ("ES 99%", "es_99", "3.42%")):
+        answer = f"{label}: {value}.\n\n```figures\n{value} | observed | {label} | {field}\n```"
+        result = ledger.validate_final_answer(answer)
+        assert result.valid is True, (label, result.issues)
+
+
+def test_tail_risk_field_ref_rejects_cross_metric_same_number(tmp_path: Path) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio tail risk")
+    ledger.ingest_tool_result(
+        tool_name="quantlib_call",
+        arguments={"action": "call", "function": "var"},
+        result=json.dumps({"ok": True, "result": {"var_95": -0.0157}}),
+        call_id="risk",
+        success=True,
+    )
+    for label, wrong_field in (("VaR 99%", "var_99"), ("ES 95%", "es_95"), ("ES 99%", "es_99")):
+        answer = f"{label}: 1.57%.\n\n```figures\n1.57% | observed | {label} | {wrong_field}\n```"
+        result = ledger.validate_final_answer(answer)
+        assert result.valid is False, label

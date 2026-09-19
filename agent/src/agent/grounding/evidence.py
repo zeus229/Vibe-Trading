@@ -122,6 +122,10 @@ _ANALYSIS_KIND_ALIASES = {
     "var": "tail_risk",
     "var_95": "tail_risk",
     "var_99": "tail_risk",
+    "cvar_95": "tail_risk",
+    "cvar_99": "tail_risk",
+    "es_95": "tail_risk",
+    "es_99": "tail_risk",
     # quantlib_call records a scalar result under the function name, and "var"
     # alone matches only a whole leaf (_EXACT_ONLY_ALIASES), so these two need
     # their own entries or a real VaR result grounds nothing (#1464).
@@ -391,6 +395,40 @@ def _metric_kind_for_path(path: str) -> str | None:
             kind = None if key in _EXACT_ONLY_ALIASES else _ANALYSIS_KIND_ALIASES.get(key)
             if kind is not None:
                 return kind
+    return None
+
+
+_TAIL_RISK_MEASURES = {
+    "var": "var",
+    "historical_var": "var",
+    "parametric_var": "var",
+    "cvar": "es",
+    "es": "es",
+    "expected_shortfall": "es",
+}
+
+
+def _tail_risk_identity_for_path(path: str) -> tuple[str, int | None] | None:
+    """Return structured (measure, confidence) identity for tail-risk evidence.
+
+    Identity is derived only from tool field names, never from answer prose.
+    VaR and ES/CVaR are distinct measures; a numeric suffix immediately after
+    the measure is its confidence level (var_95, cvar_99).
+    """
+    if _metric_kind_for_path(path) != "tail_risk":
+        return None
+    tokens = [token for token in re.split(r"[_.]", _leaf_name(path)) if token]
+    for index in range(len(tokens) - 1, -1, -1):
+        for width in (2, 1):
+            if index + width > len(tokens):
+                continue
+            head = "_".join(tokens[index : index + width])
+            measure = _TAIL_RISK_MEASURES.get(head)
+            if measure is None:
+                continue
+            following = tokens[index + width] if index + width < len(tokens) else ""
+            confidence = int(following) if following.isdigit() else None
+            return measure, confidence
     return None
 
 
