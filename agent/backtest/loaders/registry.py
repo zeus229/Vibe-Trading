@@ -203,6 +203,8 @@ FALLBACK_CHAINS: dict[str, list[str]] = {
     ],
     "india_equity": ["yahoo", "yfinance", "india_broker", "local"],
     "kr_equity": ["pykrx", "yahoo", "yfinance", "local"],
+    # BYMA (.BA): direct Yahoo first, SDK fallback second.
+    "arg_equity": ["yahoo", "yfinance", "local"],
     # TSX (.TO) / TSX Venture (.V): direct Yahoo first, SDK fallback second.
     "ca_equity": ["yahoo", "yfinance", "local"],
     # UK (LSE .L): direct Yahoo first, SDK fallback second.
