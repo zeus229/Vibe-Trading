@@ -191,8 +191,8 @@ class DataLoader:
 
     name = "yahoo"
     markets = {
-        "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity",
-        "vietnam_equity", "uk_equity",
+        "us_equity", "hk_equity", "india_equity", "kr_equity", "arg_equity",
+        "ca_equity", "vietnam_equity", "uk_equity",
     }
     # Yahoo chart volume is single shares for US/HK equities
     # (HKUDS/Vibe-Trading#1062; HK verified 2026-08-11, 00700.HK ratio 1.00
