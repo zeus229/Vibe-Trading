@@ -310,7 +310,7 @@ def test_derived_ref_rejects_unknown_or_decorated_sources_even_when_value_exists
         ),
         ("financial_rigor", {"result": 37.5}, "calc-call"),
     )
-    formula = "78710490.0 / 123456789.125 × 100"
+    formula = "375.0 / 1000.0 × 100"
 
     valid = ledger.validate_final_answer(
         "CEDEAR weight is 37.5%."
