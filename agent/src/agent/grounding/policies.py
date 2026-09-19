@@ -740,8 +740,8 @@ class _PolicyMixin:
         ref: str,
         symbol: str | None,
         figure: Figure | None,
-    ) -> tuple[list[EvidenceRecord], list[float]] | None:
-        """The evidence one call, or every call of one tool, produced.
+    ) -> tuple[list[EvidenceRecord], list[float], str] | None:
+        """The evidence one call, tool, or handled symbol produced.
 
         A ``ref`` naming a call id or a tool name is the tightest scoping, and the
         only one that can ground a non-price figure (revenue, IC, volume). Records
@@ -756,7 +756,10 @@ class _PolicyMixin:
                 operands of a derivation.
 
         Returns:
-            ``(records, metric values)``, or None when ``ref`` names no call or tool.
+            ``(records, metric values, scope_kind)``, where ``scope_kind`` is
+            ``"symbol"`` only for a pure canonical-symbol ref and
+            ``"provenance"`` for tool/call refs (including mixed refs); or
+            None when any ref token is invalid for this session.
         """
         keys = {
             key.strip()
@@ -800,9 +803,11 @@ class _PolicyMixin:
             for key in keys
             if _normalize_symbol(key) in known_symbols
         }
-        invalid_keys = keys - known_refs - symbol_keys
+        provenance_keys = keys & known_refs
+        invalid_keys = keys - provenance_keys - symbol_keys
         if invalid_keys:
             return None
+        scope_kind = "symbol" if symbol_keys and not provenance_keys else "provenance"
 
         records = [
             record
@@ -839,7 +844,7 @@ class _PolicyMixin:
         elif figure is not None and figure.currency:
             records = [record for record in records if _is_price_kind(record)]
             metrics = []
-        return records, metrics
+        return records, metrics, scope_kind
 
     def _price_pool(
         self,
@@ -1080,11 +1085,37 @@ class _PolicyMixin:
                 )
             ]
         if scoped is not None:
-            scoped_records, metric_values = scoped
+            scoped_records, metric_values, scope_kind = scoped
             values = [float(record.value) for record in scoped_records] + metric_values
             money = figure.currency and not figure.percent
             if self._matches_evidence(figure, values, [] if money else values):
                 return []
+            if scope_kind == "symbol":
+                observed = sorted(values)
+                return [
+                    self._figure_issue(
+                        "numeric_claim_conflict" if observed else "numeric_claim_unavailable",
+                        figure,
+                        "observed",
+                        symbol,
+                        "value_mismatch" if observed else "no_evidence",
+                        (
+                            "is declared observed for a handled symbol but conflicts with "
+                            f"that symbol's evidence {observed[0]:g}–{observed[-1]:g}"
+                            if observed
+                            else "is declared observed for a handled symbol but this "
+                            "session holds no matching evidence of that kind"
+                        ),
+                        observed_min=observed[0] if observed else None,
+                        observed_max=observed[-1] if observed else None,
+                        observed_nearest=self._nearest_prints(
+                            figure, scoped_records, observed
+                        )
+                        if observed
+                        else [],
+                        market_price=market_price,
+                    )
+                ]
             return [
                 self._figure_issue(
                     "numeric_claim_conflict",
