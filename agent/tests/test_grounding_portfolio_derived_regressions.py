@@ -344,4 +344,3 @@ def test_derived_ref_rejects_unknown_or_decorated_sources_even_when_value_exists
             issue.get("reason") == "no_evidence"
             for issue in rejected.issues
         ), rejected.issues
-
