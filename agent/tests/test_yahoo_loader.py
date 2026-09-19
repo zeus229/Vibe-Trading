@@ -69,6 +69,11 @@ class TestSymbolGating:
         assert _is_supported("reliance.ns") is True
         assert _is_supported("500325.BO") is True
 
+    def test_accepts_argentina(self):
+        assert _is_supported("GGAL.BA") is True
+        assert _is_supported("pamp.ba") is True
+        assert _is_supported("TGSU2.BA") is True
+
     def test_accepts_canada(self):
         assert _is_supported("TD.TO") is True
         assert _is_supported("PNG.V") is True
@@ -389,8 +394,8 @@ class TestLoaderMetadata:
         loader = DataLoader()
         assert loader.name == "yahoo"
         assert loader.markets == {
-            "us_equity", "hk_equity", "india_equity", "kr_equity", "ca_equity",
-            "vietnam_equity", "uk_equity",
+            "us_equity", "hk_equity", "india_equity", "kr_equity", "arg_equity",
+            "ca_equity", "vietnam_equity", "uk_equity",
         }
         assert loader.requires_auth is False
         assert loader.is_available() is True
