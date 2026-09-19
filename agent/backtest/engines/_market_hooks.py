@@ -60,6 +60,9 @@ _MARKET_PATTERNS = [
     (re.compile(r"^[A-Z0-9&.\-]+\.(NS|BO)$", re.I), "india_equity"),
     # Korea equities: KOSPI (005930.KS) / KOSDAQ (247540.KQ), 6-digit codes.
     (re.compile(r"^\d{6}\.(KS|KQ)$", re.I), "kr_equity"),
+    # Argentina equities: BYMA (GGAL.BA, PAMP.BA, TGSU2.BA). Yahoo carries
+    # the .BA suffix verbatim.
+    (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "arg_equity"),
     # Canada equities: Toronto Stock Exchange (TD.TO) and TSX Venture
     # (PNG.V). Yahoo carries both suffixes verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.(TO|V)$", re.I), "ca_equity"),
