@@ -153,6 +153,7 @@ class PortfolioSummaryTool(BaseTool):
     parameters = {"type": "object", "properties": {}, "required": []}
     repeatable = True
     is_readonly = True
+    preserve_during_microcompact = True
 
     def execute(self, **_: Any) -> str:
         """Return the sanitized portfolio context as a JSON envelope.
