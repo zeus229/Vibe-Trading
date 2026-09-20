@@ -22,6 +22,9 @@ _SOURCE_PATTERNS = [
     (re.compile(r"^local:", re.I), "local"),
     (re.compile(r"^\d{6}\.(SZ|SH|BJ)$", re.I), "tencent"),
     (re.compile(r"^[A-Z]+\.US$", re.I), "yahoo"),
+    # Argentina / BYMA listings resolved by Asistente Casa via Yahoo ISIN search.
+    # The symbol is already provider-qualified; never derive .BA from a bare ticker.
+    (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "yahoo"),
     (re.compile(r"^\d{3,5}\.HK$", re.I), "tencent"),
     # India: NSE (RELIANCE.NS) / BSE (500325.BO). Tickers may carry '&' and '-'
     # (e.g. M&M.NS, BAJAJ-AUTO.NS). Served by Yahoo's public chart endpoint.
