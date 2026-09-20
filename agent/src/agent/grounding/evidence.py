@@ -101,6 +101,12 @@ _ANALYSIS_KIND_ALIASES = {
     "return_vol": "vol",
     "return_volatility": "vol",
     "vol": "vol",
+    "vol20_ann": "vol",
+    "vol60_ann": "vol",
+    "rsi14": "rsi",
+    "macd": "macd",
+    "macd_signal": "macd",
+    "macd_hist": "macd",
     "max_drawdown": "drawdown",
     "maxdd": "drawdown",
     "drawdown": "drawdown",
@@ -283,6 +289,55 @@ def _is_number(value: Any) -> bool:
     )
 
 
+_BACKTEST_STDOUT_FIELDS = frozenset(
+    {
+        "sma21",
+        "sma42",
+        "sma50",
+        "sma200",
+        "rsi14",
+        "macd",
+        "macd_signal",
+        "macd_hist",
+        "avg_volume20",
+        "vol20_ann",
+        "vol60_ann",
+        "support20",
+        "support60",
+        "resistance20",
+        "resistance60",
+    }
+)
+
+_BACKTEST_STDOUT_PAIR_RE = re.compile(
+    r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+    r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
+)
+
+
+def _backtest_stdout_pairs(stdout: Any) -> list[tuple[str, float]]:
+    """Return allowlisted finite key=value metrics from successful backtest stdout.
+
+    This is deliberately not a generic number scraper. Only stable machine-like
+    keys used by analysis scripts are accepted, so prose/debug output cannot mint
+    evidence merely by printing a number.
+    """
+    if not isinstance(stdout, str):
+        return []
+    pairs: list[tuple[str, float]] = []
+    for match in _BACKTEST_STDOUT_PAIR_RE.finditer(stdout):
+        key = match.group(1).casefold()
+        if key not in _BACKTEST_STDOUT_FIELDS:
+            continue
+        try:
+            value = float(match.group(2))
+        except ValueError:
+            continue
+        if math.isfinite(value):
+            pairs.append((key, value))
+    return pairs
+
+
 def _coerce_csv_number(value: Any) -> int | float | None:
     """Coerce a CSV text cell (``"0.375"``) to a finite number, or None."""
     if _is_number(value):
@@ -400,6 +455,19 @@ _REGISTERED_PRICE_INDICATORS: dict[str, tuple[str, ...]] = {
         "indicators.bollinger.upper",
         "indicators.bollinger.middle",
         "indicators.bollinger.lower",
+    ),
+    # Successful backtests may expose compact custom analysis values through
+    # strict key=value stdout. Only the allowlisted price-level keys below are
+    # admitted as price evidence; arbitrary printed numbers remain ignored.
+    "backtest": (
+        "stdout.sma21",
+        "stdout.sma42",
+        "stdout.sma50",
+        "stdout.sma200",
+        "stdout.support20",
+        "stdout.support60",
+        "stdout.resistance20",
+        "stdout.resistance60",
     ),
 }
 
@@ -686,6 +754,37 @@ class _EvidenceMixin:
                 continue
             seen_files.add(file_path)
             recorded += self._record_metrics_file(file_path, call_id)
+
+        # Custom signal engines sometimes emit small diagnostic metrics to
+        # stdout instead of metrics.csv/json. Treat only allowlisted key=value
+        # pairs from a successful backtest as structured evidence. The raw
+        # stdout remains untrusted text and is never scanned for free-form
+        # numbers.
+        for key, value in _backtest_stdout_pairs(payload.get("stdout")):
+            self._evidence.append(
+                EvidenceRecord(
+                    call_id=call_id,
+                    tool="backtest",
+                    symbol=None,
+                    source="backtest_stdout",
+                    timestamp=None,
+                    field=f"stdout.{key}",
+                    value=value,
+                    status="observed",
+                )
+            )
+            kind = _metric_kind_for_path(key)
+            if kind is not None:
+                self._analysis_metrics.append(
+                    {
+                        "metric": kind,
+                        "value": value,
+                        "tool": "backtest",
+                        "call_id": call_id,
+                        "field": f"stdout.{key}",
+                    }
+                )
+            recorded += 1
         return recorded
 
     def _record_metrics_file(self, path: Path, call_id: str) -> int:
