@@ -126,6 +126,10 @@ class BacktestTool(BaseTool):
     }
     repeatable = True
     is_readonly = False
+    # The tool returns at most the last 2K chars of stdout/stderr. Keeping that
+    # compact result visible prevents the planner from forgetting custom
+    # analysis metrics it just computed and falsely claiming they were absent.
+    preserve_during_microcompact = True
 
     def execute(self, **kwargs) -> str:
         """Execute backtest."""
