@@ -289,53 +289,83 @@ def _is_number(value: Any) -> bool:
     )
 
 
-_BACKTEST_STDOUT_FIELDS = frozenset(
-    {
-        "sma21",
-        "sma42",
-        "sma50",
-        "sma200",
-        "rsi14",
-        "macd",
-        "macd_signal",
-        "macd_hist",
-        "avg_volume20",
-        "vol20_ann",
-        "vol60_ann",
-        "support20",
-        "support60",
-        "resistance20",
-        "resistance60",
-    }
+_BACKTEST_STDOUT_KEY_ALIASES = {
+    "sma21": "sma21",
+    "sma_21": "sma21",
+    "sma42": "sma42",
+    "sma_42": "sma42",
+    "sma50": "sma50",
+    "sma_50": "sma50",
+    "sma200": "sma200",
+    "sma_200": "sma200",
+    "rsi14": "rsi14",
+    "rsi_14": "rsi14",
+    "macd": "macd",
+    "macd_signal": "macd_signal",
+    "signal": "macd_signal",
+    "macd_hist": "macd_hist",
+    "macd_histogram": "macd_hist",
+    "avg_volume20": "avg_volume20",
+    "avg_volume_20": "avg_volume20",
+    "volume_avg20": "avg_volume20",
+    "vol20_ann": "vol20_ann",
+    "vol20_annualized": "vol20_ann",
+    "vol60_ann": "vol60_ann",
+    "vol60_annualized": "vol60_ann",
+    "support20": "support20",
+    "support_20": "support20",
+    "support60": "support60",
+    "support_60": "support60",
+    "resistance20": "resistance20",
+    "resistance_20": "resistance20",
+    "resistance60": "resistance60",
+    "resistance_60": "resistance60",
+}
+
+_BACKTEST_STDOUT_JSON_PREFIX_RE = re.compile(
+    r"(?m)(?<![A-Za-z0-9_])([A-Z][A-Z0-9_]*)\\s*=\\s*(?=\\{)"
 )
 
-_BACKTEST_STDOUT_PAIR_RE = re.compile(
-    r"(?<![A-Za-z0-9_])([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
-    r"([-+]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?)"
-)
 
+def _backtest_stdout_metrics(stdout: Any) -> list[tuple[str | None, str, float]]:
+    """Return allowlisted metrics from labelled JSON objects in backtest stdout.
 
-def _backtest_stdout_pairs(stdout: Any) -> list[tuple[str, float]]:
-    """Return allowlisted finite key=value metrics from successful backtest stdout.
-
-    This is deliberately not a generic number scraper. Only stable machine-like
-    keys used by analysis scripts are accepted, so prose/debug output cannot mint
-    evidence merely by printing a number.
+    Accepted shape is the one produced in real Agent runs: an uppercase label,
+    an equals sign, and one JSON object. Only explicitly registered metric keys
+    are admitted. Arbitrary prose, key=value text and unknown JSON keys cannot
+    mint evidence. A canonical-looking outer object key is retained as symbol.
     """
     if not isinstance(stdout, str):
         return []
-    pairs: list[tuple[str, float]] = []
-    for match in _BACKTEST_STDOUT_PAIR_RE.finditer(stdout):
-        key = match.group(1).casefold()
-        if key not in _BACKTEST_STDOUT_FIELDS:
-            continue
+    decoder = json.JSONDecoder()
+    found: list[tuple[str | None, str, float]] = []
+
+    def visit(value: Any, symbol: str | None = None) -> None:
+        if not isinstance(value, dict):
+            return
+        for raw_key, child in value.items():
+            key = str(raw_key)
+            normalized_symbol = _normalize_symbol(key)
+            child_symbol = symbol
+            if "." in normalized_symbol and normalized_symbol.rsplit(".", 1)[-1] in {
+                "BA", "US", "NS", "BO", "TO", "V"
+            }:
+                child_symbol = normalized_symbol
+            alias = _BACKTEST_STDOUT_KEY_ALIASES.get(key.casefold())
+            if alias is not None and _is_number(child):
+                found.append((child_symbol, alias, float(child)))
+                continue
+            if isinstance(child, dict):
+                visit(child, child_symbol)
+
+    for match in _BACKTEST_STDOUT_JSON_PREFIX_RE.finditer(stdout):
         try:
-            value = float(match.group(2))
-        except ValueError:
+            payload, _ = decoder.raw_decode(stdout[match.end():])
+        except (json.JSONDecodeError, TypeError, ValueError):
             continue
-        if math.isfinite(value):
-            pairs.append((key, value))
-    return pairs
+        if isinstance(payload, dict):
+            visit(payload)
+    return found
 
 
 def _coerce_csv_number(value: Any) -> int | float | None:
@@ -760,17 +790,19 @@ class _EvidenceMixin:
         # pairs from a successful backtest as structured evidence. The raw
         # stdout remains untrusted text and is never scanned for free-form
         # numbers.
-        for key, value in _backtest_stdout_pairs(payload.get("stdout")):
+        for symbol, key, value in _backtest_stdout_metrics(payload.get("stdout")):
             self._evidence.append(
                 EvidenceRecord(
                     call_id=call_id,
                     tool="backtest",
-                    symbol=None,
-                    source="backtest_stdout",
+                    symbol=symbol,
+                    source="backtest_stdout_json",
                     timestamp=None,
                     field=f"stdout.{key}",
                     value=value,
                     status="observed",
+                    currency=_infer_currency(symbol or ""),
+                    venue=_infer_venue(symbol or ""),
                 )
             )
             kind = _metric_kind_for_path(key)
@@ -782,6 +814,7 @@ class _EvidenceMixin:
                         "tool": "backtest",
                         "call_id": call_id,
                         "field": f"stdout.{key}",
+                        "symbol": symbol,
                     }
                 )
             recorded += 1
