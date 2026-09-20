@@ -1383,30 +1383,10 @@ class _PolicyMixin:
     ) -> list[dict[str, Any]]:
         """A derived figure must be the arithmetic its note states.
 
-        If the declared ref directly produced the final metric, the tool result
-        is authoritative evidence for that result value. In that narrow case
-        the arithmetic must still evaluate to the same figure, but intermediate
-        statistical operands need not all have been emitted separately.
+        Every operand still has to be anchored by the declared provenance.
+        A tool directly emitting the final metric does not waive provenance for
+        other operands used by the written derivation.
         """
-        if declaration is not None and declaration.ref.strip():
-            scoped = self._referenced(declaration.ref, symbol, figure)
-            evaluated = _formula_in_note(declaration.note)
-            if scoped is not None and evaluated is not None:
-                scoped_records, metric_values, _ = scoped
-                produced = [
-                    float(record.value)
-                    for record in scoped_records
-                    if record.value is not None
-                ] + [float(value) for value in metric_values]
-                if self._result_matches(figure, evaluated[0], declaration.note) and (
-                    self._matches_evidence(
-                        figure,
-                        produced if not figure.percent else [],
-                        produced,
-                    )
-                ):
-                    return []
-
         derivation = self._derivation(declaration, symbol, records, money=figure.currency)
         if isinstance(derivation, str):
             return [
