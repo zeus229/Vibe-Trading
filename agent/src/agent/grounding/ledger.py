@@ -275,7 +275,11 @@ class GroundingLedger(
             self._ingest_resolution(arguments, payload, call_id)
         elif tool_name == "get_market_data":
             self._ingest_market_data(arguments, payload, call_id)
-        elif payload is not None:
+        elif payload is not None and tool_name not in _ANALYSIS_TOOLS:
+            # Analysis tools have explicit evidence contracts above. Do not also
+            # flatten their envelopes generically (exit_code, bookkeeping, raw
+            # stdout, etc.), or a successful envelope can mint provenance even
+            # when it produced no admissible analysis evidence.
             self._ingest_generic_numeric(tool_name, arguments, payload, call_id)
         self.persist()
 
