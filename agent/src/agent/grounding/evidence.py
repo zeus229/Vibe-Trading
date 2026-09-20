@@ -323,7 +323,7 @@ _BACKTEST_STDOUT_KEY_ALIASES = {
 }
 
 _BACKTEST_STDOUT_JSON_PREFIX_RE = re.compile(
-    r"(?m)(?<![A-Za-z0-9_])([A-Z][A-Z0-9_]*)\\s*=\\s*(?=\\{)"
+    r"(?m)(?<![A-Za-z0-9_])([A-Z][A-Z0-9_]*)\s*=\s*(?=\{)"
 )
 
 
