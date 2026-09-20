@@ -32,10 +32,11 @@ def test_successful_backtest_stdout_allowlist_grounds_ggal_metrics(tmp_path):
     _ingest(
         ledger,
         (
-            "sma21=6933.5287853422615 sma42=7158.9736 avg_volume20=1612178.95\n"
-            "vol20_ann=0.302052 vol60_ann=0.366920\n"
-            "support20=6552.2 support60=6442.4 "
-            "resistance20=7311.3 resistance60=8371.2\n"
+            'TECHNICAL_METRICS={"GGAL.BA":{"sma21":6933.5287853422615,'
+            '"sma42":7158.9736,"avg_volume_20":1612178.95,'
+            '"vol20_ann":0.302052,"vol60_ann":0.366920,'
+            '"support20":6552.2,"support60":6442.4,'
+            '"resistance20":7311.3,"resistance60":8371.2}}'
         ),
     )
 
@@ -59,7 +60,11 @@ def test_successful_backtest_stdout_allowlist_grounds_ggal_metrics(tmp_path):
 
 def test_backtest_stdout_does_not_ingest_arbitrary_key_value_text(tmp_path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="Analiza GGAL")
-    _ingest(ledger, "invented_target=999999 foo=42 debug_value=123.45")
+    _ingest(
+        ledger,
+        'GGAL_TECHNICAL_RESULT={"GGAL.BA":{"invented_target":999999,"foo":42,'
+        '"debug_value":123.45}}',
+    )
 
     result = ledger.validate_final_answer(
         "El valor calculado es 999999.\n\n"
@@ -75,7 +80,12 @@ def test_backtest_stdout_does_not_ingest_arbitrary_key_value_text(tmp_path):
 
 def test_failed_backtest_stdout_never_becomes_evidence(tmp_path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="Analiza GGAL")
-    _ingest(ledger, "vol20_ann=0.302052", status="error", exit_code=1)
+    _ingest(
+        ledger,
+        'TECHNICAL_METRICS={"GGAL.BA":{"vol20_ann":0.302052}}',
+        status="error",
+        exit_code=1,
+    )
 
     result = ledger.validate_final_answer(
         "Volatilidad 20: 30.2052%.\n\n"
@@ -83,6 +93,38 @@ def test_failed_backtest_stdout_never_becomes_evidence(tmp_path):
     )
 
     assert result.valid is False
+
+
+
+def test_backtest_stdout_key_value_text_is_not_evidence(tmp_path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analiza GGAL")
+    _ingest(ledger, "sma21=6933.5288 vol20_ann=0.302052")
+
+    result = ledger.validate_final_answer(
+        "SMA 21: 6933.5288.\n\n"
+        "```figures\n6933.5288 | observed | sma21 | backtest\n```"
+    )
+
+    assert result.valid is False
+
+
+def test_backtest_stdout_real_aliases_are_normalized(tmp_path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analiza GGAL")
+    _ingest(
+        ledger,
+        (
+            'GGAL_TECHNICAL_RESULT={"GGAL.BA":{"sma_21":6933.5288,'
+            '"avg_volume_20":1612178.95,"vol20_annualized":0.302052,'
+            '"support_20":6507.28,"resistance_20":8316.36}}'
+        ),
+    )
+
+    fields = {record.field: record.value for record in ledger._evidence if record.tool == "backtest"}
+    assert fields["stdout.sma21"] == 6933.5288
+    assert fields["stdout.avg_volume20"] == 1612178.95
+    assert fields["stdout.vol20_ann"] == 0.302052
+    assert fields["stdout.support20"] == 6507.28
+    assert fields["stdout.resistance20"] == 8316.36
 
 
 def test_backtest_result_is_preserved_during_microcompact():
