@@ -513,6 +513,7 @@ class FinancialRigorTool(BaseTool):
     }
     is_readonly = True
     deterministic = True  # pure computation; identical args -> identical result
+    preserve_during_microcompact = True
     repeatable = True  # loop.py dedups non-repeatable tools by name; users call
                        # different sub-commands / params in one session.
 
