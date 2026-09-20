@@ -539,6 +539,18 @@ class _PolicyMixin:
                     )
                     continue
             if declaration is None:
+                inline_declaration = self._inline_formula_declaration(content, figure)
+                if inline_declaration is not None:
+                    checked_price = True
+                    issues.extend(
+                        self._check_derived(
+                            figure,
+                            inline_declaration,
+                            symbol,
+                            records,
+                        )
+                    )
+                    continue
                 found = self._check_observed(figure, None, symbol, records, market_price)
                 if block.present and found:
                     issues.append(
@@ -1325,6 +1337,43 @@ class _PolicyMixin:
             if not sign or target * sign >= 0
         )
 
+    def _inline_formula_declaration(
+        self,
+        content: str,
+        figure: Figure,
+    ) -> Declaration | None:
+        """Recognize an inline arithmetic result written as expr = value.
+
+        Only the figure immediately following an equality/result separator in
+        its punctuation segment is considered. The left-hand text must contain
+        a parseable arithmetic expression whose result matches the written
+        figure at its own precision. Operand provenance is still checked later
+        by _check_derived.
+        """
+        left, _ = segment_bounds(content, figure.start, figure.end)
+        prefix = content[left:figure.start]
+        separator_pos = max(
+            (prefix.rfind(mark) for mark in ("=", "＝", "≈", "≒")),
+            default=-1,
+        )
+        if separator_pos < 0:
+            return None
+        note = prefix[:separator_pos].strip()
+        evaluated = _formula_in_note(note)
+        if evaluated is None:
+            return None
+        result, _, _ = evaluated
+        if not self._result_matches(figure, result, note):
+            return None
+        return Declaration(
+            index=-1,
+            value_text=figure.digits or figure.text,
+            value=figure.value,
+            percent=figure.percent,
+            role="derived",
+            note=note,
+            ref="",
+        )
     def _check_derived(
         self,
         figure: Figure,
@@ -1332,7 +1381,32 @@ class _PolicyMixin:
         symbol: str | None,
         records: Sequence[EvidenceRecord],
     ) -> list[dict[str, Any]]:
-        """A derived figure must be the arithmetic its note states."""
+        """A derived figure must be the arithmetic its note states.
+
+        If the declared ref directly produced the final metric, the tool result
+        is authoritative evidence for that result value. In that narrow case
+        the arithmetic must still evaluate to the same figure, but intermediate
+        statistical operands need not all have been emitted separately.
+        """
+        if declaration is not None and declaration.ref.strip():
+            scoped = self._referenced(declaration.ref, symbol, figure)
+            evaluated = _formula_in_note(declaration.note)
+            if scoped is not None and evaluated is not None:
+                scoped_records, metric_values, _ = scoped
+                produced = [
+                    float(record.value)
+                    for record in scoped_records
+                    if record.value is not None
+                ] + [float(value) for value in metric_values]
+                if self._result_matches(figure, evaluated[0], declaration.note) and (
+                    self._matches_evidence(
+                        figure,
+                        produced if not figure.percent else [],
+                        produced,
+                    )
+                ):
+                    return []
+
         derivation = self._derivation(declaration, symbol, records, money=figure.currency)
         if isinstance(derivation, str):
             return [
