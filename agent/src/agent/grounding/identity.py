@@ -122,7 +122,7 @@ _CANONICAL_SYMBOL_RE = re.compile(
     # match turns any "…/us.reuters/…" host inside a source URL into the
     # symbol REUTERS.US and fails the answer for an unsourced figure.
     r"(?-i:US\.[A-Z][A-Z0-9&-]{0,19})|"
-    r"[A-Z][A-Z0-9&.-]{0,19}\.(?:US|NS|BO|FX|TO|V)|"
+    r"[A-Z][A-Z0-9&.-]{0,19}\.(?:US|NS|BO|FX|TO|V|BA)|"
     r"[A-Z0-9]{2,15}(?:-|/)(?:USDT|USDC|USD|BTC|ETH)|"
     r"[A-Z]{2,15}(?:" + "|".join(_JOINED_CRYPTO_QUOTE_SUFFIXES) + r")|"
     r"\^[A-Z0-9&.\-]{1,20}|"
@@ -251,6 +251,7 @@ def _infer_venue(symbol: str) -> str | None:
         ".FX": "forex",
         ".TO": "toronto",
         ".V": "tsx_venture",
+        ".BA": "buenos_aires",
     }
     for suffix, venue in suffixes.items():
         if upper.endswith(suffix):
@@ -307,6 +308,7 @@ def _infer_currency(symbol: str) -> str | None:
         ".BO": "INR",
         ".TO": "CAD",
         ".V": "CAD",
+        ".BA": "ARS",
     }
     for suffix, currency in suffixes.items():
         if upper.endswith(suffix):
@@ -625,6 +627,77 @@ class _IdentityMixin:
             )
             self._identity_required = True
             self._buffer_output = True
+
+    def _ingest_trusted_portfolio_identities(
+        self,
+        payload: Mapping[str, Any] | None,
+        call_id: str,
+    ) -> None:
+        """Lock verified local provider identities returned by portfolio_summary.
+
+        Asistente Casa is authoritative for the held local instrument. Only
+        provider identities resolved offline from the same local ISIN are
+        trusted here. Persisted/unverified mappings and CEDEAR underlying
+        aliases remain context only and never authorize market-sensitive tools.
+        """
+        if not isinstance(payload, Mapping):
+            return
+        context = payload.get("context")
+        if not isinstance(context, Mapping):
+            return
+        holdings = context.get("holdings_native")
+        if not isinstance(holdings, Mapping):
+            return
+
+        for rows in holdings.values():
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                instrument_type = str(row.get("source_instrument_type") or "").strip().upper()
+                if instrument_type not in {"ACCIONES", "CEDEARS"}:
+                    continue
+                if str(row.get("market") or "").strip().upper() != "BYMA":
+                    continue
+                isin = str(row.get("isin") or "").strip().upper()
+                identity = row.get("provider_identity")
+                if not isin or not isinstance(identity, Mapping):
+                    continue
+                if str(identity.get("provider") or "").strip().casefold() != "yahoo":
+                    continue
+                if str(identity.get("resolution") or "").strip().casefold() != "isin":
+                    continue
+                if identity.get("verified") is not True:
+                    continue
+                if str(identity.get("resolved_by_isin") or "").strip().upper() != isin:
+                    continue
+                symbol = _normalize_symbol(identity.get("symbol"))
+                if not symbol.endswith(".BA"):
+                    continue
+
+                key = f"portfolio:{isin}"
+                existing = self._identities.get(key)
+                self._identities[key] = IdentityRecord(
+                    query=isin,
+                    status="locked",
+                    symbol=symbol,
+                    venue=_infer_venue(symbol),
+                    instrument_type="listed_security",
+                    currency=_infer_currency(symbol),
+                    source_tool_call_id=call_id,
+                    source=["asistente-casa:provider_identity"],
+                    candidates=[{
+                        "symbol": symbol,
+                        "market": "BYMA",
+                        "source": "asistente-casa",
+                        "isin": isin,
+                    }],
+                    version=(existing.version + 1) if existing else 1,
+                )
+                self._identity_required = True
+                self._buffer_output = True
+                self._session_symbols.add(symbol)
 
     def _begin_resolution(self, query: str, call_id: str) -> None:
         """Enter unresolved state before the resolver executes."""
