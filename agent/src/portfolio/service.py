@@ -741,6 +741,8 @@ class PortfolioService:
                     "source_instrument_id": row.get("source_instrument_id"),
                     "symbol": row.get("symbol"),
                     "isin": row.get("isin"),
+                    "provider_identity": row.get("provider_identity"),
+                    "underlying": row.get("underlying"),
                     "name": row.get("name"),
                     "asset_type": row.get("asset_type"),
                     "source_instrument_type": row.get("source_instrument_type"),
