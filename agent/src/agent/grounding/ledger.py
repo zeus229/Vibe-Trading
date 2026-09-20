@@ -269,6 +269,8 @@ class GroundingLedger(
         self._track_session_symbols(arguments, result)
         if tool_name in _ANALYSIS_TOOLS:
             self._ingest_analysis_result(tool_name, arguments, payload, call_id)
+        if tool_name == "portfolio_summary":
+            self._ingest_trusted_portfolio_identities(payload, call_id)
         if tool_name == _RESOLVER_TOOL:
             self._ingest_resolution(arguments, payload, call_id)
         elif tool_name == "get_market_data":
