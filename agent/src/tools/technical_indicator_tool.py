@@ -203,6 +203,7 @@ class TechnicalIndicatorTool(BaseTool):
     }
     repeatable = True
     is_readonly = True
+    preserve_during_microcompact = True
 
     def execute(self, **kwargs: Any) -> str:
         symbol = str(kwargs.get("symbol", "")).strip()
