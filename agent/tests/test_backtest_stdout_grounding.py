@@ -62,13 +62,13 @@ def test_backtest_stdout_does_not_ingest_arbitrary_key_value_text(tmp_path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="Analiza GGAL")
     _ingest(
         ledger,
-        'GGAL_TECHNICAL_RESULT={"GGAL.BA":{"invented_target":999999,"foo":42,'
+        'GGAL_TECHNICAL_RESULT={"GGAL.BA":{"invented_target":999999.5,"foo":42,'
         '"debug_value":123.45}}',
     )
 
     result = ledger.validate_final_answer(
-        "El valor calculado es 999999.\n\n"
-        "```figures\n999999 | observed | invented_target | backtest\n```"
+        "El valor calculado es 999999.5.\n\n"
+        "```figures\n999999.5 | observed | invented_target | backtest\n```"
     )
 
     assert result.valid is False
