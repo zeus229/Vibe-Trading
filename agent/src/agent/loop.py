@@ -513,7 +513,7 @@ def _replay_context_result(result: str) -> str:
     return json.dumps(replay_payload, ensure_ascii=False)
 
 
-def _microcompact(messages: list) -> list:
+def _microcompact(messages: list, preserve_tools: set[str] | None = None) -> list:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
 
     Args:
@@ -524,11 +524,14 @@ def _microcompact(messages: list) -> list:
         helper contract). The loop reconciles its dedup ledger separately by
         exact successful call identity, not by these tool names.
     """
+    preserve_tools = preserve_tools or set()
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     if len(tool_msgs) <= KEEP_RECENT:
         return []
     newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
+        if str(msg.get("name") or "") in preserve_tools:
+            continue
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
         # re-clearing it would rewrite the recorded original size with the
@@ -3105,7 +3108,12 @@ class AgentLoop:
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
-        _microcompact(messages)
+        preserve_tools = {
+            name
+            for name, tool in getattr(self.registry, "_tools", {}).items()
+            if getattr(tool, "preserve_during_microcompact", False)
+        }
+        _microcompact(messages, preserve_tools=preserve_tools)
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:
             trace.write({
