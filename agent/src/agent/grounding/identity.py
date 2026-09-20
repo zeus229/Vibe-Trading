@@ -581,8 +581,10 @@ class _IdentityMixin:
         it names rather than being read as a silent venue rewrite.
 
         A bare code carries no venue, so it is accepted only when exactly one
-        locked identity has it as its base. That uniqueness — not a list of
-        which tools are allowed to use one — is what makes a bare ticker safe.
+        locked identity has it as its base. Buenos Aires listings are stricter:
+        a locked `.BA` identity must be consumed with the exact provider-qualified
+        symbol because the same bare ticker can route to an unrelated default
+        market before the resolver has a chance to correct it.
         The list this replaced named nine tools while eleven documented
         argument spellings across the registry were bare or prefixed, so the
         tools' own schema examples were being rejected.
@@ -603,7 +605,9 @@ class _IdentityMixin:
         matches = [
             symbol
             for symbol in authorized
-            if "." in symbol and symbol.rsplit(".", 1)[0] == requested
+            if "." in symbol
+            and not symbol.endswith(".BA")
+            and symbol.rsplit(".", 1)[0] == requested
         ]
         return matches[0] if len(matches) == 1 else None
 
