@@ -23,6 +23,9 @@ class BaseTool(ABC):
             payload, even when the tool is otherwise repeatable. Tools opting
             in must provide an explicit freshness argument when a caller needs
             to bypass replay (for example ``no_cache=True``).
+        preserve_during_microcompact: Keep this tool's visible result during
+            layer-1 microcompaction. Use sparingly for compact, high-value
+            evidence that the planner needs to finish without re-fetch loops.
     """
 
     name: str = ""
@@ -39,6 +42,7 @@ class BaseTool(ABC):
     # successful result. The loop still bypasses replay for explicit freshness
     # requests such as ``no_cache=True``.
     replay_after_compaction: bool = False
+    preserve_during_microcompact: bool = False
 
     @classmethod
     def check_available(cls) -> bool:
