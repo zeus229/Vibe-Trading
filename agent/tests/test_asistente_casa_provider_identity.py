@@ -127,6 +127,16 @@ def test_verified_isin_portfolio_identity_locks_ba_symbol(tmp_path):
     )
     assert authorization.allowed is True
 
+    bare = ledger.authorize_tool_call(
+        "technical_indicators",
+        {"symbol": "GGAL"},
+        batch_authorized_symbols=ledger.authorized_symbols,
+        batch_identity_status=ledger.identity_status,
+        call_id="call-tech-bare",
+    )
+    assert bare.allowed is False
+    assert bare.error_code == "identity_mismatch"
+
 
 def test_unverified_or_wrong_isin_portfolio_identity_does_not_lock(tmp_path):
     cases = [
