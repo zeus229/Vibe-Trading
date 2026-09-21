@@ -1297,6 +1297,13 @@ class AgentLoop:
         empty_model_response_iter: int | None = None
         consecutive_empty_responses = 0
         grounding_revisions = 0
+        # A rejected draft whose evidence is already sufficient gets one
+        # correction-only turn with tools withheld. Without this boundary the
+        # model can re-fetch the same read-only evidence forever; ToolProgress
+        # correctly sees no new observation and eventually aborts as
+        # no_progress even though the safe action is simply to revise/remove
+        # the rejected figures.
+        grounding_correction_text_only = False
         llm_usage_summary = _new_llm_usage_summary(self.llm)
         last_response_model: str | None = None
         goal_continuations = 0
@@ -1480,11 +1487,27 @@ class AgentLoop:
                         reasoning_event["tail"] = reasoning_tail
                     self._emit("reasoning_delta", reasoning_event)
 
-                # On last iteration, drop tool definitions to force text output
+                # On the last iteration, or on the correction turn after a
+                # grounding rejection that did not request explicit recovery,
+                # drop tool definitions and force the model to revise using the
+                # evidence already in context. Missing identity/price evidence
+                # still follows recovery_action() and keeps tools available.
                 is_last_iteration = (iteration == self.max_iterations)
-                tool_defs = None if is_last_iteration else self.registry.get_definitions()
+                correction_text_only = grounding_correction_text_only
+                tool_defs = (
+                    None
+                    if is_last_iteration or correction_text_only
+                    else self.registry.get_definitions()
+                )
                 if is_last_iteration:
                     trace.write({"type": "forced_text_only", "iter": current_iter})
+                elif correction_text_only:
+                    trace.write(
+                        {
+                            "type": "grounding_correction_text_only",
+                            "iter": current_iter,
+                        }
+                    )
 
                 _llm_timeout_s = _llm_timeout_seconds()
                 llm_timeout = _llm_timeout_s if _llm_timeout_s > 0 else None
@@ -1690,6 +1713,11 @@ class AgentLoop:
                         continue
                     # A real response resets the consecutive-empty counter.
                     consecutive_empty_responses = 0
+                    # The correction-only constraint is consumed only by a
+                    # non-empty text response. Content-filter and empty-response
+                    # retries above keep it armed for the next iteration.
+                    if correction_text_only:
+                        grounding_correction_text_only = False
                     # A model can answer the forced-text final iteration with its
                     # native tool-call DSL as prose (see _looks_like_tool_call_syntax).
                     # That is not an answer: retry once with a plain-text instruction,
@@ -1844,6 +1872,12 @@ class AgentLoop:
                                 iteration < self.max_iterations
                                 and grounding_revisions < MAX_GROUNDING_REVISIONS
                             ):
+                                # recovery_action() returned None, so the gate
+                                # is not asking for more identity or price
+                                # evidence. Give the model one correction-only
+                                # turn instead of exposing read-only tools that
+                                # can return the same observations again.
+                                grounding_correction_text_only = True
                                 self._emit(
                                     "grounding_status",
                                     {
