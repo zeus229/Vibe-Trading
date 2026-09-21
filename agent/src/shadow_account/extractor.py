@@ -56,6 +56,7 @@ _MARKET_KEY_MAP = {
     "us": "us_equity",
     "hk": "hk_equity",
     "uk": "uk_equity",
+    "ar": "ar_equity",
     "crypto": "crypto",
 }
 
