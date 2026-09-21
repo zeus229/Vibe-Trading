@@ -843,6 +843,7 @@ _MARKET_TO_SOURCE = {
     "kr_equity": "pykrx",
     "ca_equity": "yahoo",
     "uk_equity": "yahoo",
+    "ar_equity": "yahoo",
     "vietnam_equity": "yahoo",
     "crypto": "okx",
     "futures": "tushare",
@@ -1530,7 +1531,7 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
         from backtest.engines.crypto import CryptoEngine
         return CryptoEngine(config)
     elif source in ("tushare", "akshare"):
-        if markets & {"us_equity", "hk_equity", "ca_equity", "uk_equity"}:
+        if markets & {"us_equity", "hk_equity", "ca_equity", "uk_equity", "ar_equity"}:
             from backtest.engines.global_equity import GlobalEquityEngine
             market = _detect_submarket(codes)
             return GlobalEquityEngine(config, market=market)
@@ -1552,7 +1553,7 @@ def _create_market_engine(source: str, config: dict, codes: List[str]):
         # Sources without a dedicated branch (local, stooq, tencent, ...):
         # follow the instrument market rather than the loader name, so e.g. a
         # local AAPL.US dataset gets US-equity execution rules instead of crypto.
-        if markets & {"us_equity", "hk_equity", "ca_equity", "uk_equity"}:
+        if markets & {"us_equity", "hk_equity", "ca_equity", "uk_equity", "ar_equity"}:
             from backtest.engines.global_equity import GlobalEquityEngine
             market = _detect_submarket(codes)
             return GlobalEquityEngine(config, market=market)
