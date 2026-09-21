@@ -216,6 +216,8 @@ FALLBACK_CHAINS: dict[str, list[str]] = {
     "ca_equity": ["yahoo", "yfinance", "local"],
     # UK (LSE .L): direct Yahoo first, SDK fallback second.
     "uk_equity": ["yahoo", "yfinance", "local"],
+    # Argentina (BYMA .BA): direct Yahoo first, SDK fallback second.
+    "ar_equity": ["yahoo", "yfinance", "local"],
     # Vietnam (.VN): Yahoo lists HOSE only — HNX and UPCOM are unsupported,
     # so those two are reachable only through the user's local files.
     "vietnam_equity": ["yahoo", "yfinance", "local"],
