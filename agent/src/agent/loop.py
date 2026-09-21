@@ -1297,12 +1297,11 @@ class AgentLoop:
         empty_model_response_iter: int | None = None
         consecutive_empty_responses = 0
         grounding_revisions = 0
-        # A rejected draft whose evidence is already sufficient gets one
-        # correction-only turn with tools withheld. Without this boundary the
-        # model can re-fetch the same read-only evidence forever; ToolProgress
-        # correctly sees no new observation and eventually aborts as
-        # no_progress even though the safe action is simply to revise/remove
-        # the rejected figures.
+        # A rejected draft whose only defects are numeric conflicts gets one
+        # correction-only turn with tools withheld. Those conflicts already
+        # carry evidence (for example a derivation_result_mismatch), so
+        # re-fetching the same read-only data cannot repair them; ToolProgress
+        # would eventually abort the redundant loop as no_progress.
         grounding_correction_text_only = False
         llm_usage_summary = _new_llm_usage_summary(self.llm)
         last_response_model: str | None = None
@@ -1487,11 +1486,11 @@ class AgentLoop:
                         reasoning_event["tail"] = reasoning_tail
                     self._emit("reasoning_delta", reasoning_event)
 
-                # On the last iteration, or on the correction turn after a
-                # grounding rejection that did not request explicit recovery,
-                # drop tool definitions and force the model to revise using the
-                # evidence already in context. Missing identity/price evidence
-                # still follows recovery_action() and keeps tools available.
+                # On the last iteration, or on a numeric-conflict correction
+                # turn whose evidence is already sufficient, drop tool
+                # definitions and force the model to revise using the evidence
+                # already in context. Missing/unsourced evidence and other
+                # rejection classes keep the ordinary tool surface available.
                 is_last_iteration = (iteration == self.max_iterations)
                 correction_text_only = grounding_correction_text_only
                 tool_defs = (
@@ -1872,12 +1871,18 @@ class AgentLoop:
                                 iteration < self.max_iterations
                                 and grounding_revisions < MAX_GROUNDING_REVISIONS
                             ):
-                                # recovery_action() returned None, so the gate
-                                # is not asking for more identity or price
-                                # evidence. Give the model one correction-only
-                                # turn instead of exposing read-only tools that
-                                # can return the same observations again.
-                                grounding_correction_text_only = True
+                                # A numeric conflict means the gate already
+                                # has evidence and rejected how the draft used
+                                # it. Do not let that correction turn re-fetch
+                                # the same observations. Other rejection classes
+                                # may still need research tools, so keep this
+                                # deliberately narrow.
+                                grounding_correction_text_only = bool(
+                                    validation.issues
+                                ) and all(
+                                    issue.get("code") == "numeric_claim_conflict"
+                                    for issue in validation.issues
+                                )
                                 self._emit(
                                     "grounding_status",
                                     {
