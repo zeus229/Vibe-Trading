@@ -21,6 +21,10 @@ Market rules:
     - Whole shares
     - Config-driven slippage
     - SDRT charged on purchases
+  Argentina (BYMA .BA, initial generic model):
+    - Whole shares
+    - Commission and slippage are config-driven
+    - No BYMA-specific settlement, short-sale, or fee rules are modeled yet
 
 India (NSE/BSE) is handled by the dedicated ``backtest.engines.india_equity``
 ``IndiaEquityEngine`` (T+1 delivery, circuit bands, STT/stamp/GST stack).
@@ -52,6 +56,8 @@ class GlobalEquityEngine(BaseEngine):
       - uk_stamp_tax: default 0.005 (0.5% Stamp Duty Reserve Tax on
         purchases only; chargeable on the buyer, paid on buying to close
         short positions too)
+      - slippage_ar: defaults to slippage_us
+      - ar_commission: broker/market cost rate, default 0.0
     """
 
     def __init__(self, config: dict, market: str = "us"):
@@ -78,6 +84,10 @@ class GlobalEquityEngine(BaseEngine):
         # caller's concern; this engine applies the statutory Main Market rate.
         self.slippage_uk: float = config.get("slippage_uk", self.slippage_us)
         self.uk_stamp_tax: float = config.get("uk_stamp_tax", 0.005)
+        # Argentina costs vary by broker/account; keep them explicit instead
+        # of inventing a universal BYMA fee.
+        self.slippage_ar: float = config.get("slippage_ar", self.slippage_us)
+        self.ar_commission: float = config.get("ar_commission", 0.0)
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
         """Allow same-session trading in both directions for every market."""
@@ -93,7 +103,7 @@ class GlobalEquityEngine(BaseEngine):
         """
         if self.market == "hk":
             return max(int(raw_size / 100) * 100, 0)
-        if self.market in {"ca", "uk"}:
+        if self.market in {"ca", "uk", "ar"}:
             return float(math.floor(max(raw_size, 0.0)))
         return round(max(raw_size, 0.0), 2)
 
@@ -115,6 +125,8 @@ class GlobalEquityEngine(BaseEngine):
             return comm
         if self.market == "ca":
             return size * price * self.ca_commission
+        if self.market == "ar":
+            return size * price * self.ar_commission
         if self.market == "uk":
             # SDRT is a purchase-side charge only: 0.5% of consideration on
             # the buyer, rounded to the nearest penny (FA86/S99(13); an exact
@@ -142,6 +154,8 @@ class GlobalEquityEngine(BaseEngine):
             rate = self.slippage_ca
         elif self.market == "uk":
             rate = self.slippage_uk
+        elif self.market == "ar":
+            rate = self.slippage_ar
         else:
             rate = self.slippage_us
         slipped = price * (1 + direction * rate)
