@@ -45,6 +45,8 @@ def infer_market(code: str) -> str:
         return "kr_equity"
     if code_upper.endswith((".TO", ".V")):
         return "ca_equity"
+    if code_upper.endswith(".BA"):
+        return "ar_equity"
     if code_upper.endswith(".US"):
         return "us_equity"
     # Yahoo's continuous-front-month futures notation (``GC=F``, ``CL=F``,
