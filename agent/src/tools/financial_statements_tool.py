@@ -328,7 +328,7 @@ def _yahoo_value(value: Any) -> Any:
 def _fetch_yahoo_statement(
     code: str, *, statement: str, period: str
 ) -> dict[str, Any]:
-    """Fetch one UK (.L) statement/indicators from Yahoo quoteSummary.
+    """Fetch one Yahoo-backed UK (.L) or Argentina (.BA) statement/indicators.
 
     Args:
         code: UK symbol (e.g. ``"VOD.L"``).
@@ -677,6 +677,9 @@ def _classify_market(code: str) -> str | None:
     if suffix == "L":
         # London Stock Exchange (#1206).
         return "uk"
+    if suffix == "BA":
+        # Buenos Aires / BYMA listings are served by Yahoo quoteSummary.
+        return "ar"
     return None
 
 
@@ -688,8 +691,8 @@ class FinancialStatementsTool(BaseTool):
         "Fetch a single stock's financial statements: balance sheet, income "
         "statement, cash-flow statement, or key per-period indicators (margins, "
         "ROE, EPS, etc.). Markets: A-share (.SH/.SZ/.BJ), US (.US), "
-        "Hong Kong (.HK) and UK LSE (.L). US uses SEC EDGAR companyfacts; "
-        "A-share and HK use Eastmoney; UK uses Yahoo quoteSummary (annual "
+        "Hong Kong (.HK), UK LSE (.L), and Argentina BYMA (.BA). US uses SEC EDGAR companyfacts; "
+        "A-share and HK use Eastmoney; UK and Argentina use Yahoo quoteSummary (annual "
         "history). Reports come back newest-first as flat per-period rows. Use "
         'this to read fundamentals before building a valuation or screen. Example: '
         '{"code": "600519.SH", "statement": "income", "period": "annual"}.'
@@ -768,13 +771,13 @@ class FinancialStatementsTool(BaseTool):
         market = _classify_market(code)
         if market is None:
             return _error(
-                "code must carry a supported suffix: .SH/.SZ/.BJ, .US, .HK, or .L"
+                "code must carry a supported suffix: .SH/.SZ/.BJ, .US, .HK, .L, or .BA"
             )
 
         if market == "us":
             result = _fetch_sec_statement(code, statement=statement, period=period)
             source = "sec_edgar"
-        elif market == "uk":
+        elif market in ("uk", "ar"):
             result = _fetch_yahoo_statement(code, statement=statement, period=period)
             source = "yahoo"
         else:
