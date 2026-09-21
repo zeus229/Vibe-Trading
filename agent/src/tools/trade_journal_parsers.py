@@ -644,6 +644,9 @@ def _infer_market_from_symbol(symbol: str) -> str:
         # LSE names (#1206); without this they landed in "other"
         # and shadow analysis silently degraded to NaN.
         return "uk"
+    if s.endswith(".BA"):
+        # Yahoo-backed Buenos Aires / BYMA equity listing.
+        return "ar"
     if s.endswith(".SH") or s.endswith(".SZ") or s.endswith(".BJ"):
         return "china_a"
     if ("-" in s or "/" in s) and any(quote in s for quote in ("USDT", "USDC", "BTC", "USD")):
