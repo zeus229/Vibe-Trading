@@ -60,6 +60,9 @@ _EASTMONEY_SUGGEST_URL = "https://searchapi.eastmoney.com/api/suggest/get"
 # venue signal and may be legit non-Canadian lookups (A-share/HK/US), so they
 # are deliberately left to the normal fan-out.
 _CANADIAN_SYMBOL_RE = re.compile(r"^[A-Z0-9&.\-]+\.(?:TO|V)\b", re.IGNORECASE)
+# Argentina/BYMA uses Yahoo's .BA suffix. An explicit .BA query is a venue
+# assertion, so do not let global aliases (for example a U.S. ADR) compete.
+_ARGENTINA_SYMBOL_RE = re.compile(r"^[A-Z0-9&.\-]+\.BA\b", re.IGNORECASE)
 
 # Explicit exchange-pair spellings are not equity/name searches. Restrict the
 # quote leg to assets used by the built-in crypto connectors so an equity such
@@ -316,6 +319,14 @@ class SymbolSearchTool(BaseTool):
                 == query.strip().upper()
             ]
 
+        # Argentina fail-fast mirrors Canada: an explicit .BA ticker names the
+        # Buenos Aires listing, not an ADR/foreign alias returned by another source.
+        if _is_argentina_symbol(query):
+            candidates = [
+                c for c in candidates
+                if _is_argentina_symbol(str(c.get("symbol") or ""))
+            ]
+
         # Canada fail-fast: a Canadian ticker must resolve to the Canadian venue
         # only. Yahoo also returns the US OTC alias of the same company (e.g.
         # ``BYN.V`` -> ``BYAGF.US``), which would make the grounding ledger see
@@ -373,6 +384,11 @@ def _is_canadian_symbol(text: str) -> bool:
         (``BTO.TO``, ``BTO.TO B2Gold``, ``SGML.V Sigma Lithium``, ...).
     """
     return bool(_CANADIAN_SYMBOL_RE.match((text or "").strip()))
+
+
+def _is_argentina_symbol(text: str) -> bool:
+    """Whether *text* starts with an Argentina/BYMA ``.BA`` ticker."""
+    return bool(_ARGENTINA_SYMBOL_RE.match((text or "").strip()))
 
 
 def _canonical_crypto_pair(value: str) -> str | None:
@@ -601,6 +617,12 @@ def _search_eastmoney(query: str) -> tuple[List[Dict[str, Any]], str]:
     """
     if _canonical_crypto_pair(query) is not None:
         return [], f"{_SKIPPED}eastmoney has no crypto exchange-pair coverage"
+    if _is_argentina_symbol(query):
+        logger.info(
+            "eastmoney skipped for Argentina symbol %r (no BYMA coverage)",
+            query,
+        )
+        return [], f"{_SKIPPED}eastmoney has no Argentina/BYMA coverage"
     if _is_canadian_symbol(query):
         logger.info(
             "eastmoney skipped for Canadian symbol %r (no Canada coverage)",
@@ -790,6 +812,8 @@ def _from_yahoo_symbol(raw_symbol: str, quote: Dict[str, Any]) -> tuple[str, str
         return f"{base.zfill(5)}.HK", "hk"
     if upper.endswith((".TO", ".V")):
         return upper, "ca"
+    if upper.endswith(".BA"):
+        return upper, "ar"
     # Yahoo quotes Shanghai as ``.SS`` where this project (and Eastmoney) use
     # ``.SH``. Emitting both spellings published one listing as two rival
     # candidates, which the identity gate could not choose between, so every
