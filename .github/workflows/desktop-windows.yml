@@ -6,17 +6,36 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/desktop-windows.yml"
-      - "agent/**"
+      # Only runtime/package inputs. Test-only and developer-only files under
+      # agent/ are covered by the normal CI workflow and do not affect the
+      # packaged Windows backend.
+      - "agent/api_server.py"
+      - "agent/mcp_server.py"
+      - "agent/src/**"
+      - "agent/backtest/**"
+      - "agent/cli/**"
+      - "agent/evals/**"
       - "desktop/electron/**"
       - "frontend/**"
       - "pyproject.toml"
+      - "LICENSE"
+      - "NOTICE"
+      - "assets/icon.png"
   pull_request:
     paths:
       - ".github/workflows/desktop-windows.yml"
-      - "agent/**"
+      - "agent/api_server.py"
+      - "agent/mcp_server.py"
+      - "agent/src/**"
+      - "agent/backtest/**"
+      - "agent/cli/**"
+      - "agent/evals/**"
       - "desktop/electron/**"
       - "frontend/**"
       - "pyproject.toml"
+      - "LICENSE"
+      - "NOTICE"
+      - "assets/icon.png"
 
 permissions:
   contents: read
