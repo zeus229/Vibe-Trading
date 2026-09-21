@@ -23,6 +23,7 @@ MARKET_BENCHMARKS: dict[str, Optional[str]] = {
     "us_equity":  "SPY",
     "hk_equity":  "HK.03100",   # Hang Seng China Enterprises ETF
     "ca_equity":  "XIC.TO",     # S&P/TSX Capped Composite ETF
+    "ar_equity":  "^MERV",       # S&P MERVAL index on Yahoo
     "a_share":    "000300.SH",  # CSI 300 (China A-share core index)
     "crypto":     "BTC-USDT",
     "futures":    "ES.CME",      # E-mini S&P 500 futures
@@ -150,7 +151,7 @@ def _resolve_ticker(
 
     # yfinance is the universal fallback for benchmark fetch
     # but it only works for global-equity market types
-    if ticker and market not in {"us_equity", "hk_equity", "ca_equity"}:
+    if ticker and market not in {"us_equity", "hk_equity", "ca_equity", "ar_equity"}:
         # Only use benchmark if we can actually fetch it
         pass
 
@@ -170,6 +171,8 @@ def _infer_market(codes: list[str], source: str) -> str:
         return "hk_equity"
     if first.endswith((".TO", ".V")):
         return "ca_equity"
+    if first.endswith(".BA"):
+        return "ar_equity"
     if first.endswith((".NS", ".BO")):
         return "india_equity"
     if first.endswith((".KS", ".KQ")):
