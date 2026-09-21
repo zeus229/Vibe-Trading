@@ -66,6 +66,8 @@ _MARKET_PATTERNS = [
     # UK equities: London Stock Exchange (VOD.L, SHEL.L). Yahoo carries the
     # suffix verbatim.
     (re.compile(r"^[A-Z0-9&.\-]+\.L$", re.I), "uk_equity"),
+    # Argentina equities: BYMA / Buenos Aires (GGAL.BA, YPFD.BA).
+    (re.compile(r"^[A-Z0-9&.\-]+\.BA$", re.I), "ar_equity"),
     # Vietnam equities: HOSE (VIC.VN). Tickers are three letters in practice;
     # the class stays broad to admit fund certificates and ETF codes.
     (re.compile(r"^[A-Z0-9]+\.VN$", re.I), "vietnam_equity"),
@@ -165,6 +167,7 @@ _MARKET_CURRENCY = {
     "kr_equity": "KRW",
     "ca_equity": "CAD",
     "uk_equity": "GBP",
+    "ar_equity": "ARS",
     "vietnam_equity": "VND",
     # Every crypto pattern in _MARKET_PATTERNS is USDT-quoted, and USDT is
     # carried at its USD peg. This is the one approximation in the table: a
@@ -300,6 +303,8 @@ def _detect_submarket(codes: List[str]) -> str:
             return "ca"
         if upper.endswith(".L"):
             return "uk"
+        if upper.endswith(".BA"):
+            return "ar"
     return "us"
 
 # ── Crypto: OKX tiered maintenance margin table (simplified) ──
