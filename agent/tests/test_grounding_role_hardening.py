@@ -808,6 +808,7 @@ def test_a_field_two_calls_returned_differently_needs_its_call(tmp_path: Path) -
     ambiguous = answer("historical_var")
     assert _reasons(ambiguous) == ["ambiguous_field_ref"]
     assert ambiguous.issues[0]["ambiguous_sources"] == ["q1::historical_var", "q2::historical_var"]
+    assert ambiguous.issues[0]["field_ref_candidates"] == ["q1::historical_var", "q2::historical_var"]
     assert answer("q1::historical_var").valid is True
     assert _reasons(answer("q2::historical_var")) == ["not_in_referenced_call"]
 
