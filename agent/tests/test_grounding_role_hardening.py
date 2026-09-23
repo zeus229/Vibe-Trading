@@ -614,56 +614,40 @@ def test_a_call_scoped_ref_does_not_choose_a_tail_risk_identity(tmp_path: Path) 
     assert result.issues[0]["ambiguous_sources"] == ["es_95", "es_99", "var_95", "var_99"]
 
 
-XRAY_ACCIONES = (
-    "asistente_casa_portfolio_risk_xray",
-    {"asset_type": "ACCIONES"},
+XRAY_SECOND = (
+    "portfolio_risk_xray",
+    {"symbols": [B]},
     {
         "status": "ok",
         "data": {
             "tail_risk": {
-                "var_95": 0.029632469599951212,
-                "expected_shortfall_95": 0.037576221520548826,
-                "var_99": 0.04309070307088084,
-                "expected_shortfall_99": 0.04745564053768006,
+                "var_95": 0.0195,
+                "expected_shortfall_95": 0.0268,
+                "var_99": 0.0287,
+                "expected_shortfall_99": 0.0396,
             },
-            "volatility": {"annualized_vol": 0.35788024926815887},
+            "volatility": {"annualized_vol": 0.2401},
         },
     },
-    "acc_call",
-)
-
-XRAY_CEDEARS = (
-    "asistente_casa_portfolio_risk_xray",
-    {"asset_type": "CEDEARS"},
-    {
-        "status": "ok",
-        "data": {
-            "tail_risk": {
-                "var_95": 0.019476749763610874,
-                "expected_shortfall_95": 0.02675075261286878,
-                "var_99": 0.028733797795481065,
-                "expected_shortfall_99": 0.03963011757476991,
-            },
-            "volatility": {"annualized_vol": 0.24005462867710706},
-        },
-    },
-    "ced_call",
+    "x2",
 )
 
 
 def test_multicall_tail_risk_accepts_exact_call_field_refs(tmp_path: Path) -> None:
-    """Two scopes of one tool are unambiguous when each figure names call_id::field."""
+    """Two calls of one tool are unambiguous when each figure names call_id::field."""
     result = _ledger(
         tmp_path,
-        XRAY_ACCIONES,
-        XRAY_CEDEARS,
-        message="Analizá exclusivamente el riesgo de cola de mi cartera actual.",
+        MARKET_A,
+        XRAY,
+        XRAY_SECOND,
+        message="Compare portfolio tail risk across two scopes.",
     ).validate_final_answer(
-        "ACCIONES VaR 95%: 2.96%. CEDEARS VaR 95%: 1.95%."
+        HDR + " VaR 95%: 1.57%。 " + TWO + " VaR 95%: 1.95%。"
         + _block(
+            ROW,
             "95% | count | confidence",
-            "2.96% | observed | ACCIONES VaR 95% | acc_call::data.tail_risk.var_95",
-            "1.95% | observed | CEDEARS VaR 95% | ced_call::data.tail_risk.var_95",
+            "1.57% | observed | first VaR 95% | x1::data.tail_risk.var_95",
+            "1.95% | observed | second VaR 95% | x2::data.tail_risk.var_95",
         )
     )
 
@@ -674,52 +658,56 @@ def test_tool_name_before_field_ref_is_corrected_to_exact_call_ids(tmp_path: Pat
     """tool_name::field is not a call-scoped ref when the tool ran more than once."""
     ledger = _ledger(
         tmp_path,
-        XRAY_ACCIONES,
-        XRAY_CEDEARS,
-        message="Analizá exclusivamente el riesgo de cola de mi cartera actual.",
+        MARKET_A,
+        XRAY,
+        XRAY_SECOND,
+        message="Compare portfolio tail risk across two scopes.",
     )
     result = ledger.validate_final_answer(
-        "ACCIONES VaR 95%: 2.96%."
+        HDR + " VaR 95%: 1.57%。"
         + _block(
+            ROW,
             "95% | count | confidence",
-            "2.96% | observed | ACCIONES VaR 95% | "
-            "asistente_casa_portfolio_risk_xray::data.tail_risk.var_95"
+            "1.57% | observed | VaR 95% | "
+            "portfolio_risk_xray::data.tail_risk.var_95",
         )
     )
 
     assert result.valid is False
     assert _reasons(result) == ["field_ref_needs_call_id"]
     assert result.issues[0]["field_ref_candidates"] == [
-        "acc_call::data.tail_risk.var_95",
-        "ced_call::data.tail_risk.var_95",
+        "x1::data.tail_risk.var_95",
+        "x2::data.tail_risk.var_95",
     ]
     correction = ledger.correction_prompt(result)
-    assert "acc_call::data.tail_risk.var_95" in correction
-    assert "ced_call::data.tail_risk.var_95" in correction
+    assert "x1::data.tail_risk.var_95" in correction
+    assert "x2::data.tail_risk.var_95" in correction
     assert "tool_name::field" in correction
 
 
 def test_multicall_tail_risk_correction_lists_real_payload_fields(tmp_path: Path) -> None:
-    """A tool-scoped tail-risk rejection gives actionable call_id::field choices."""
+    """A call-scoped tail-risk rejection gives actionable call_id::field choices."""
     ledger = _ledger(
         tmp_path,
-        XRAY_ACCIONES,
-        XRAY_CEDEARS,
-        message="Analizá exclusivamente el riesgo de cola de mi cartera actual.",
+        MARKET_A,
+        XRAY,
+        XRAY_SECOND,
+        message="Compare portfolio tail risk across two scopes.",
     )
     result = ledger.validate_final_answer(
-        "ACCIONES ES 95%: 3.76%."
+        HDR + " ES 95%: 2.11%。"
         + _block(
+            ROW,
             "95% | count | confidence",
-            "3.76% | observed | ACCIONES ES 95% | asistente_casa_portfolio_risk_xray"
+            "2.11% | observed | ES 95% | portfolio_risk_xray",
         )
     )
 
     assert result.valid is False
     assert _reasons(result) == ["tail_risk_needs_field_ref"]
     correction = ledger.correction_prompt(result)
-    assert "acc_call::data.tail_risk.expected_shortfall_95" in correction
-    assert "ced_call::data.tail_risk.expected_shortfall_95" in correction
+    assert "x1::data.tail_risk.expected_shortfall_95" in correction
+    assert "x2::data.tail_risk.expected_shortfall_95" in correction
     assert "expected_shortfall_95" in correction
 
 
