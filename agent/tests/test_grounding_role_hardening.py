@@ -661,6 +661,7 @@ def test_multicall_tail_risk_accepts_exact_call_field_refs(tmp_path: Path) -> No
     ).validate_final_answer(
         "ACCIONES VaR 95%: 2.96%. CEDEARS VaR 95%: 1.95%."
         + _block(
+            "95% | count | confidence",
             "2.96% | observed | ACCIONES VaR 95% | acc_call::data.tail_risk.var_95",
             "1.95% | observed | CEDEARS VaR 95% | ced_call::data.tail_risk.var_95",
         )
@@ -680,6 +681,7 @@ def test_tool_name_before_field_ref_is_corrected_to_exact_call_ids(tmp_path: Pat
     result = ledger.validate_final_answer(
         "ACCIONES VaR 95%: 2.96%."
         + _block(
+            "95% | count | confidence",
             "2.96% | observed | ACCIONES VaR 95% | "
             "asistente_casa_portfolio_risk_xray::data.tail_risk.var_95"
         )
@@ -708,6 +710,7 @@ def test_multicall_tail_risk_correction_lists_real_payload_fields(tmp_path: Path
     result = ledger.validate_final_answer(
         "ACCIONES ES 95%: 3.76%."
         + _block(
+            "95% | count | confidence",
             "3.76% | observed | ACCIONES ES 95% | asistente_casa_portfolio_risk_xray"
         )
     )
