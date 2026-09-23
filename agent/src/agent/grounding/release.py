@@ -207,13 +207,14 @@ class _ReleaseMixin:
                 "the arithmetic itself, with one operand this session observed; "
                 "proposed must be derived or lie inside the observed price range; "
                 "cited needs a source in its note; count is not checked.",
-                "For observed/derived refs, use exact literal tool names, exact call ids, "
-                "exact result-field paths, or call_id::field. Do not invent labels, scopes, "
-                "parentheses or prose. A direct tool ratio formatted as a percentage remains "
-                "observed, not derived. If a formula uses operands from multiple calls, its "
-                "ref must include every operand source separated by `; `. When one tool "
-                "was called multiple times for different scopes, use exact call ids; when the "
-                "same field appears in multiple calls, use call_id::field, never tool_name::field.",
+                "For observed/derived refs, use exact literal tool names or exact call ids "
+                "from this session; exact result-field paths and call_id::field are also valid "
+                "when field identity matters. Do not append labels, scopes, parentheses or prose "
+                "to a ref. A direct tool ratio formatted as a percentage remains observed, not "
+                "derived. If a formula uses operands from multiple calls, its ref must include "
+                "every operand source separated by `; `. When one tool was called multiple "
+                "times for different scopes, prefer exact call ids; when the same field appears "
+                "in multiple calls, use call_id::field, never tool_name::field.",
                 "Return the FULL revised answer, not just corrected prose. Preserve or "
                 "rebuild the final figures block on every revision; do not drop it after "
                 "fixing precision, wording, or refs. Every measured figure that remains "
