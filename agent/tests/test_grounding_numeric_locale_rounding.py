@@ -110,8 +110,8 @@ def test_correction_prompt_preserves_percent_units_in_figures_declarations(
     """A ratio rendered as a percent must stay a percent in the figures block."""
     ledger = _ledger(tmp_path, {"volatility": {"annualized_vol": 0.3854}})
     rejected = ledger.validate_final_answer(
-        "Volatilidad: 38.54%."
-        + _figures("0.3854 | observed | annualized_vol | risk_tool")
+        "Volatilidad: 41.00%."
+        + _figures("41.00% | observed | annualized_vol | risk_tool")
     )
 
     assert rejected.valid is False
