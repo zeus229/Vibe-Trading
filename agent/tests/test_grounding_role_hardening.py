@@ -616,7 +616,7 @@ def test_a_call_scoped_ref_does_not_choose_a_tail_risk_identity(tmp_path: Path) 
 
 XRAY_SECOND = (
     "portfolio_risk_xray",
-    {"symbols": [B]},
+    {"symbols": [A]},
     {
         "status": "ok",
         "data": {
@@ -642,7 +642,7 @@ def test_multicall_tail_risk_accepts_exact_call_field_refs(tmp_path: Path) -> No
         XRAY_SECOND,
         message="Compare portfolio tail risk across two scopes.",
     ).validate_final_answer(
-        HDR + " VaR 95%: 1.57%。 " + TWO + " VaR 95%: 1.95%。"
+        HDR + " VaR 95%: 1.57%。 Otra medición VaR 95%: 1.95%。"
         + _block(
             ROW,
             "95% | count | confidence",
