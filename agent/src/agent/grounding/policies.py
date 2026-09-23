@@ -1358,6 +1358,7 @@ class _PolicyMixin:
                         f"{', '.join(ambiguous)}, and they hold different values",
                         source_tool_call_ids=[declaration.ref],
                         ambiguous_sources=ambiguous,
+                        field_ref_candidates=ambiguous,
                     )
                 ]
             return [
