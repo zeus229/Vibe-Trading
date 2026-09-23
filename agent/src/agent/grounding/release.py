@@ -75,6 +75,7 @@ _CORRECTION_REASONS = {
     "not_in_referenced_call": "call {ref} returned no such value",
     "ambiguous_field_ref": "{ref} names {sources}, which hold different values; use the one quoted as the ref",
     "tail_risk_needs_field_ref": "this session holds tail-risk identities {sources}; declare the figure with the exact field ref it quotes",
+    "field_ref_needs_call_id": "{ref} uses a tool name before ::; use one exact call_id::field ref from {sources}",
     "no_formula": "its note states no arithmetic",
     "formula_not_evaluable": "its note is not an arithmetic expression over two or more operands",
     "formula_not_anchored": "no operand of its note is a value this session observed",
