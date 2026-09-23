@@ -119,7 +119,9 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         "'mis datos reales', or the account already loaded through the "
         "asistente-casa connector: this tool resolves holdings, weights and "
         "canonical persisted price history itself — the model does NOT supply "
-        "symbols or weights, and must NOT call search_symbol/fetch_market_data/"
+        "symbols or weights. For requests such as 'últimas N ruedas' / 'last N "
+        "trading sessions', pass lookback_sessions=N exactly; do not translate N "
+        "into calendar days. The model must NOT call search_symbol/fetch_market_data/"
         "get_market_data first. Currently validated for ACCIONES (Argentine "
         "equities) and CEDEARS, analyzed as separate scopes. "
         "IMPORTANT ROUTING RULES: this result is deterministic for the same "
@@ -143,7 +145,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "type": "string",
                 "description": (
                     "Optional YYYY-MM-DD start date. Defaults to 120 calendar days "
-                    "before end_date. Mutually exclusive with horizon. This default "
+                    "before end_date. Mutually exclusive with horizon and lookback_sessions. This default "
                     "is a Risk X-Ray convenience window, not the start of persisted "
                     "history -- use asistente_casa_market_history_coverage for "
                     "'since when do you have data' questions."
