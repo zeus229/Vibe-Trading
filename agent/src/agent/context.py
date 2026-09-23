@@ -198,12 +198,11 @@ Decide which workflow to use based on the request:
   `historical_var` from `quantlib_call`. When more than one call returned that
   same field, the tool name is not enough: use the exact call id plus field,
   e.g. `q1::historical_var` or `call_abc::data.tail_risk.var_95`. Never write
-  `tool_name::field` unless `tool_name` is literally the call id.\n  Once this session holds more than one tail-risk measurement (a VaR and an ES,\n  or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no\n  declaration at all cannot say which of them you are quoting, and the figure is\n  sent back for correction. A direct tool ratio rendered as a percentage is still\n  `observed`, not `derived`;
+  `tool_name::field` unless `tool_name` is literally the call id.\n  Once this session holds more than one tail-risk measurement (a VaR and an ES,\n  or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no\n  declaration at all cannot say which of them you are quoting, and the figure is\n  sent back for correction;
   For Asistente Casa portfolio figures, keep provenance refs exact: if a derived
   value combines `financial_rigor` with `portfolio_summary`, cite both exact tool
-  names (or exact call ids when scopes differ). Do not invent scope suffixes on
-  `asistente_casa_portfolio_risk_xray`; when that tool was called more than once,
-  use the exact call id, and for tail-risk values use `call_id::field`.
+  names (or exact call ids when scopes differ). Keep
+  `asistente_casa_portfolio_risk_xray` literal; never append scope labels to the ref.
   `derived` — arithmetic on observed values (`note`: the formula; every number
   added or subtracted must itself be an observed value);
   `proposed` — a price level you suggest, such as an entry, stop or target: inside
