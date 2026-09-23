@@ -104,6 +104,21 @@ def test_a_lone_list_like_cell_does_not_flip_the_document_to_decimal_commas() ->
     assert _digits(text) == ["5", "20", "234567", "1410"]
 
 
+def test_correction_prompt_preserves_percent_units_in_figures_declarations(
+    tmp_path: Path,
+) -> None:
+    """A ratio rendered as a percent must stay a percent in the figures block."""
+    ledger = _ledger(tmp_path, {"volatility": {"annualized_vol": 0.3854}})
+    rejected = ledger.validate_final_answer(
+        "Volatilidad: 38.54%."
+        + _figures("0.3854 | observed | annualized_vol | risk_tool")
+    )
+
+    assert rejected.valid is False
+    correction = ledger.correction_prompt(rejected)
+    assert "rendered as 2.96%, declare 2.96% (not 0.0296)" in correction
+
+
 
 
 def test_a_long_precision_spanish_percentage_is_verified_not_fragmented(
