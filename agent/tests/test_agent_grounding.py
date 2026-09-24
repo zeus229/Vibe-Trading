@@ -305,6 +305,19 @@ def test_market_sensitive_skill_waits_for_prior_identity_batch(
     assert skill.calls == 1
 
 
+def test_argentina_symbols_have_grounding_identity() -> None:
+    """Buenos Aires symbols retain venue and ARS identity."""
+    assert _scan_symbols("Check GOOGL.BA price") == {"GOOGL.BA"}
+    assert _infer_venue("GGAL.BA") == "buenos_aires"
+    assert _infer_currency("GGAL.BA") == "ARS"
+
+
+def test_argentina_symbol_is_seeded_with_market_identity(tmp_path: Path) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="Check GOOGL.BA price")
+
+    assert ledger.authorized_symbols == {"GOOGL.BA"}
+
+
 @pytest.mark.parametrize(
     ("tool_name", "arguments"),
     [
@@ -3393,3 +3406,50 @@ def test_crypto_pair_tables_match_the_resolver() -> None:
     # gold and forex are quoted in it too); grounding decides it by the base
     # whitelist instead, so it is the only permitted difference.
     assert set(g._CRYPTO_QUOTE_ASSETS) | {"USD"} == set(ss._CRYPTO_QUOTE_ASSETS)
+
+
+def _declared_currency_ledger(tmp_path: Path, symbol: str, quote_currency: str | None):
+    """One two-bar quote for ``symbol``; provenance declares ``quote_currency`` if given."""
+    payload = json.loads(_market_payload(symbol))
+    if quote_currency is not None:
+        payload["_provenance"][symbol]["quote_currency"] = quote_currency
+    ledger = GroundingLedger(run_dir=tmp_path, user_message=f"{symbol} last close?")
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": [symbol]},
+        result=json.dumps(payload),
+        call_id="prices",
+        success=True,
+    )
+    return ledger
+
+
+def test_the_declared_quote_currency_is_the_one_an_answer_must_name(tmp_path: Path) -> None:
+    """A venue can list one issuer in two currencies (GGAL.BA ARS, GGALD.BA USD, #1566)."""
+    ledger = _declared_currency_ledger(tmp_path, "GGAL.BA", "USD")
+
+    assert ledger.validate_final_answer(
+        "GGAL.BA closed at 1.171 USD on 2026-06-24 (source: Yahoo)."
+    ).valid
+    wrong = ledger.validate_final_answer(
+        "GGAL.BA closed at 1.171 ARS on 2026-06-24 (source: Yahoo)."
+    )
+    assert "currency_not_surfaced" in {issue["code"] for issue in wrong.issues}
+
+
+@pytest.mark.parametrize(
+    ("symbol", "answer"),
+    [
+        ("VOD.L", "VOD.L closed at £1.171 on 2026-06-24 (source: Yahoo)."),
+        ("VIC.VN", "VIC.VN closed at 1.171₫ on 2026-06-24 (source: Yahoo)."),
+        ("GGAL.BA", "GGAL.BA closed at AR$1.171 on 2026-06-24 (source: Yahoo)."),
+        ("GGAL.BA", "GGAL.BA 2026-06-24 收盘 1.171 阿根廷比索，数据来源：雅虎。"),
+    ],
+)
+def test_a_currency_written_the_usual_way_counts_as_named(
+    tmp_path: Path, symbol: str, answer: str
+) -> None:
+    """.L / .VN / .BA gained a currency, so its sign must satisfy the gate like $ or ¥ do."""
+    result = _declared_currency_ledger(tmp_path, symbol, None).validate_final_answer(answer)
+
+    assert result.valid is True, result.issues

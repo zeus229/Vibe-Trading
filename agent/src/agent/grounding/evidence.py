@@ -819,6 +819,15 @@ class _EvidenceMixin:
                 and symbol_provenance.get("currency_conversion")
                 else None
             )
+            # Preserve source-declared listing currency when one venue lists
+            # instruments in more than one currency; identity suffixes alone
+            # do not establish the quote currency for every line.
+            quote_currency = (
+                str(symbol_provenance.get("quote_currency"))
+                if isinstance(symbol_provenance, dict)
+                and symbol_provenance.get("quote_currency")
+                else _infer_currency(symbol)
+            )
             for row in rows:
                 if not isinstance(row, dict):
                     continue
@@ -840,7 +849,7 @@ class _EvidenceMixin:
                             field=normalized_field,
                             value=value,
                             status="observed",
-                            currency=_infer_currency(symbol),
+                            currency=quote_currency,
                             venue=_infer_venue(symbol),
                             currency_conversion=currency_conversion,
                         )

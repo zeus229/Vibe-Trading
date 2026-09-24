@@ -7,6 +7,21 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Added
 
+- **Stock profiles carry the listing's own identity** (#1577). `get_stock_profile`
+  returns a `listing` block beside the issuer's fundamentals: Yahoo's symbol,
+  exchange, quote type and quote currency, plus the financial currency and
+  underlying symbol when Yahoo declares them. A secondary listing no longer
+  reads as the primary one. `GOOGL.BA` is an ARS line in Buenos Aires carrying
+  Alphabet's USD financials, and `GGALD.BA` is a USD line whose issuer reports
+  in ARS. Nothing is inferred from the ticker.
+
+- **Volume statistics in `technical_indicators`** (#1571). The tool returns the
+  latest volume, its 20-bar mean and their ratio, computed from the bars it
+  already fetched. The mean needs a complete 20-bar window. `volume.unit` is
+  the unit the serving source declares (board lots on the A-share sources,
+  shares on the Yahoo family, `null` when undeclared), because the two are
+  100x apart and nothing in the numbers tells them apart.
+
 - **Argentina (BYMA) market data** (#1543). A `.BA` symbol — a BYMA listing or a
   locally traded CEDEAR — is its own market `ar_equity`, quoted in ARS, served
   by `yahoo` → `yfinance` → `local`, and reported as market `ar` by
@@ -44,6 +59,32 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   `~/.vibe-trading/agent.json` atomically at mode 0600; a YAML config is shown
   read-only. Reloads of one channel are serialized in `ChannelManager`, and
   `stop_all` cancels a reload's start that is still connecting.
+- **Email and WebSocket join the guided Web UI channel setup** (#1544, after
+  #1519). Both channels get hand-written field metadata — localized
+  labels, masked secrets — plus connection tests and per-channel hot apply.
+  Email's test probes the real IMAP login, mailbox select and SMTP login
+  without ever sending a message; WebSocket is a server channel with no
+  remote credentials, so its test validates the TLS cert/key material and
+  binds every resolved address locally — an address held by the
+  already-running server reads as the expected state, not a failure. Saving
+  a WebSocket config hot-swaps the server: connected clients (including the
+  Web UI chat) briefly disconnect and reconnect. A hand-written field hint's
+  secret flag is now authoritative for the keys it covers — the regex
+  fail-safe still masks every unhinted key — so token-shaped non-secrets
+  such as `websocket_requires_token` stay visible and editable instead of
+  being masked, and a form save can no longer silently flip the stored token
+  requirement. The web config routes now build the WebSocket adapter with
+  the gateway services it requires; previously every WebSocket save or test
+  failed validation. Email's polling loop also skips stale-config
+  delete/move post-actions once a stop or hot swap begins, while the
+  already-fetched batch is still delivered. Both the probe and the polling
+  loop now send an RFC 2971 IMAP `ID` after login: NetEase mailboxes
+  (163/126/yeah.net) accept the login but reject the first `SELECT` with
+  `Unsafe Login` until the client identifies itself, so without this the
+  Email channel could not read the most common Chinese mailboxes. The
+  identification is static and carries no user data or secrets, and servers
+  that ignore `ID` are unaffected; verified end-to-end against a live
+  163.com account.
 - **Bahasa Indonesia** UI locale and `README_id.md` (#1482). The README count
   tests cover it, and `MANIFEST.in` now ships `README_es.md` and
   `README_id.md`.
@@ -176,6 +217,70 @@ This project adheres to [Semantic Versioning](https://semver.org/).
 
 ### Fixed
 
+- **A dollar-quoted BYMA or TSX line, or a Hong Kong RMB or USD counter, no
+  longer enters a single-currency backtest** (#1576, after #1543). Both venues
+  list USD lines beside their home-currency ones. On 2026-09-24 Yahoo declared
+  USD for GGALD.BA (4.20), SPYD.BA and AAPLD.BA, and for DLR-U.TO and
+  XUS-U.TO. `ar_equity` and `ca_equity` are each one static-currency pool, so
+  such a line was priced as pesos or Canadian dollars. As on the LSE, the
+  loaders now read the declared currency. They admit a `.BA` line only in ARS
+  and a `.TO` / `.V` line only in CAD. A trailing `D` does not decide it:
+  YPFD.BA is a peso line. Every other declared quote currency is recorded in
+  market-data provenance, and the grounding gate asks an answer to name that
+  currency rather than the one the suffix implies. Hong Kong is decided by the
+  code, because the Hong Kong chain starts with sources that declare no
+  currency: HKEX's Stock Code Allocation Plan assigns 80000-89999 to products
+  traded in renminbi and several 09xxx ranges (plus 10900-10999 and
+  41500-41599) to products traded in USD. So an RMB counter (80700.HK, 375.40
+  CNY on 2026-09-24) or a USD ETF (9834.HK) is refused in a Hong Kong or
+  cross-market backtest, is counted in its own currency by the mixed-currency
+  guard, and is quoted in that currency by the grounding gate, whichever
+  source served it. The table matched the currency Yahoo declared for all 24
+  codes probed across the ranges.
+- **Grounding identity and symbol search know every market the data layer
+  routes** (#1565, #1575). `.BA`, `.L` and `.VN` symbols had no
+  canonical-symbol scan, venue or currency in grounding. Symbol search
+  labelled Indian, Korean, British, Vietnamese and Argentine results `global`.
+  A parity test now takes the market list from the backtest's own currency
+  table. An answer may write £, ₫ or AR$ for the currency it has to name.
+- **An explicit provider header survives an ambient twin** (#1573, #1568).
+  When `OPENAI_CUSTOM_HEADERS` names a header the provider also sets (a
+  `user-agent` beside the Kimi / NVIDIA / OpenCode `User-Agent`), openai 3.19.2's
+  case-insensitive merge dropped the provider's value. That turned CI red for
+  every PR on 2026-09-24. The first fix proposed would have sent both headers
+  under openai 2.53, the version the lock file and the Docker image install.
+  Every ambient spelling is now omitted and the explicit value re-set after
+  the omits, which holds under both.
+- **Backtests align calendars at any timestamp resolution** (#1560). The engine
+  merged symbol calendars and placed prices through raw nanosecond integers,
+  but a local duckdb source serves microseconds. Such a run was dated
+  1970-01-21, and beside a nanosecond source one symbol's closes came back
+  empty. The rebalance mask had the same unit mismatch.
+- **A research goal that is an order is still refused** (#1562). The execution
+  filter no longer rejects research that mentions shares or coins ("should the
+  fund sell its GOOGL shares"). It refuses an objective that opens with buy or
+  sell, puts a quantity right after the verb, or writes 买入 / 卖出 with a
+  quantity and a unit. The first version of the change had made "Buy 100
+  shares of NVDA" an accepted goal.
+- **A strict-bench OOS split needs two IC observations on each side** (#1559).
+  A split outside the loaded prices is refused. An alpha whose IC series
+  leaves fewer than two observations on either side is skipped, with the
+  counts in the reason. The IC series ends one forward-return horizon before
+  the prices, so a split one bar from the end used to publish verdicts
+  measured on nothing.
+- **Quant inputs are checked before they are used** (#1555-#1558). HRP aligns a
+  supplied correlation matrix, and the covariance's own rows, to the
+  covariance's column labels; swapping two rows used to move the weights with
+  no error. Purged cross-validation refuses an unordered or duplicated
+  timestamp index, and a label that ends before it starts. Impact models and
+  every fixed-income entry point refuse NaN and infinities instead of
+  returning NaN prices, durations and curves.
+- **Shadow-account overtrading uses the whole trading window** (#1563). A long
+  hold that closed before later short trades no longer shrinks the span.
+- **Asset growth is year over year on the daily panel** (#1564). Derived
+  fundamentals run on a panel densified to the price calendar, where a one-row
+  lag compared yesterday with today: 0% on ordinary days and a one-day spike
+  at each filing. The lag is now 365 days, as-of.
 - **A tail-risk figure names its own field once a session holds more than one**
   (#1425, after #1444). A call- or tool-scoped ref (`ref x1`) pooled every
   tail-risk field that call returned, and an undeclared tail-risk percent pooled
@@ -219,7 +324,39 @@ This project adheres to [Semantic Versioning](https://semver.org/).
   excluded the other entry as "self" and wrote an ambiguous target. Both key on
   the path relative to the memory dir now; a sidecar written earlier, with a
   bare filename or an absolute path, is still read.
-
+- **The Email channel verifies TLS certificates by default** (#1544). The
+  implicit-SSL paths (`IMAP4_SSL` / `SMTP_SSL`) in both the connection probe
+  and the polling/send adapter used Python's default unverified context
+  (`CERT_NONE`, no hostname check), so the mailbox password travelled to a
+  server whose certificate was never checked — an active network attacker
+  between the operator and their mail provider could harvest it. All four call
+  sites now build their context through a shared `email_tls_context()` that
+  verifies the certificate and hostname against the system CA bundle, matching
+  the STARTTLS path, which already did. A new `verify_tls` field (default
+  `true`, surfaced in the guided Email setup in all nine locales) is the
+  documented opt-out for self-signed or internal-CA servers. **Upgrade note:**
+  a mail server with such a certificate connected before this change and now
+  fails the TLS handshake until `verify_tls` is set to `false` for it.
+- **Plain IMAP no longer sends the mailbox password in clear text** (after
+  #1544). With `imap_use_ssl` off, the Email channel and its connection test
+  logged in over an unencrypted connection, and the guided setup put that
+  switch one click away. A new `imap_use_tls` (on by default, the IMAP twin of
+  `smtp_use_tls`) upgrades the connection with STARTTLS before `LOGIN`; a
+  server that offers no STARTTLS is reported as a network failure before the
+  password is sent. `verify_tls` now governs STARTTLS on IMAP and SMTP as well
+  as implicit SSL, so a self-signed server can opt out on any path. **Upgrade
+  note:** an `imap_use_ssl: false` setup against a server without STARTTLS
+  stops connecting until `imap_use_tls` is set to `false` for it, which sends
+  the password in plain text again.
+- **Settings-write routes reject cross-site browser requests** (#1544).
+  `require_settings_write_auth` did not apply the cross-site guard that its
+  siblings `require_auth` and `require_event_stream_auth` enforce on unsafe
+  methods, so a malicious web page could attempt a CSRF write against any
+  settings route — including the new `POST /channels/email/test`, which merges
+  stored credentials with a caller-supplied patch and could be steered to send
+  the stored mailbox password to an attacker-chosen host. The guard now runs
+  first on every settings-write route; same-origin Web UI calls and
+  non-browser clients (CLI/curl, no `Origin`) are unaffected.
 - **Read-only results lost to context compaction are restored, not refetched**
   (#1488). A successful read-only call whose payload compaction removed is
   replayed from the run's own cache, at most six times a run; past the cap it
