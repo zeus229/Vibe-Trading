@@ -887,7 +887,6 @@ class PortfolioService:
             )
             canonical_positions.append(
                 {
-                    "source_instrument_id": row.get("source_instrument_id"),
                     "symbol": row.get("symbol"),
                     "instrument_type": row.get("source_instrument_type") or row.get("asset_type"),
                     "weight_total_portfolio": row.get("weight_total_portfolio"),
