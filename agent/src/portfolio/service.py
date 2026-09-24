@@ -849,6 +849,7 @@ class PortfolioService:
                 }
             )
         holdings_native: dict[str, list[dict[str, Any]]] = {}
+        canonical_positions: list[dict[str, Any]] = []
         for row in snapshot.get("positions", []):
             currency = str(row.get("native_currency") or "").upper()
             if not currency or not row.get("priced"):
@@ -875,10 +876,24 @@ class PortfolioService:
                     "market_value_native": row.get("market_value_native"),
                     "native_currency": currency,
                     "weight": _number(market_value_native / total_native) if total_native > 0 else 0.0,
+                    "weight_total_portfolio": row.get("weight_total_portfolio"),
+                    "weight_scope": row.get("weight_scope"),
                     "exposure_currency": row.get("exposure_currency"),
                     "daily_change_pct": row.get("daily_change_pct"),
                     "daily_change_as_of": row.get("daily_change_as_of"),
                     "daily_change_source": row.get("daily_change_source"),
+                    "daily_change_status": row.get("daily_change_status"),
+                }
+            )
+            canonical_positions.append(
+                {
+                    "source_instrument_id": row.get("source_instrument_id"),
+                    "symbol": row.get("symbol"),
+                    "instrument_type": row.get("source_instrument_type") or row.get("asset_type"),
+                    "weight_total_portfolio": row.get("weight_total_portfolio"),
+                    "weight_scope": row.get("weight_scope"),
+                    "daily_change_pct": row.get("daily_change_pct"),
+                    "daily_change_as_of": row.get("daily_change_as_of"),
                     "daily_change_status": row.get("daily_change_status"),
                 }
             )
@@ -898,6 +913,7 @@ class PortfolioService:
                 for index, row in enumerate(snapshot["accounts"])
             ],
             "holdings": holdings,
+            "canonical_positions": canonical_positions,
             "holdings_native": holdings_native,
             "daily_change": snapshot.get("daily_change"),
             "risk_xray_args": self._risk_xray_args(snapshot.get("positions", [])),
