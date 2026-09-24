@@ -871,6 +871,11 @@ def test_daily_report_keeps_all_canonical_rows_and_top_three_contributors():
     report = _build_daily_report(context, contributors)
 
     assert report is not None
+    assert report["units"] == {
+        "weight_total_portfolio": "fraction",
+        "daily_change_pct": "percent",
+        "contribution_pp": "percentage_points",
+    }
     assert report["position_count"] == 37
     assert len(report["positions"]) == 37
     assert report["positions"][36] == {
@@ -884,4 +889,3 @@ def test_daily_report_keeps_all_canonical_rows_and_top_three_contributors():
     assert len(report["top_positive_contributors"]) == 3
     assert len(report["top_negative_contributors"]) == 3
     assert "weight_scope" not in report["positions"][0]
-
