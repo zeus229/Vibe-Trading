@@ -823,7 +823,6 @@ def test_analysis_context_exposes_compact_canonical_positions_without_reweightin
     native = context["holdings_native"]["ARS"][0]
 
     assert canonical == {
-        "source_instrument_id": "accion:YPFD",
         "symbol": "YPFD",
         "instrument_type": "ACCIONES",
         "weight_total_portfolio": 0.1905,
