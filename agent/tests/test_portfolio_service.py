@@ -12,6 +12,7 @@ from src.portfolio.normalization import auth_metadata, normalize_position
 from src.portfolio.service import PortfolioService
 from src.portfolio.store import PortfolioStore
 from src.trading.types import TradingProfile
+from src.tools.portfolio_tool import _build_daily_report
 
 
 def _settings_store(tmp_path):
@@ -834,3 +835,53 @@ def test_analysis_context_exposes_compact_canonical_positions_without_reweightin
     assert native["weight"] == pytest.approx(0.2)
     assert native["weight_total_portfolio"] == pytest.approx(0.1905)
     assert native["weight_scope"] == pytest.approx(0.2)
+
+def test_daily_report_keeps_all_canonical_rows_and_top_three_contributors():
+    context = {
+        "daily_change": {
+            "pct": 0.0,
+            "coverage_pct": 100.0,
+            "as_of": "2026-09-24",
+            "status": "ready",
+        },
+        "canonical_positions": [
+            {
+                "symbol": f"SYM{i:02d}",
+                "instrument_type": "ACCIONES" if i < 13 else "CEDEARS",
+                "weight_total_portfolio": i / 1000,
+                "weight_scope": i / 900,
+                "daily_change_pct": 0.0 if i < 36 else 0.06,
+                "daily_change_as_of": "2026-09-24",
+                "daily_change_status": "ready",
+            }
+            for i in range(37)
+        ],
+    }
+    contributors = {
+        "top_positive_contributors": [
+            {"symbol": f"P{i}", "contribution_pp": i / 100}
+            for i in range(8)
+        ],
+        "top_negative_contributors": [
+            {"symbol": f"N{i}", "contribution_pp": -i / 100}
+            for i in range(8)
+        ],
+    }
+
+    report = _build_daily_report(context, contributors)
+
+    assert report is not None
+    assert report["position_count"] == 37
+    assert len(report["positions"]) == 37
+    assert report["positions"][36] == {
+        "symbol": "SYM36",
+        "instrument_type": "CEDEARS",
+        "weight_total_portfolio": 0.036,
+        "daily_change_pct": 0.06,
+        "daily_change_as_of": "2026-09-24",
+        "daily_change_status": "ready",
+    }
+    assert len(report["top_positive_contributors"]) == 3
+    assert len(report["top_negative_contributors"]) == 3
+    assert "weight_scope" not in report["positions"][0]
+
