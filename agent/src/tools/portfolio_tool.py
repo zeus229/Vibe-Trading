@@ -66,6 +66,11 @@ def _build_daily_report(
 
     contributors = daily_contributors if isinstance(daily_contributors, dict) else {}
     return {
+        "units": {
+            "weight_total_portfolio": "fraction",
+            "daily_change_pct": "percent",
+            "contribution_pp": "percentage_points",
+        },
         "daily_change": daily_change,
         "position_count": len(rows),
         "positions": rows,
@@ -185,9 +190,12 @@ class PortfolioSummaryTool(BaseTool):
         "daily_report is the preferred compact view for scheduled daily "
         "reports: it includes all positions with canonical instrument_type, "
         "weight_total_portfolio and daily_change fields plus top-3 positive "
-        "and negative contributors before truncation. Fields ending in _pct "
-        "are percentage-point values; when rendered with a % sign, preserve "
-        "that percent unit in the figures declaration. canonical_positions "
+        "and negative contributors before truncation. daily_report.units is "
+        "authoritative for rendering: daily_change_pct is percent, "
+        "contribution_pp is percentage points, and weight_total_portfolio is "
+        "a fraction. Never print daily_change_pct as a unitless number or "
+        "contribution_pp without pp; preserve the same unit in the figures "
+        "declaration. canonical_positions "
         "remains the authoritative full per-position view; use its fields "
         "verbatim rather than reconstructing them from combined holdings; "
         "never call calc to derive contribution — a value calc produces is "
