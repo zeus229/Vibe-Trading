@@ -20,8 +20,9 @@ _SUMMARY_FIELDS_FIRST: tuple[str, ...] = (
     "complete",
     "totals",
     "daily_change",
-    "canonical_positions",
+    "daily_report",
     "daily_contributors",
+    "canonical_positions",
     "risk_xray_args",
     "warnings",
     "privacy",
@@ -29,6 +30,52 @@ _SUMMARY_FIELDS_FIRST: tuple[str, ...] = (
 
 _TOP_CONTRIBUTOR_COUNT = 8
 _TOP_MOVER_COUNT = 5
+
+
+def _build_daily_report(
+    context: dict[str, Any],
+    daily_contributors: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    """Build a compact daily portfolio view that fits before tool truncation.
+
+    The report preserves only the canonical fields needed by scheduled daily
+    summaries. It never recalculates type, weights or daily changes. Contributor
+    rows are copied from the deterministic precomputation and capped to the top
+    three on each side so the 37-position report remains visible inside the
+    model-facing tool-result limit.
+    """
+    positions = context.get("canonical_positions")
+    daily_change = context.get("daily_change")
+    if not isinstance(positions, list) or not isinstance(daily_change, dict):
+        return None
+
+    rows = []
+    for row in positions:
+        if not isinstance(row, dict):
+            continue
+        rows.append(
+            {
+                "symbol": row.get("symbol"),
+                "instrument_type": row.get("instrument_type"),
+                "weight_total_portfolio": row.get("weight_total_portfolio"),
+                "daily_change_pct": row.get("daily_change_pct"),
+                "daily_change_as_of": row.get("daily_change_as_of"),
+                "daily_change_status": row.get("daily_change_status"),
+            }
+        )
+
+    contributors = daily_contributors if isinstance(daily_contributors, dict) else {}
+    return {
+        "daily_change": daily_change,
+        "position_count": len(rows),
+        "positions": rows,
+        "top_positive_contributors": list(
+            contributors.get("top_positive_contributors") or []
+        )[:3],
+        "top_negative_contributors": list(
+            contributors.get("top_negative_contributors") or []
+        )[:3],
+    }
 
 
 def _build_daily_contributors(context: dict[str, Any]) -> dict[str, Any] | None:
@@ -135,10 +182,14 @@ class PortfolioSummaryTool(BaseTool):
         "precomputed over every position, before any truncation — use "
         "top_positive_contributors/top_negative_contributors directly, "
         "verbatim, for 'which positions explain today's move' questions; "
-        "canonical_positions is the compact authoritative per-position view "
-        "for reporting: use instrument_type, weight_total_portfolio, "
-        "weight_scope, daily_change_pct/as_of/status from it verbatim rather "
-        "than reconstructing those fields from combined holdings; "
+        "daily_report is the preferred compact view for scheduled daily "
+        "reports: it includes all positions with canonical instrument_type, "
+        "weight_total_portfolio and daily_change fields plus top-3 positive "
+        "and negative contributors before truncation. Fields ending in _pct "
+        "are percentage-point values; when rendered with a % sign, preserve "
+        "that percent unit in the figures declaration. canonical_positions "
+        "remains the authoritative full per-position view; use its fields "
+        "verbatim rather than reconstructing them from combined holdings; "
         "never call calc to derive contribution — a value calc produces is "
         "not traceable evidence and will be redacted from the answer). For "
         "'which positions moved most/least today' by pure percentage change "
@@ -178,8 +229,14 @@ class PortfolioSummaryTool(BaseTool):
                 ensure_ascii=False,
             )
         daily_contributors = _build_daily_contributors(context)
+        daily_report = _build_daily_report(context, daily_contributors)
+        additions: dict[str, Any] = {}
+        if daily_report is not None:
+            additions["daily_report"] = daily_report
         if daily_contributors is not None:
-            context = {**context, "daily_contributors": daily_contributors}
+            additions["daily_contributors"] = daily_contributors
+        if additions:
+            context = {**context, **additions}
         return json.dumps(
             {"status": "ok", "context": _reorder_for_truncation_safety(context)},
             ensure_ascii=False,
