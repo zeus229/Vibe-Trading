@@ -20,6 +20,7 @@ _SUMMARY_FIELDS_FIRST: tuple[str, ...] = (
     "complete",
     "totals",
     "daily_change",
+    "canonical_positions",
     "daily_contributors",
     "risk_xray_args",
     "warnings",
@@ -134,6 +135,10 @@ class PortfolioSummaryTool(BaseTool):
         "precomputed over every position, before any truncation — use "
         "top_positive_contributors/top_negative_contributors directly, "
         "verbatim, for 'which positions explain today's move' questions; "
+        "canonical_positions is the compact authoritative per-position view "
+        "for reporting: use instrument_type, weight_total_portfolio, "
+        "weight_scope, daily_change_pct/as_of/status from it verbatim rather "
+        "than reconstructing those fields from combined holdings; "
         "never call calc to derive contribution — a value calc produces is "
         "not traceable evidence and will be redacted from the answer). For "
         "'which positions moved most/least today' by pure percentage change "
