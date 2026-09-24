@@ -834,4 +834,3 @@ def test_analysis_context_exposes_compact_canonical_positions_without_reweightin
     assert native["weight"] == pytest.approx(0.2)
     assert native["weight_total_portfolio"] == pytest.approx(0.1905)
     assert native["weight_scope"] == pytest.approx(0.2)
-
