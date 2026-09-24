@@ -8,7 +8,7 @@ import pytest
 
 from src.portfolio import service as portfolio_service
 from src.portfolio.config import PortfolioSettingsStore
-from src.portfolio.normalization import auth_metadata
+from src.portfolio.normalization import auth_metadata, normalize_position
 from src.portfolio.service import PortfolioService
 from src.portfolio.store import PortfolioStore
 from src.trading.types import TradingProfile
@@ -741,3 +741,98 @@ def test_reconnect_contains_callback_server_system_exit(monkeypatch, tmp_path):
 
     with pytest.raises(RuntimeError, match="stopped safely"):
         _reconnect_service(tmp_path).reconnect_source("ibkr")
+
+def test_asistente_casa_normalization_preserves_canonical_report_fields():
+    row = normalize_position(
+        "asistente-casa",
+        {
+            "symbol": "YPFD",
+            "name": "YPF",
+            "instrument_type": "ACCIONES",
+            "market": "BYMA",
+            "currency": "ARS",
+            "quantity": 10,
+            "current_price": 1000,
+            "market_value": 10000,
+            "weight_total_portfolio": 0.2103,
+            "weight_scope": 0.2169,
+            "daily_change_pct": -0.51,
+            "daily_change_as_of": "2026-09-24",
+            "daily_change_source": "live_ppi_vs_canonical_eod",
+            "daily_change_status": "ready",
+        },
+    )
+
+    assert row["source_instrument_type"] == "ACCIONES"
+    assert row["weight_total_portfolio"] == pytest.approx(0.2103)
+    assert row["weight_scope"] == pytest.approx(0.2169)
+    assert row["daily_change_pct"] == pytest.approx(-0.51)
+    assert row["daily_change_as_of"] == "2026-09-24"
+    assert row["daily_change_status"] == "ready"
+
+
+def test_analysis_context_exposes_compact_canonical_positions_without_reweighting(
+    tmp_path, monkeypatch
+):
+    service = PortfolioService(
+        PortfolioStore(tmp_path / "portfolio.sqlite3"),
+        settings_store=PortfolioSettingsStore(tmp_path / "portfolio.json"),
+        get_account=lambda *_args, **_kwargs: {},
+        get_positions=lambda *_args, **_kwargs: {},
+        get_quote=lambda *_args, **_kwargs: {},
+    )
+    snapshot = {
+        "created_at": "2026-09-24T18:30:00+00:00",
+        "complete": True,
+        "totals": {
+            "usd": 0,
+            "native_by_currency": {"ARS": 1000},
+        },
+        "accounts": [],
+        "combined_holdings": [],
+        "positions": [
+            {
+                "broker": "asistente-casa",
+                "source_instrument_id": "accion:YPFD",
+                "symbol": "YPFD",
+                "asset_type": "stock",
+                "source_instrument_type": "ACCIONES",
+                "priced": True,
+                "native_currency": "ARS",
+                "market_value_native": 200,
+                "weight_total_portfolio": 0.1905,
+                "weight_scope": 0.2,
+                "daily_change_pct": 1.25,
+                "daily_change_as_of": "2026-09-24",
+                "daily_change_source": "live_ppi_vs_canonical_eod",
+                "daily_change_status": "ready",
+            }
+        ],
+        "daily_change": {
+            "pct": 1.25,
+            "as_of": "2026-09-24",
+            "coverage_pct": 100.0,
+            "status": "ready",
+        },
+        "warnings": [],
+    }
+    monkeypatch.setattr(service, "latest", lambda: snapshot)
+
+    context = service.analysis_context()
+    canonical = context["canonical_positions"][0]
+    native = context["holdings_native"]["ARS"][0]
+
+    assert canonical == {
+        "source_instrument_id": "accion:YPFD",
+        "symbol": "YPFD",
+        "instrument_type": "ACCIONES",
+        "weight_total_portfolio": 0.1905,
+        "weight_scope": 0.2,
+        "daily_change_pct": 1.25,
+        "daily_change_as_of": "2026-09-24",
+        "daily_change_status": "ready",
+    }
+    assert native["weight"] == pytest.approx(0.2)
+    assert native["weight_total_portfolio"] == pytest.approx(0.1905)
+    assert native["weight_scope"] == pytest.approx(0.2)
+
