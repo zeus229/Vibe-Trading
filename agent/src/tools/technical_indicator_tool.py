@@ -295,11 +295,29 @@ class TechnicalIndicatorTool(BaseTool):
                 ),
                 "default": _DEFAULT_LOOKBACK,
             },
+            "end_date": {
+                "type": "string",
+                "description": (
+                    "Optional YYYY-MM-DD acquisition boundary. Omit it for the "
+                    "current local date. The boundary pins the requested period; "
+                    "read_identity.dataset_fingerprint identifies the exact bars used."
+                ),
+            },
+            "no_cache": {
+                "type": "boolean",
+                "description": (
+                    "Bypass run-scoped replay after context compaction and execute "
+                    "the acquisition again. Use only when a genuinely new observation "
+                    "is required. Provider loader caches retain their existing policy."
+                ),
+                "default": False,
+            },
         },
         "required": ["symbol"],
     }
     repeatable = True
     is_readonly = True
+    replay_after_compaction = True
 
     def execute(self, **kwargs: Any) -> str:
         symbol = str(kwargs.get("symbol", "")).strip()
