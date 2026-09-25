@@ -350,11 +350,20 @@ class TechnicalIndicatorTool(BaseTool):
         # straddle midnight between separate clock reads.
         end_date_raw = kwargs.get("end_date")
         if end_date_raw is not None and str(end_date_raw).strip():
+            end_date_text = str(end_date_raw).strip()
             try:
                 reference_date = datetime.strptime(
-                    str(end_date_raw).strip(), "%Y-%m-%d"
+                    end_date_text, "%Y-%m-%d"
                 ).date()
             except ValueError:
+                return json.dumps(
+                    {"ok": False, "error": "end_date must use YYYY-MM-DD"}
+                )
+            # datetime.strptime accepts non-zero-padded month/day values for
+            # %m/%d. The public contract is intentionally stricter so read
+            # identities have one canonical spelling and invalid shapes fail
+            # closed before touching a data provider.
+            if reference_date.strftime("%Y-%m-%d") != end_date_text:
                 return json.dumps(
                     {"ok": False, "error": "end_date must use YYYY-MM-DD"}
                 )
