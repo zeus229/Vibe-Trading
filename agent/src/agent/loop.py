@@ -3483,6 +3483,15 @@ class AgentLoop:
         head = body[:cut_idx]
         tail = body[cut_idx:]
 
+        if not head and protected_indexes:
+            # Nothing can be folded without consuming a replay that has not
+            # reached a model decision yet. Defer layer-3 compaction for this
+            # single decision instead of violating the visibility lease.
+            logger.info(
+                "Auto compact deferred: replay visibility lease protects the tail"
+            )
+            return
+
         if not head:
             # All body fits in tail budget — force a split to avoid infinite loop
             if len(body) > 2:
