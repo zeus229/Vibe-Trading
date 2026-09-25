@@ -621,6 +621,7 @@ class _ScriptedLLM:
         self.responses = list(responses)
         self.calls = 0
         self.messages_history: list[list[dict[str, Any]]] = []
+        self.tools_history: list[list[Any] | None] = []
 
     def stream_chat(
         self,
@@ -634,6 +635,7 @@ class _ScriptedLLM:
     ) -> _Response:
         self.calls += 1
         self.messages_history.append(list(messages))
+        self.tools_history.append(tools)
         response = self.responses.pop(0) if len(self.responses) > 1 else self.responses[0]
         if response.content and on_text_chunk:
             on_text_chunk(response.content)
@@ -847,6 +849,75 @@ def test_grounding_conflict_forces_revision_before_more_readonly_research(
     )
     assert not [entry for entry in trace if entry.get("type") == "no_progress"]
     assert_system_messages_only_lead(llm.messages_history)
+
+
+def test_grounding_correction_blocks_provider_tool_call_when_tools_are_withheld(
+    tmp_path: Path,
+) -> None:
+    """A provider-emitted tool call cannot escape a numeric correction-only turn."""
+    rejected = (
+        HDR
+        + " 最低价 1.110 元，较高点 1.180 元已回撤约 8%。"
+        + _block(
+            HDR_ROW,
+            "1.110 | observed | low | prices",
+            "1.180 | observed | high | prices",
+            "8% | derived | (1.110 - 1.180) / 1.180 | prices",
+        )
+    )
+    corrected = (
+        HDR
+        + " 最低价 1.110 元，较高点 1.180 元已回撤约 5.9%。"
+        + _block(
+            HDR_ROW,
+            "1.110 | observed | low | prices",
+            "1.180 | observed | high | prices",
+            "5.9% | derived | (1.110 - 1.180) / 1.180 | prices",
+        )
+    )
+    llm = _ScriptedLLM(
+        _SCRIPT_HEAD
+        + [
+            _Response(content=rejected),
+            _Response(
+                tool_calls=[
+                    _tool_call(
+                        "unexpected-refetch",
+                        "get_market_data",
+                        codes=[SYMBOL],
+                        start_date="2026-06-23",
+                        end_date="2026-06-24",
+                        source="auto",
+                    )
+                ]
+            ),
+            _Response(content=corrected),
+        ]
+    )
+
+    result, _, _ = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert result.get("degraded") is None
+    # Both post-rejection attempts are correction-only. The first tries to
+    # escape through a tool call; the loop blocks it and keeps the mode armed.
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 1] is None
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 2] is None
+    assert "5.9%" in result["content"]
+    assert "8%" not in result["content"]
+
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [
+        entry
+        for entry in trace
+        if entry.get("type") == "grounding_correction_tool_call_blocked"
+    ]
+    assert not [
+        entry
+        for entry in trace
+        if entry.get("type") == "tool_result"
+        and entry.get("call_id") == "unexpected-refetch"
+    ]
 
 
 def test_loop_repairs_a_missing_source_word_without_another_model_round(tmp_path: Path) -> None:

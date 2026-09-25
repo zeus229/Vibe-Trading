@@ -1735,6 +1735,29 @@ class AgentLoop:
                 # Not filtered — reset the consecutive-skip counter.
                 consecutive_content_filter_count = 0
 
+                if correction_text_only and response.has_tool_calls:
+                    # Tools were deliberately not offered on this correction turn.
+                    # Some providers/models can still emit a tool call anyway;
+                    # never let that escape the bounded correction path.
+                    trace.write(
+                        {
+                            "type": "grounding_correction_tool_call_blocked",
+                            "iter": current_iter,
+                        }
+                    )
+                    messages.append(
+                        {
+                            "role": "system",
+                            "content": (
+                                "[SYSTEM] This is a grounding correction turn. "
+                                "Do not call tools. Revise the previous draft using "
+                                "the evidence already gathered, or remove claims "
+                                "that cannot be supported."
+                            ),
+                        }
+                    )
+                    continue
+
                 if not response.has_tool_calls:
                     final_content = response.content or ""
                     syntax_fallback_emitted = False
