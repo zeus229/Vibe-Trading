@@ -212,12 +212,14 @@ class _ReleaseMixin:
                 "rebuild the final figures block on every revision; do not drop it after "
                 "fixing precision, wording, or refs. Every measured figure that remains "
                 "in the prose must still have a valid declaration in that block.",
-                "In each figures declaration, write the value as a normalized raw number "
-                "without a currency prefix or thousands separators and with a dot decimal "
-                "(for example 123456789.125, not ARS 123.456.789,125). Derived notes must "
-                "use raw tool-result operands and plain arithmetic only. If a derived "
-                "figure previously needed multiple refs, preserve ALL of those refs in "
-                "the corrected declaration; never collapse it back to the calculator alone.",
+                "In each figures declaration, preserve the same numeric unit and shape "
+                "as the user-facing claim while normalizing only its spelling: use a dot "
+                "decimal and no thousands separators. If a tool ratio such as 0.0296 is "
+                "rendered as 2.96%, declare 2.96% (not 0.0296). Currency prefixes belong "
+                "in prose, not in the declaration value. Derived notes must use raw "
+                "tool-result operands and plain arithmetic only. If a derived figure "
+                "previously needed multiple refs, preserve ALL of those refs in the "
+                "corrected declaration; never collapse it back to the calculator alone.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
