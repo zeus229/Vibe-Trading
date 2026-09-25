@@ -268,9 +268,12 @@ class TechnicalIndicatorTool(BaseTool):
         "Compute common technical indicators (RSI, MACD, Bollinger Bands, "
         "SMA, EMA) plus latest/20-bar volume statistics for a trading symbol "
         "(volume.unit is the serving source's declared unit -- lots or shares -- "
-        "or null when undeclared). "
-        "Uses the project's data loaders "
-        "to fetch price history, then computes indicators locally."
+        "or null when undeclared). Returns read_identity with the acquisition "
+        "boundary, serving provenance and a fingerprint of the exact bars used. "
+        "After context compaction an exact prior result may be restored; use "
+        "no_cache=true only when the task genuinely needs a new observation. "
+        "Uses the project's data loaders to fetch price history, then computes "
+        "indicators locally."
     )
     parameters = {
         "type": "object",
