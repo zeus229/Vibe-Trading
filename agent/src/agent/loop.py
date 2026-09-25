@@ -1664,6 +1664,12 @@ class AgentLoop:
                 if self._cancel_event.is_set():
                     break
 
+                # A successful model call consumed the one-decision visibility
+                # lease for any readable replay that was present in its input.
+                self._consume_replay_visibility_lease(
+                    messages, trace, current_iter
+                )
+
                 # An LLM response arrived - real progress for the stall watchdog.
                 self._last_activity_wall = _time.time()
 
@@ -3216,6 +3222,35 @@ class AgentLoop:
             })
         return unreadable_tools
 
+    def _consume_replay_visibility_lease(
+        self,
+        messages: list,
+        trace: TraceWriter,
+        iteration: int,
+    ) -> None:
+        """Release replay protection after one model input actually saw it."""
+        if not self._readonly_replay_visibility_pending:
+            return
+        readable_call_ids = {
+            str(msg.get("tool_call_id") or "")
+            for msg in messages
+            if msg.get("role") == "tool"
+            and not _result_data_gone(msg.get("content"))
+        }
+        consumed = sorted(
+            self._readonly_replay_visibility_pending & readable_call_ids
+        )
+        if not consumed:
+            return
+        self._readonly_replay_visibility_pending.difference_update(consumed)
+        trace.write(
+            {
+                "type": "replay_visibility_consumed",
+                "iter": iteration,
+                "call_ids": consumed,
+            }
+        )
+
     def _readable_success_keys(self, messages: list) -> set[tuple[str, str]]:
         """Identify surviving successful results, not synthetic skip/stub calls."""
         return {
@@ -3431,6 +3466,19 @@ class AgentLoop:
         # Token-budget tail: size messages with their tool-call arguments so
         # oversized tool calls are folded instead of hiding in the tail.
         cut_idx = _tail_cut_index(body)
+
+        # A one-decision replay visibility lease outranks the ordinary tail
+        # budget. Keep the restored result and its preceding assistant tool
+        # call in the preserved tail until the next model input has seen it.
+        protected_indexes = [
+            index
+            for index, msg in enumerate(body)
+            if msg.get("role") == "tool"
+            and str(msg.get("tool_call_id") or "")
+            in self._readonly_replay_visibility_pending
+        ]
+        if protected_indexes:
+            cut_idx = min(cut_idx, max(0, min(protected_indexes) - 1))
 
         head = body[:cut_idx]
         tail = body[cut_idx:]
