@@ -439,6 +439,13 @@ class TechnicalIndicatorTool(BaseTool):
             else None
         )
 
+        fingerprint = _dataset_fingerprint(
+            close,
+            volume,
+            provenance if isinstance(provenance, dict) else None,
+            interval=interval,
+        )
+
         return json.dumps(
             {
                 "ok": True,
@@ -446,6 +453,15 @@ class TechnicalIndicatorTool(BaseTool):
                 "interval": interval,
                 "latest_close": latest_close,
                 "latest_date": latest_date,
+                "read_identity": {
+                    "mode": read_mode,
+                    "requested_start_date": start_date,
+                    "requested_end_date": end_date,
+                    "bar_count": len(close),
+                    "latest_date": latest_date,
+                    "dataset_fingerprint": fingerprint,
+                    "provenance": provenance if isinstance(provenance, dict) else None,
+                },
                 "indicators": indicators,
             },
             ensure_ascii=False,
