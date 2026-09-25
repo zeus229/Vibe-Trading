@@ -572,8 +572,14 @@ def _result_data_gone(content: Any) -> bool:
     return _is_cleared(content) or content == _STUB_RESULT_CONTENT
 
 
-def _context_collapse(messages: list) -> None:
+def _context_collapse(
+    messages: list,
+    protected_tool_call_ids: set[str] | None = None,
+) -> None:
     """Layer 2: fold long text blocks in older messages without LLM call.
+
+    Tool results carrying a one-decision replay visibility lease are left
+    untouched until the next model input consumes that lease.
 
     Preserves head + tail of large text, collapses the middle.
     Zero API cost — pure string operation.
@@ -583,7 +589,13 @@ def _context_collapse(messages: list) -> None:
     """
     if len(messages) <= COLLAPSE_PRESERVE_RECENT + 1:
         return
+    protected = protected_tool_call_ids or set()
     for msg in messages[1:-COLLAPSE_PRESERVE_RECENT]:
+        if (
+            msg.get("role") == "tool"
+            and str(msg.get("tool_call_id") or "") in protected
+        ):
+            continue
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
@@ -1415,7 +1427,10 @@ class AgentLoop:
 
                 # Layer 2: context collapse (fold long text, zero API cost)
                 if tokens > int(_token_threshold() * 0.7):
-                    _context_collapse(messages)
+                    _context_collapse(
+                        messages,
+                        self._readonly_replay_visibility_pending,
+                    )
                     tokens = estimate_tokens(messages)
 
                 # Layer 3: auto_compact (token threshold exceeded)
