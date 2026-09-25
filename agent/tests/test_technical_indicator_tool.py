@@ -397,7 +397,16 @@ class TestTechnicalIndicatorToolIntegration:
             != first["read_identity"]["dataset_fingerprint"]
         )
 
-    def test_invalid_end_date_fails_closed(self, monkeypatch):
+    @pytest.mark.parametrize(
+        "end_date",
+        [
+            "24-09-2026",
+            "2026-9-4",
+            "2026-09-4",
+            "2026-9-04",
+        ],
+    )
+    def test_invalid_end_date_fails_closed(self, monkeypatch, end_date):
         called = False
 
         def _mock_fetch(**kwargs):
@@ -412,7 +421,7 @@ class TestTechnicalIndicatorToolIntegration:
         result = json.loads(
             TechnicalIndicatorTool().execute(
                 symbol="AAPL",
-                end_date="24-09-2026",
+                end_date=end_date,
             )
         )
         assert result["ok"] is False
