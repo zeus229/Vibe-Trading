@@ -198,7 +198,12 @@ class PortfolioSummaryTool(BaseTool):
             if snapshot_id_raw is not None and str(snapshot_id_raw).strip()
             else None
         )
-        context = PortfolioService().analysis_context(snapshot_id=snapshot_id)
+        service = PortfolioService()
+        context = (
+            service.analysis_context(snapshot_id=snapshot_id)
+            if snapshot_id
+            else service.analysis_context()
+        )
         if context is None:
             if snapshot_id:
                 return json.dumps(
