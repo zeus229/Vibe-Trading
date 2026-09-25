@@ -3478,7 +3478,24 @@ class AgentLoop:
             in self._readonly_replay_visibility_pending
         ]
         if protected_indexes:
-            cut_idx = min(cut_idx, max(0, min(protected_indexes) - 1))
+            protected_starts: list[int] = []
+            for tool_index in protected_indexes:
+                call_id = str(body[tool_index].get("tool_call_id") or "")
+                assistant_index = tool_index
+                for candidate in range(tool_index - 1, -1, -1):
+                    message = body[candidate]
+                    if message.get("role") != "assistant":
+                        continue
+                    calls = message.get("tool_calls") or []
+                    if any(
+                        str(call.get("id") or "") == call_id
+                        for call in calls
+                        if isinstance(call, dict)
+                    ):
+                        assistant_index = candidate
+                        break
+                protected_starts.append(assistant_index)
+            cut_idx = min(cut_idx, min(protected_starts))
 
         head = body[:cut_idx]
         tail = body[cut_idx:]
