@@ -247,12 +247,15 @@ class _Normalized:
 
 @dataclass(frozen=True)
 class _Token:
-    """One number in normalized text: its span, sign and digits as written."""
+    """One number in normalized text: its span, sign and normalized digits."""
 
     start: int
     end: int
     sign: str
     digits: str
+    # A visible thousands separator made this an explicitly formatted numeric
+    # figure even though its normalized digits are an integer.
+    grouped: bool = False
 
 
 # Header spellings binding a table column to an OHLC field: the table's own
@@ -435,6 +438,7 @@ def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
             match.end(),
             match.group(0)[0] if match.group(0)[0] in "+-" else "",
             match.group(0).lstrip("+-").replace(".", ""),
+            True,
         )
         for match in _DOTTED_GROUPING_RE.finditer(text)
     ] if comma_decimals else []
@@ -1052,7 +1056,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
         row, position = (cell[2], cell[3]) if cell else (None, None)
         structural = row is not None and position in (row.date_column, row.symbol_column)
         currency = _currency_before(text, token.start) or _currency_after(text, token.end)
-        marked = percent or currency or "." in token.digits
+        marked = percent or currency or "." in token.digits or token.grouped
         # A cell that also holds a word is prose set in a table: its plain
         # integer is a count or a horizon, as it would be in a sentence (#1471).
         worded = (
