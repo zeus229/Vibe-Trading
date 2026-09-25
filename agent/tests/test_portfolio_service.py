@@ -108,6 +108,57 @@ def test_refresh_aggregates_three_readonly_connectors(tmp_path):
     assert "quantity" not in context["holdings"][0]
 
 
+def test_analysis_context_can_pin_an_immutable_snapshot_across_newer_refreshes(tmp_path):
+    account_value = {"ibkr": "1000"}
+
+    def get_account(profile_id):
+        if profile_id.startswith("ibkr"):
+            return {
+                "summary": [
+                    {
+                        "tag": "NetLiquidation",
+                        "value": account_value["ibkr"],
+                        "currency": "USD",
+                    }
+                ]
+            }
+        if profile_id.startswith("longbridge"):
+            return {"balances": [{"net_assets": "7800", "currency": "HKD"}]}
+        return {"balances": []}
+
+    service = PortfolioService(
+        PortfolioStore(tmp_path / "portfolio.sqlite3"),
+        settings_store=_settings_store(tmp_path),
+        get_account=get_account,
+        get_positions=lambda profile_id: {"positions": []},
+        get_quote=lambda *args, **kwargs: {},
+        fx_fetcher=lambda: (
+            Decimal("7.2"),
+            Decimal("7.8"),
+            "2026-08-09T00:00:00+00:00",
+        ),
+    )
+
+    first = service.refresh()
+    first_context = service.analysis_context()
+    account_value["ibkr"] = "2000"
+    second = service.refresh()
+
+    latest = service.analysis_context()
+    pinned = service.analysis_context(snapshot_id=first["snapshot_id"])
+
+    assert first_context["snapshot_id"] == first["snapshot_id"]
+    assert latest["snapshot_id"] == second["snapshot_id"]
+    assert pinned["snapshot_id"] == first["snapshot_id"]
+    assert latest["totals"]["usd"] == 3000.0
+    assert pinned["totals"]["usd"] == 2000.0
+    assert latest["read_identity"]["mode"] == "latest"
+    assert pinned["read_identity"]["mode"] == "pinned"
+    assert pinned["read_identity"]["snapshot_id"] == first["snapshot_id"]
+    assert len(pinned["read_identity"]["configuration_fingerprint"]) == 64
+    assert service.store.get(first["snapshot_id"])["snapshot_id"] == first["snapshot_id"]
+
+
 def test_latest_enriches_legacy_snapshot_with_current_compatibility(tmp_path):
     store = PortfolioStore(tmp_path / "portfolio.sqlite3")
     settings = _settings_store(tmp_path)
