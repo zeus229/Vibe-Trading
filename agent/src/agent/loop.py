@@ -515,8 +515,15 @@ def _replay_context_result(result: str) -> str:
     return json.dumps(replay_payload, ensure_ascii=False)
 
 
-def _microcompact(messages: list) -> list:
+def _microcompact(
+    messages: list,
+    protected_tool_call_ids: set[str] | None = None,
+) -> list:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
+
+    A replay restored after compaction may carry a one-decision visibility
+    lease. Its tool-call id is passed separately so this layer cannot clear
+    the restored payload before the model has received it once.
 
     Args:
         messages: Message list (mutated in place).
@@ -526,11 +533,14 @@ def _microcompact(messages: list) -> list:
         helper contract). The loop reconciles its dedup ledger separately by
         exact successful call identity, not by these tool names.
     """
+    protected = protected_tool_call_ids or set()
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     if len(tool_msgs) <= KEEP_RECENT:
         return []
     newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
+        if str(msg.get("tool_call_id") or "") in protected:
+            continue
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
         # re-clearing it would rewrite the recorded original size with the
