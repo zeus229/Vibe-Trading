@@ -1179,6 +1179,9 @@ class AgentLoop:
         self._readonly_replay_cache: dict[tuple[str, str], str] = {}
         self._readonly_replay_ready: set[tuple[str, str]] = set()
         self._readonly_replay_protected: set[tuple[str, str]] = set()
+        # Replayed tool-call ids protected until one model decision has
+        # actually received their readable payload.
+        self._readonly_replay_visibility_pending: set[str] = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
 
@@ -1300,6 +1303,7 @@ class AgentLoop:
         self._readonly_replay_cache = {}
         self._readonly_replay_ready = set()
         self._readonly_replay_protected = set()
+        self._readonly_replay_visibility_pending = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
         run_started_wall = _time.time()
@@ -2574,6 +2578,10 @@ class AgentLoop:
                 # call is refused until compaction removes it again.
                 if getattr(tool_def, "repeatable", False):
                     self._readonly_replay_protected.add(dedup_key)
+                # The replay must survive until at least one subsequent model
+                # input receives it; otherwise a replay can be counted and
+                # compacted away before the model ever sees its values.
+                self._readonly_replay_visibility_pending.add(str(tc.id))
                 # Restoring data that compaction removed is forward progress for
                 # the working context, but not a new external observation.
                 self._tool_progress.mark_context_restored()
@@ -3198,7 +3206,7 @@ class AgentLoop:
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
-        _microcompact(messages)
+        _microcompact(messages, self._readonly_replay_visibility_pending)
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:
             trace.write({
@@ -3353,6 +3361,7 @@ class AgentLoop:
                 self._readonly_replay_cache.clear()
                 self._readonly_replay_ready.clear()
                 self._readonly_replay_protected.clear()
+                self._readonly_replay_visibility_pending.clear()
 
         status = "ok" if success else "error"
         truncated = truncate_tool_result(result)
