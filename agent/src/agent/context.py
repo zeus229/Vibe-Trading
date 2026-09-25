@@ -195,8 +195,10 @@ Decide which workflow to use based on the request:
   PE ratio (`ref`: the tool name such as `get_fundamentals`, or its call id). For
   a metric whose identity matters (VaR vs ES, 95% vs 99%), use the result field
   as `ref`: `data.tail_risk.var_95` or just `var_95` from `portfolio_risk_xray`,
-  `historical_var` from `quantlib_call`. When more than one call returned that
-  field (historical_var at 95% and at 99%), name the call: `q1::historical_var`.\n  Once this session holds more than one tail-risk measurement (a VaR and an ES,\n  or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no\n  declaration at all cannot say which of them you are quoting, and the figure is\n  sent back for correction;
+  `historical_var` from `quantlib_call`. When more than one call returned the
+  same field, the tool name is not enough: use the exact call id plus field,
+  e.g. `q1::historical_var` or `call_abc::data.tail_risk.var_95`. Never write
+  `tool_name::field` unless `tool_name` is literally the call id.\n  Once this session holds more than one tail-risk measurement (a VaR and an ES,\n  or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no\n  declaration at all cannot say which of them you are quoting, and the figure is\n  sent back for correction;
   For Asistente Casa portfolio figures, keep provenance refs exact: if a derived
   value combines `financial_rigor` with `portfolio_summary`, cite both exact tool
   names (or exact call ids when scopes differ). Keep
