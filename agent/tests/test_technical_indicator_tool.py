@@ -332,6 +332,102 @@ class TestTechnicalIndicatorToolIntegration:
         assert result["indicators"]["sma_20"] is None
 
 
+    def test_read_identity_pins_requested_boundary_and_provenance(
+        self, monkeypatch, sample_df
+    ):
+        seen = {}
+        provenance = {
+            "AAPL": {
+                "source": "fake",
+                "requested_source": "auto",
+                "fallback_used": False,
+                "volume_unit": "shares",
+            }
+        }
+
+        def _mock_fetch(**kwargs):
+            seen.update(kwargs)
+            return {"AAPL": sample_df, "_provenance": provenance}
+
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.fetch_market_data",
+            _mock_fetch,
+        )
+        result = json.loads(
+            TechnicalIndicatorTool().execute(
+                symbol="AAPL",
+                end_date="2026-09-24",
+            )
+        )
+
+        identity = result["read_identity"]
+        assert result["ok"] is True
+        assert seen["end_date"] == "2026-09-24"
+        assert identity["mode"] == "pinned_boundary"
+        assert identity["requested_end_date"] == "2026-09-24"
+        assert identity["bar_count"] == 200
+        assert identity["provenance"]["source"] == "fake"
+        assert len(identity["dataset_fingerprint"]) == 64
+
+    def test_dataset_fingerprint_is_stable_for_same_observation_and_changes_with_bars(
+        self, monkeypatch, sample_df
+    ):
+        payload = sample_df.copy()
+        provenance = {"AAPL": {"source": "fake", "fallback_used": False}}
+
+        def _mock_fetch(**kwargs):
+            return {"AAPL": payload.copy(), "_provenance": provenance}
+
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.fetch_market_data",
+            _mock_fetch,
+        )
+        tool = TechnicalIndicatorTool()
+        first = json.loads(tool.execute(symbol="AAPL", end_date="2026-09-24"))
+        second = json.loads(tool.execute(symbol="AAPL", end_date="2026-09-24"))
+        assert (
+            first["read_identity"]["dataset_fingerprint"]
+            == second["read_identity"]["dataset_fingerprint"]
+        )
+
+        payload.iloc[-1, payload.columns.get_loc("close")] += 1.0
+        changed = json.loads(tool.execute(symbol="AAPL", end_date="2026-09-24"))
+        assert (
+            changed["read_identity"]["dataset_fingerprint"]
+            != first["read_identity"]["dataset_fingerprint"]
+        )
+
+    def test_invalid_end_date_fails_closed(self, monkeypatch):
+        called = False
+
+        def _mock_fetch(**kwargs):
+            nonlocal called
+            called = True
+            return {}
+
+        monkeypatch.setattr(
+            "src.tools.technical_indicator_tool.fetch_market_data",
+            _mock_fetch,
+        )
+        result = json.loads(
+            TechnicalIndicatorTool().execute(
+                symbol="AAPL",
+                end_date="24-09-2026",
+            )
+        )
+        assert result["ok"] is False
+        assert "YYYY-MM-DD" in result["error"]
+        assert called is False
+
+    def test_declares_replay_and_explicit_freshness_contract(self):
+        tool = TechnicalIndicatorTool()
+        assert tool.is_readonly is True
+        assert tool.repeatable is True
+        assert tool.replay_after_compaction is True
+        assert "end_date" in tool.parameters["properties"]
+        assert "no_cache" in tool.parameters["properties"]
+
+
 class TestLoaderPayloadShapes:
     """Regression: #1002 — loader payloads arrive as list[dict], not DataFrame."""
 
