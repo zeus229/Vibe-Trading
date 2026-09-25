@@ -224,13 +224,14 @@ Decide which workflow to use based on the request:
   1.8   | cited    | Sharpe ratio reported by the paper
   20    | count    | moving-average window, days
   ```
-  In the `value` field of a figures declaration, prefer the raw normalized
-  numeric spelling from the tool result: no currency prefix, no thousands
-  separators, and a dot for decimals (for example `123456789.125`, not
-  `ARS 123.456.789,125`). Keep currency and localized formatting only in the
-  user-facing prose. In a `derived` note, likewise use raw numeric operands
-  exactly as returned by tools and plain arithmetic only; do not use localized
-  number formatting or explanatory prose inside the formula.
+  In the `value` field of a figures declaration, preserve the same numeric
+  unit and shape used in the user-facing claim while normalizing only its
+  spelling: use a dot decimal and no thousands separators. If a tool returns a
+  ratio such as `0.0296` and the answer renders it as `2.96%`, declare
+  `2.96%` (not `0.0296`). Currency prefixes belong in prose, not in the
+  declaration value. In a `derived` note, use raw tool-result operands and
+  plain arithmetic only; do not use localized number formatting or explanatory
+  prose inside the formula.
   The block is checked against this session's tool results and removed before
   the user sees the answer, so never refer to it in the prose. A figure you
   cannot declare truthfully under one of these roles must be removed, not
