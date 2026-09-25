@@ -343,10 +343,25 @@ class TechnicalIndicatorTool(BaseTool):
             lookback = _DEFAULT_LOOKBACK
         lookback = max(10, min(lookback, _MAX_LOOKBACK))
 
-        # Fetch enough bars to cover the longest indicator window + buffer.
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        # Resolve the acquisition boundary once so a single invocation cannot
+        # straddle midnight between separate clock reads.
+        end_date_raw = kwargs.get("end_date")
+        if end_date_raw is not None and str(end_date_raw).strip():
+            try:
+                reference_date = datetime.strptime(
+                    str(end_date_raw).strip(), "%Y-%m-%d"
+                ).date()
+            except ValueError:
+                return json.dumps(
+                    {"ok": False, "error": "end_date must use YYYY-MM-DD"}
+                )
+            read_mode = "pinned_boundary"
+        else:
+            reference_date = datetime.now().date()
+            read_mode = "latest_boundary"
+        end_date = reference_date.strftime("%Y-%m-%d")
         days = lookback * _CALENDAR_DAYS_PER_BAR.get(interval, 2)
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        start_date = (reference_date - timedelta(days=days)).strftime("%Y-%m-%d")
 
         try:
             data = fetch_market_data(
