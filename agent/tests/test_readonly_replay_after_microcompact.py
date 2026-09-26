@@ -80,6 +80,7 @@ def _loop(registry=None):
     loop._readonly_replay_cache = {}
     loop._readonly_replay_ready = set()
     loop._readonly_replay_protected = set()
+    loop._readonly_replay_visibility_pending = set()
     loop._readonly_replay_recoveries = 0
     loop._grounding = None
     loop._cancel_event = threading.Event()
@@ -395,3 +396,67 @@ def test_without_a_write_the_lost_result_is_restored() -> None:
 
     assert registry.execute_calls == 1
     assert "_vibe_replay" in messages[-1]["content"]
+
+
+def test_replay_visibility_lease_survives_microcompact_until_model_consumes_it():
+    """A replay must reach one model decision before layer-1 can clear it."""
+    registry = _Registry(repeatable=True, replay_after_compaction=True)
+    loop = _loop(registry)
+    args = {"url": "https://example.test/report"}
+    key = loop._identical_call_key("read_url", args)
+    assert key is not None
+    loop._readonly_replay_cache[key] = '{"status":"ok","body":"' + ("x" * 300) + '"}'
+    loop._readonly_replay_ready.add(key)
+
+    messages = []
+    trace = _Trace()
+    tc = SimpleNamespace(name="read_url", arguments=args, id="replay-visible")
+    loop._process_tool_calls([tc], _Context(), messages, trace, [], 1)
+
+    assert "replay-visible" in loop._readonly_replay_visibility_pending
+    assert "_vibe_replay" in messages[-1]["content"]
+
+    # Three newer tool results would ordinarily push the replay outside
+    # KEEP_RECENT and make layer-1 clear it.
+    for index in range(3):
+        messages.append(
+            {
+                "role": "tool",
+                "tool_call_id": f"newer-{index}",
+                "name": "other",
+                "content": "y" * 300,
+            }
+        )
+
+    loop._microcompact_and_unblock(messages, trace, 2)
+    replay_message = next(
+        msg for msg in messages if msg.get("tool_call_id") == "replay-visible"
+    )
+    assert "_vibe_replay" in replay_message["content"]
+    assert not replay_message["content"].startswith("[CLEARED FROM CONTEXT:")
+
+    # Once a model call has received the readable replay, its lease is consumed
+    # and the next compaction may clear it normally.
+    loop._consume_replay_visibility_lease(messages, trace, 3)
+    assert "replay-visible" not in loop._readonly_replay_visibility_pending
+
+    loop._microcompact_and_unblock(messages, trace, 4)
+    assert replay_message["content"].startswith("[CLEARED FROM CONTEXT:")
+    assert any(event["type"] == "replay_visibility_consumed" for event in trace.events)
+
+
+def test_write_invalidation_clears_pending_replay_visibility_lease():
+    registry = _ReadAndWriteRegistry()
+    loop = _loop(registry)
+    loop._readonly_replay_visibility_pending.add("replay-1")
+
+    loop._process_tool_calls(
+        [SimpleNamespace(name="bash", arguments={"command": "echo changed"}, id="w1")],
+        _Context(),
+        [],
+        _Trace(),
+        [],
+        1,
+    )
+
+    assert loop._readonly_replay_visibility_pending == set()

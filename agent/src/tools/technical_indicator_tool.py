@@ -7,6 +7,7 @@ no new dependencies.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 from datetime import datetime, timedelta
@@ -141,6 +142,44 @@ def _compute_volume_stats(
     return {"latest": latest, "sma_20": sma, "ratio_20": ratio}
 
 
+def _dataset_fingerprint(
+    close: pd.Series,
+    volume: pd.Series | None,
+    provenance: dict[str, Any] | None,
+    *,
+    interval: str,
+) -> str:
+    """Return a stable identity for the exact bars used by the indicators."""
+    rows: list[list[Any]] = []
+    for position in range(len(close)):
+        index_value = close.index[position]
+        if isinstance(close.index, pd.DatetimeIndex):
+            label = pd.Timestamp(index_value).isoformat()
+        else:
+            label = str(index_value)
+        close_value = float(close.iloc[position])
+        volume_value: float | None = None
+        if volume is not None and position < len(volume):
+            raw_volume = volume.iloc[position]
+            if pd.notna(raw_volume):
+                volume_value = float(raw_volume)
+        rows.append([label, close_value, volume_value])
+
+    payload = {
+        "interval": interval,
+        "bars": rows,
+        "provenance": provenance if isinstance(provenance, dict) else {},
+    }
+    canonical = json.dumps(
+        payload,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+        default=str,
+    ).encode("utf-8")
+    return hashlib.sha256(canonical).hexdigest()
+
+
 def _compute_sma(close: pd.Series, period: int) -> float | None:
     """Simple moving average over the last *period* bars."""
     if len(close) < period:
@@ -229,9 +268,12 @@ class TechnicalIndicatorTool(BaseTool):
         "Compute common technical indicators (RSI, MACD, Bollinger Bands, "
         "SMA, EMA) plus latest/20-bar volume statistics for a trading symbol "
         "(volume.unit is the serving source's declared unit -- lots or shares -- "
-        "or null when undeclared). "
-        "Uses the project's data loaders "
-        "to fetch price history, then computes indicators locally."
+        "or null when undeclared). Returns read_identity with the acquisition "
+        "boundary, serving provenance and a fingerprint of the exact bars used. "
+        "After context compaction an exact prior result may be restored; use "
+        "no_cache=true only when the task genuinely needs a new observation. "
+        "Uses the project's data loaders to fetch price history, then computes "
+        "indicators locally."
     )
     parameters = {
         "type": "object",
@@ -256,11 +298,29 @@ class TechnicalIndicatorTool(BaseTool):
                 ),
                 "default": _DEFAULT_LOOKBACK,
             },
+            "end_date": {
+                "type": "string",
+                "description": (
+                    "Optional YYYY-MM-DD acquisition boundary. Omit it for the "
+                    "current local date. The boundary pins the requested period; "
+                    "read_identity.dataset_fingerprint identifies the exact bars used."
+                ),
+            },
+            "no_cache": {
+                "type": "boolean",
+                "description": (
+                    "Bypass run-scoped replay after context compaction and execute "
+                    "the acquisition again. Use only when a genuinely new observation "
+                    "is required. Provider loader caches retain their existing policy."
+                ),
+                "default": False,
+            },
         },
         "required": ["symbol"],
     }
     repeatable = True
     is_readonly = True
+    replay_after_compaction = True
 
     def execute(self, **kwargs: Any) -> str:
         symbol = str(kwargs.get("symbol", "")).strip()
@@ -286,10 +346,34 @@ class TechnicalIndicatorTool(BaseTool):
             lookback = _DEFAULT_LOOKBACK
         lookback = max(10, min(lookback, _MAX_LOOKBACK))
 
-        # Fetch enough bars to cover the longest indicator window + buffer.
-        end_date = datetime.now().strftime("%Y-%m-%d")
+        # Resolve the acquisition boundary once so a single invocation cannot
+        # straddle midnight between separate clock reads.
+        end_date_raw = kwargs.get("end_date")
+        if end_date_raw is not None and str(end_date_raw).strip():
+            end_date_text = str(end_date_raw).strip()
+            try:
+                reference_date = datetime.strptime(
+                    end_date_text, "%Y-%m-%d"
+                ).date()
+            except ValueError:
+                return json.dumps(
+                    {"ok": False, "error": "end_date must use YYYY-MM-DD"}
+                )
+            # datetime.strptime accepts non-zero-padded month/day values for
+            # %m/%d. The public contract is intentionally stricter so read
+            # identities have one canonical spelling and invalid shapes fail
+            # closed before touching a data provider.
+            if reference_date.strftime("%Y-%m-%d") != end_date_text:
+                return json.dumps(
+                    {"ok": False, "error": "end_date must use YYYY-MM-DD"}
+                )
+            read_mode = "pinned_boundary"
+        else:
+            reference_date = datetime.now().date()
+            read_mode = "latest_boundary"
+        end_date = reference_date.strftime("%Y-%m-%d")
         days = lookback * _CALENDAR_DAYS_PER_BAR.get(interval, 2)
-        start_date = (datetime.now() - timedelta(days=days)).strftime("%Y-%m-%d")
+        start_date = (reference_date - timedelta(days=days)).strftime("%Y-%m-%d")
 
         try:
             data = fetch_market_data(
@@ -367,6 +451,13 @@ class TechnicalIndicatorTool(BaseTool):
             else None
         )
 
+        fingerprint = _dataset_fingerprint(
+            close,
+            volume,
+            provenance if isinstance(provenance, dict) else None,
+            interval=interval,
+        )
+
         return json.dumps(
             {
                 "ok": True,
@@ -374,6 +465,15 @@ class TechnicalIndicatorTool(BaseTool):
                 "interval": interval,
                 "latest_close": latest_close,
                 "latest_date": latest_date,
+                "read_identity": {
+                    "mode": read_mode,
+                    "requested_start_date": start_date,
+                    "requested_end_date": end_date,
+                    "bar_count": len(close),
+                    "latest_date": latest_date,
+                    "dataset_fingerprint": fingerprint,
+                    "provenance": provenance if isinstance(provenance, dict) else None,
+                },
                 "indicators": indicators,
             },
             ensure_ascii=False,

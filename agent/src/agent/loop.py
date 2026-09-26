@@ -515,8 +515,15 @@ def _replay_context_result(result: str) -> str:
     return json.dumps(replay_payload, ensure_ascii=False)
 
 
-def _microcompact(messages: list) -> list:
+def _microcompact(
+    messages: list,
+    protected_tool_call_ids: set[str] | None = None,
+) -> list:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
+
+    A replay restored after compaction may carry a one-decision visibility
+    lease. Its tool-call id is passed separately so this layer cannot clear
+    the restored payload before the model has received it once.
 
     Args:
         messages: Message list (mutated in place).
@@ -526,11 +533,14 @@ def _microcompact(messages: list) -> list:
         helper contract). The loop reconciles its dedup ledger separately by
         exact successful call identity, not by these tool names.
     """
+    protected = protected_tool_call_ids or set()
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     if len(tool_msgs) <= KEEP_RECENT:
         return []
     newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
+        if str(msg.get("tool_call_id") or "") in protected:
+            continue
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
         # re-clearing it would rewrite the recorded original size with the
@@ -562,8 +572,14 @@ def _result_data_gone(content: Any) -> bool:
     return _is_cleared(content) or content == _STUB_RESULT_CONTENT
 
 
-def _context_collapse(messages: list) -> None:
+def _context_collapse(
+    messages: list,
+    protected_tool_call_ids: set[str] | None = None,
+) -> None:
     """Layer 2: fold long text blocks in older messages without LLM call.
+
+    Tool results carrying a one-decision replay visibility lease are left
+    untouched until the next model input consumes that lease.
 
     Preserves head + tail of large text, collapses the middle.
     Zero API cost — pure string operation.
@@ -573,7 +589,13 @@ def _context_collapse(messages: list) -> None:
     """
     if len(messages) <= COLLAPSE_PRESERVE_RECENT + 1:
         return
+    protected = protected_tool_call_ids or set()
     for msg in messages[1:-COLLAPSE_PRESERVE_RECENT]:
+        if (
+            msg.get("role") == "tool"
+            and str(msg.get("tool_call_id") or "") in protected
+        ):
+            continue
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
@@ -1164,6 +1186,9 @@ class AgentLoop:
         self._readonly_replay_cache: dict[tuple[str, str], str] = {}
         self._readonly_replay_ready: set[tuple[str, str]] = set()
         self._readonly_replay_protected: set[tuple[str, str]] = set()
+        # Replayed tool-call ids protected until one model decision has
+        # actually received their readable payload.
+        self._readonly_replay_visibility_pending: set[str] = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
 
@@ -1285,6 +1310,7 @@ class AgentLoop:
         self._readonly_replay_cache = {}
         self._readonly_replay_ready = set()
         self._readonly_replay_protected = set()
+        self._readonly_replay_visibility_pending = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
         run_started_wall = _time.time()
@@ -1412,7 +1438,10 @@ class AgentLoop:
 
                 # Layer 2: context collapse (fold long text, zero API cost)
                 if tokens > int(_token_threshold() * 0.7):
-                    _context_collapse(messages)
+                    _context_collapse(
+                        messages,
+                        self._readonly_replay_visibility_pending,
+                    )
                     tokens = estimate_tokens(messages)
 
                 # Layer 3: auto_compact (token threshold exceeded)
@@ -1641,6 +1670,12 @@ class AgentLoop:
                 # end the run now, without executing any of its tool calls.
                 if self._cancel_event.is_set():
                     break
+
+                # A successful model call consumed the one-decision visibility
+                # lease for any readable replay that was present in its input.
+                self._consume_replay_visibility_lease(
+                    messages, trace, current_iter
+                )
 
                 # An LLM response arrived - real progress for the stall watchdog.
                 self._last_activity_wall = _time.time()
@@ -2579,6 +2614,10 @@ class AgentLoop:
                 # call is refused until compaction removes it again.
                 if getattr(tool_def, "repeatable", False):
                     self._readonly_replay_protected.add(dedup_key)
+                # The replay must survive until at least one subsequent model
+                # input receives it; otherwise a replay can be counted and
+                # compacted away before the model ever sees its values.
+                self._readonly_replay_visibility_pending.add(str(tc.id))
                 # Restoring data that compaction removed is forward progress for
                 # the working context, but not a new external observation.
                 self._tool_progress.mark_context_restored()
@@ -3203,7 +3242,7 @@ class AgentLoop:
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
-        _microcompact(messages)
+        _microcompact(messages, self._readonly_replay_visibility_pending)
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:
             trace.write({
@@ -3212,6 +3251,35 @@ class AgentLoop:
                 "tools": unreadable_tools,
             })
         return unreadable_tools
+
+    def _consume_replay_visibility_lease(
+        self,
+        messages: list,
+        trace: TraceWriter,
+        iteration: int,
+    ) -> None:
+        """Release replay protection after one model input actually saw it."""
+        if not self._readonly_replay_visibility_pending:
+            return
+        readable_call_ids = {
+            str(msg.get("tool_call_id") or "")
+            for msg in messages
+            if msg.get("role") == "tool"
+            and not _result_data_gone(msg.get("content"))
+        }
+        consumed = sorted(
+            self._readonly_replay_visibility_pending & readable_call_ids
+        )
+        if not consumed:
+            return
+        self._readonly_replay_visibility_pending.difference_update(consumed)
+        trace.write(
+            {
+                "type": "replay_visibility_consumed",
+                "iter": iteration,
+                "call_ids": consumed,
+            }
+        )
 
     def _readable_success_keys(self, messages: list) -> set[tuple[str, str]]:
         """Identify surviving successful results, not synthetic skip/stub calls."""
@@ -3358,6 +3426,7 @@ class AgentLoop:
                 self._readonly_replay_cache.clear()
                 self._readonly_replay_ready.clear()
                 self._readonly_replay_protected.clear()
+                self._readonly_replay_visibility_pending.clear()
 
         status = "ok" if success else "error"
         truncated = truncate_tool_result(result)
@@ -3428,8 +3497,47 @@ class AgentLoop:
         # oversized tool calls are folded instead of hiding in the tail.
         cut_idx = _tail_cut_index(body)
 
+        # A one-decision replay visibility lease outranks the ordinary tail
+        # budget. Keep the restored result and its preceding assistant tool
+        # call in the preserved tail until the next model input has seen it.
+        protected_indexes = [
+            index
+            for index, msg in enumerate(body)
+            if msg.get("role") == "tool"
+            and str(msg.get("tool_call_id") or "")
+            in self._readonly_replay_visibility_pending
+        ]
+        if protected_indexes:
+            protected_starts: list[int] = []
+            for tool_index in protected_indexes:
+                call_id = str(body[tool_index].get("tool_call_id") or "")
+                assistant_index = tool_index
+                for candidate in range(tool_index - 1, -1, -1):
+                    message = body[candidate]
+                    if message.get("role") != "assistant":
+                        continue
+                    calls = message.get("tool_calls") or []
+                    if any(
+                        str(call.get("id") or "") == call_id
+                        for call in calls
+                        if isinstance(call, dict)
+                    ):
+                        assistant_index = candidate
+                        break
+                protected_starts.append(assistant_index)
+            cut_idx = min(cut_idx, min(protected_starts))
+
         head = body[:cut_idx]
         tail = body[cut_idx:]
+
+        if not head and protected_indexes:
+            # Nothing can be folded without consuming a replay that has not
+            # reached a model decision yet. Defer layer-3 compaction for this
+            # single decision instead of violating the visibility lease.
+            logger.info(
+                "Auto compact deferred: replay visibility lease protects the tail"
+            )
+            return
 
         if not head:
             # All body fits in tail budget — force a split to avoid infinite loop
