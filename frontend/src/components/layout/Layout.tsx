@@ -30,12 +30,17 @@ export function Layout() {
     { to: "/settings", icon: Settings, label: t('layout.settings') },
     { to: "/correlation", icon: BarChart3, label: t('layout.correlation') },
   ];
-  const argentinaDashboardUrl =
+  const argentinaDashboardBaseUrl =
     import.meta.env.VITE_ASISTENTE_CASA_UI_URL ||
     `${window.location.protocol}//${window.location.hostname}:8000/investments-web/`;
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
   const { dark, toggle } = useDarkMode();
+  const argentinaDashboardUrl = (() => {
+    const url = new URL(argentinaDashboardBaseUrl, window.location.href);
+    url.searchParams.set("theme", dark ? "dark" : "light");
+    return url.toString();
+  })();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const sseStatus = useAgentStore(s => s.sseStatus);
