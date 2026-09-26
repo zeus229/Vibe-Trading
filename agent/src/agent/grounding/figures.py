@@ -699,12 +699,15 @@ def parse_figures_block(content: str) -> FiguresBlock:
         stripped = line.strip().replace("｜", "|")
         if not stripped:
             continue
-        parts = stripped.split("|")
+        # The declaration schema has exactly four logical columns. A literal pipe
+        # may be part of the ref itself (for example OpenAI Responses call ids such
+        # as `call_abc|fc_def::data.tail_risk.var_95`), so only the first three
+        # separators are structural.
         if stripped.startswith("|"):
-            parts = parts[1:]
-        if len(parts) > 1 and stripped.endswith("|"):
-            parts = parts[:-1]
-        parts = [part.strip() for part in parts]
+            stripped = stripped[1:].lstrip()
+        if stripped.endswith("|"):
+            stripped = stripped[:-1].rstrip()
+        parts = [part.strip() for part in stripped.split("|", 3)]
         if _is_header_or_rule(parts):
             continue
         parsed = _parse_value(parts[0], document_reading) if parts else None
