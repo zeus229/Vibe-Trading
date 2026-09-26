@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from src.agent.context import _SYSTEM_PROMPT
 from src.agent.grounding import GroundingLedger
 
 pytestmark = pytest.mark.unit
@@ -24,4 +25,11 @@ def test_correction_prompt_requires_literal_refs_and_full_figures_block(tmp_path
     assert "Preserve or rebuild the final figures block on every revision" in prompt
     assert "normalized raw number" in prompt
     assert "not ARS 123.456.789,125" in prompt
+    assert "0.9562% | observed | ..." in prompt
+    assert "0.9562 and 0.9562% are different" in prompt
     assert "preserve ALL of those refs" in prompt
+
+
+def test_system_prompt_keeps_percent_unit_in_figures_declaration() -> None:
+    assert "0.9562% | observed | ..." in _SYSTEM_PROMPT
+    assert "`0.9562` and `0.9562%`" in _SYSTEM_PROMPT
