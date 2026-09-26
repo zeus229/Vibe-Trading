@@ -214,7 +214,10 @@ class _ReleaseMixin:
                 "in the prose must still have a valid declaration in that block.",
                 "In each figures declaration, write the value as a normalized raw number "
                 "without a currency prefix or thousands separators and with a dot decimal "
-                "(for example 123456789.125, not ARS 123.456.789,125). Derived notes must "
+                "(for example 123456789.125, not ARS 123.456.789,125). If the prose "
+                "writes a percentage, the declaration value MUST keep the percent sign "
+                "(for example 0.9562% | observed | ...); 0.9562 and 0.9562% are different "
+                "figure shapes to the gate. Derived notes must "
                 "use raw tool-result operands and plain arithmetic only. If a derived "
                 "figure previously needed multiple refs, preserve ALL of those refs in "
                 "the corrected declaration; never collapse it back to the calculator alone.",

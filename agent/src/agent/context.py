@@ -227,7 +227,9 @@ Decide which workflow to use based on the request:
   In the `value` field of a figures declaration, prefer the raw normalized
   numeric spelling from the tool result: no currency prefix, no thousands
   separators, and a dot for decimals (for example `123456789.125`, not
-  `ARS 123.456.789,125`). Keep currency and localized formatting only in the
+  `ARS 123.456.789,125`). A percentage declaration must keep the percent sign
+  used in prose (`0.9562% | observed | ...`), because `0.9562` and `0.9562%`
+  are different figure shapes to the gate. Keep currency and localized formatting only in the
   user-facing prose. In a `derived` note, likewise use raw numeric operands
   exactly as returned by tools and plain arithmetic only; do not use localized
   number formatting or explanatory prose inside the formula.

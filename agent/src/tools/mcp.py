@@ -1198,6 +1198,10 @@ def _normalize_call_tool_result(result: CallToolResult) -> dict[str, Any]:
         text = _extract_text_content(result.content)
         if text:
             payload["text"] = text
+            if result.structured_content is None and result.data is None:
+                parsed_text = _parse_json_text_content(text)
+                if parsed_text is not None:
+                    payload["data"] = parsed_text
     return payload
 
 
@@ -1267,6 +1271,29 @@ def _extract_result_error(result: CallToolResult) -> str:
         return _to_display_text(result.data)
     return "Remote MCP tool returned an error"
 
+
+def _parse_json_text_content(text: str) -> dict[str, Any] | list[Any] | None:
+    """Promote text-only MCP JSON containers into structured local data.
+
+    Some MCP servers return an object as a single TextContent block instead
+    of using structuredContent/data. The agent can read that text, but
+    grounding only flattens real JSON containers. Parse only complete JSON
+    objects/arrays and keep the original text/content untouched.
+
+    Args:
+        text: Joined text content from a successful MCP result.
+
+    Returns:
+        Parsed dict/list when the entire text is a JSON container, else None.
+    """
+    stripped = text.strip()
+    if not stripped or stripped[0] not in "[{" or stripped[-1] not in "]}":
+        return None
+    try:
+        parsed = json.loads(stripped)
+    except (json.JSONDecodeError, TypeError):
+        return None
+    return parsed if isinstance(parsed, (dict, list)) else None
 
 def _extract_text_content(content: list[Any]) -> str:
     """Join text content blocks from a FastMCP response.
