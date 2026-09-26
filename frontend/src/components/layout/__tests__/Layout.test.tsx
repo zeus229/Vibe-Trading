@@ -93,7 +93,7 @@ describe("Layout accessibility", () => {
     expect(screen.getByRole("navigation", { name: "Main navigation" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Vibe-Trading" })).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "New Chat" })).toHaveAttribute("title", "New Chat");
-    expect(screen.getByRole("link", { name: "Argentina" })).toHaveAttribute("href", "http://localhost:8000/investments-web/");
+    expect(screen.getByRole("link", { name: "Argentina" })).toHaveAttribute("href", "http://localhost:8000/investments-web/?theme=light");
     expect(screen.getByText("Skip to main content")).toHaveAttribute("href", "#main");
     expect(screen.getByRole("main")).toHaveAttribute("id", "main");
     expect(screen.getByRole("main").parentElement).toHaveClass("relative");
