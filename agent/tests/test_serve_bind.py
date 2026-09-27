@@ -50,9 +50,15 @@ def _run_serve(argv: list[str]) -> str | None:
     The frontend mount / static-file branches are short-circuited because
     uvicorn.run raises SystemExit before reaching the server loop.
     """
+    return _run_serve_capturing(argv)["host"]  # type: ignore[return-value]
+
+
+def _run_serve_capturing(argv: list[str]) -> dict[str, object]:
+    """Invoke serve_main with uvicorn stubbed; return the captured kwargs."""
     captured: dict[str, object] = {}
 
     def fake_run(*args: object, **kwargs: object) -> None:
+        captured.update(kwargs)
         captured["host"] = kwargs.get("host") or (args[1] if len(args) > 1 else None)
         raise SystemExit(0)
 
@@ -61,7 +67,7 @@ def _run_serve(argv: list[str]) -> str | None:
             api_server.serve_main(argv)
         except SystemExit:
             pass
-    return captured.get("host")  # type: ignore[return-value]
+    return captured
 
 
 @pytest.mark.unit
@@ -130,3 +136,57 @@ def test_serve_mounts_frontend_when_routes_include_router_without_path(
         assert _run_serve([]) == "127.0.0.1"
     finally:
         api_server.app.routes.pop(0)
+
+
+# ---------------------------------------------------------------------------
+# forwarded_allow_ips (VIBE_TRADING_FORWARDED_ALLOW_IPS)
+#
+# Covers the reverse-proxy trust fix: a proxy terminating TLS on a host other
+# than 127.0.0.1 (e.g. Cloudflare Tunnel) needs its IP passed to Uvicorn's
+# forwarded_allow_ips, or X-Forwarded-Proto is silently ignored and
+# request.url.scheme stays "http" behind HTTPS.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_forwarded_allow_ips_defaults_to_loopback(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.config.accessor import reset_env_config
+
+    monkeypatch.delenv("VIBE_TRADING_FORWARDED_ALLOW_IPS", raising=False)
+    reset_env_config()
+    try:
+        captured = _run_serve_capturing([])
+    finally:
+        reset_env_config()
+
+    assert captured["forwarded_allow_ips"] == "127.0.0.1"
+    assert captured["proxy_headers"] is True
+
+
+@pytest.mark.unit
+def test_forwarded_allow_ips_honors_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    from src.config.accessor import reset_env_config
+
+    monkeypatch.setenv("VIBE_TRADING_FORWARDED_ALLOW_IPS", "192.168.0.100")
+    reset_env_config()
+    try:
+        captured = _run_serve_capturing([])
+    finally:
+        reset_env_config()
+
+    assert captured["forwarded_allow_ips"] == "192.168.0.100"
+
+
+@pytest.mark.unit
+def test_forwarded_allow_ips_reaches_uvicorn_run(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The configured value must be the exact kwarg uvicorn.run receives."""
+    from src.config.accessor import reset_env_config
+
+    monkeypatch.setenv("VIBE_TRADING_FORWARDED_ALLOW_IPS", "192.168.0.100,10.0.0.5")
+    reset_env_config()
+    try:
+        captured = _run_serve_capturing([])
+    finally:
+        reset_env_config()
+
+    assert captured["forwarded_allow_ips"] == "192.168.0.100,10.0.0.5"
