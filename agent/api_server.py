@@ -86,10 +86,10 @@ from src.api.helpers import (  # noqa: F401, E402
     RUNS_DIR,
     SESSIONS_DIR,
     UPLOADS_DIR,
-    _coerce_float,
-    _coerce_int,
+    _coerce_float, _coerce_int,
     _ensure_agent_env_file,
     _format_env_value,
+    _forwarded_allow_ips,
     _FRONTEND_DIST,
     _is_configured_secret,
     _is_spa_html_route,
@@ -386,7 +386,8 @@ def serve_main(argv: list[str] | None = None) -> int:
     install_access_log_redaction_filter()
 
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                    proxy_headers=True, forwarded_allow_ips=_forwarded_allow_ips())
     finally:
         if vite_proc:
             vite_proc.terminate()
