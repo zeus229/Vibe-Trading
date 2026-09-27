@@ -966,6 +966,8 @@ vibe-trading serve --port 8899     # FastAPI serves dist/ as static files
 
 > [!NOTE]
 > `vibe-trading serve` binds `0.0.0.0` and is loopback-only by default: opening the UI on the **same machine** (`http://localhost:8899`) works with zero config. If you browse from **another machine, a VM host, or a phone on your LAN**, sensitive endpoints return `403` and the chat shows "Remote API access requires an API key" — set a strong `API_AUTH_KEY` in `agent/.env`, restart, and enter the same key once in **Settings**. (Docker Desktop's host gateway: set `VIBE_TRADING_TRUST_DOCKER_LOOPBACK=1` with the default `127.0.0.1` port bind.)
+>
+> **Behind a reverse proxy that terminates TLS elsewhere** (e.g. Cloudflare Tunnel, nginx on another host): Uvicorn only trusts `X-Forwarded-Proto`/`X-Forwarded-For` from peers listed in `forwarded_allow_ips` (default: `127.0.0.1`). If the proxy connects from a different IP, that header is ignored, `request.url.scheme` stays `http`, and same-origin HTTPS `POST`s get rejected with `403 Cross-site request denied`. Set `VIBE_TRADING_FORWARDED_ALLOW_IPS` to the proxy's IP (comma-separated for more than one) to fix it.
 
 </details>
 
@@ -1003,6 +1005,7 @@ Copy `agent/.env.example` to `agent/.env` and uncomment the provider block you w
 | `VIBE_TRADING_ALLOWED_RUN_ROOTS` | No | Extra comma-separated roots for generated-code run directories |
 | `VIBE_TW_STOCK_DB` | No | Path to a Taiwan-market SQLite snapshot; the read-only `taiwan_stock_data` tool registers only when it is schema-valid |
 | `VIBE_TRADING_EXTRA_CORS_ORIGINS` | No | Comma-separated origins **added** to the loopback CORS defaults (`CORS_ORIGINS` replaces them instead) |
+| `VIBE_TRADING_FORWARDED_ALLOW_IPS` | No | Comma-separated peer IP(s) trusted to set `X-Forwarded-Proto`/`X-Forwarded-For` (passed to Uvicorn's `forwarded_allow_ips`); default `127.0.0.1`. Set it to your reverse proxy's IP when it terminates TLS on another host |
 | `CONTENT_FILTER_WARNING_THRESHOLD` | No | Content-filter warning ratio threshold (default 0.05 = 5%). When the ratio of LLM responses blocked by content moderation exceeds this, the run card warns you to switch providers. |
 
 <sub>* Ollama does not require an API key. OpenAI Codex uses ChatGPT OAuth and stores tokens via `oauth-cli-kit`, not in `agent/.env`. GitHub Copilot authentication is handled by the official SDK.</sub>
