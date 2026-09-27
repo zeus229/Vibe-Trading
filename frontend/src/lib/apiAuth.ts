@@ -6,13 +6,14 @@ export function getApiAuthKey(): string {
   return safeGet(STORAGE_KEY) || "";
 }
 
-export function setApiAuthKey(value: string): void {
+export function setApiAuthKey(value: string): boolean {
   const trimmed = value.trim();
   if (trimmed) {
     safeSet(STORAGE_KEY, trimmed);
   } else {
     safeRemove(STORAGE_KEY);
   }
+  return getApiAuthKey() === trimmed;
 }
 
 export function authHeaders(): Record<string, string> {
