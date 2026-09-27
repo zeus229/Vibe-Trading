@@ -267,3 +267,23 @@ def _validate_path_param(value: str, kind: str) -> None:
     """Reject path parameters that could escape the parent directory."""
     if not _SAFE_PATH_PARAM_RE.fullmatch(value or ""):
         raise HTTPException(status_code=400, detail=f"invalid {kind}")
+
+
+# ============================================================================
+# Reverse-proxy trust
+# ============================================================================
+
+
+def _forwarded_allow_ips() -> str:
+    """Return the peer IP(s) Uvicorn should trust for X-Forwarded-Proto/-For.
+
+    Uvicorn only honors those headers from peers in ``forwarded_allow_ips``
+    (its own default: ``"127.0.0.1"``). A reverse proxy terminating TLS on
+    another host (e.g. Cloudflare Tunnel) needs its IP here, or
+    ``request.url.scheme`` stays ``"http"`` and same-origin HTTPS POSTs are
+    rejected as cross-site. Configurable via ``VIBE_TRADING_FORWARDED_ALLOW_IPS``;
+    defaults to Uvicorn's own loopback-only value.
+    """
+    from src.config.accessor import get_env_config
+
+    return get_env_config().api.vibe_trading_forwarded_allow_ips
