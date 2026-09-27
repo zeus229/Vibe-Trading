@@ -173,11 +173,34 @@ export function Settings() {
     }
   };
 
-  const submitLocalApiKey = (event: FormEvent) => {
+  const submitLocalApiKey = async (event: FormEvent) => {
     event.preventDefault();
-    setApiAuthKey(localApiKey);
-    toast.success(t("settings.localApiKeySaved"));
-    window.location.reload();
+    const trimmed = localApiKey.trim();
+    const persisted = setApiAuthKey(localApiKey);
+    if (!persisted) {
+      toast.error(t("settings.localApiKeyStorageFailed", {
+        defaultValue: "This browser did not persist the API key. Check site storage/privacy settings and try again.",
+      }));
+      return;
+    }
+    if (!trimmed) {
+      toast.success(t("settings.localApiKeySaved"));
+      window.location.reload();
+      return;
+    }
+    try {
+      await api.listSessions();
+      toast.success(t("settings.localApiKeySaved"));
+      window.location.reload();
+    } catch (error) {
+      const message = error instanceof Error
+        ? error.message
+        : t("settings.unknownError", { defaultValue: "Unknown error" });
+      toast.error(t("settings.localApiKeyVerificationFailed", {
+        defaultValue: "The key was stored in this browser, but the server could not verify it: {{message}}",
+        message,
+      }));
+    }
   };
 
   const submit = async (event: FormEvent) => {
