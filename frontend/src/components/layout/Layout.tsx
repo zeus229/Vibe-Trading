@@ -32,7 +32,7 @@ export function Layout() {
   ];
   const argentinaDashboardBaseUrl =
     import.meta.env.VITE_ASISTENTE_CASA_UI_URL ||
-    `${window.location.protocol}//${window.location.hostname}:8000/investments-web/`;
+    "https://inversiones.cupaiolo.com.ar/investments-web/";
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
   const { dark, toggle } = useDarkMode();
