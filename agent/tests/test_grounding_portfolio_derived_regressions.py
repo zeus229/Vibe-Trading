@@ -9,7 +9,7 @@ from typing import Any
 import pytest
 
 from src.agent.grounding import GroundingLedger
-from src.agent.grounding.evidence import _currency_code
+from src.agent.grounding.evidence import _currency_code, _is_structured_money_field
 from src.portfolio.iso4217 import is_iso_currency
 
 pytestmark = pytest.mark.unit
@@ -108,6 +108,77 @@ def test_generic_structured_money_uses_currency_context_for_observed_claims(
     )
 
     assert result.valid is True, result.issues
+
+
+def test_structured_income_money_fields_ground_currency_claims(tmp_path: Path) -> None:
+    tool = "portfolio_attribution"
+    ledger = _ledger(
+        tmp_path,
+        (
+            tool,
+            {
+                "data": {
+                    "currency": "ARS",
+                    "positions": [
+                        {
+                            "symbol": "GD30",
+                            "bond_coupon_ars": 187.73,
+                            "bond_amortization_ars": 6007.3,
+                            "income_capital_return_ars": 6178.83,
+                            "associated_income_cost_ars": -16.2,
+                            "portfolio_return_pct": -5.83,
+                        }
+                    ],
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "GD30 paid ARS 187.73 in coupons, ARS 6007.3 in amortization, "
+        "and ARS 6178.83 net attributable income."
+        + _figures(
+            "187.73 | observed | data.positions[0].bond_coupon_ars | portfolio_attribution",
+            "6007.3 | observed | data.positions[0].bond_amortization_ars | portfolio_attribution",
+            "6178.83 | observed | data.positions[0].income_capital_return_ars | portfolio_attribution",
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_structured_income_money_fields_still_reject_wrong_amount(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_attribution",
+            {
+                "data": {
+                    "currency": "ARS",
+                    "positions": [{"symbol": "GD30", "bond_coupon_ars": 187.73}],
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "GD30 paid ARS 999.99 in coupons."
+        + _figures(
+            "999.99 | observed | data.positions[0].bond_coupon_ars | portfolio_attribution"
+        )
+    )
+
+    assert result.valid is False
+    assert "numeric_claim_conflict" in {
+        issue["code"] for issue in result.issues
+    }
+
+
+def test_return_pct_is_not_reclassified_as_money() -> None:
+    assert _is_structured_money_field("data.positions[0].portfolio_return_pct") is False
+    assert _is_structured_money_field("data.positions[0].income_capital_return_ars") is True
 
 
 @pytest.mark.parametrize("code", ["ARS", "EUR", "USD", "KRW"])
