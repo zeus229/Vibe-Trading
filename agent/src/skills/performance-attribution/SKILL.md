@@ -277,6 +277,25 @@ Suggested windows: 252 days for daily data, 12-36 months for monthly data
 3. Suggested improvement directions
 ```
 
+## Signed contribution reporting
+
+When an observed attribution value is signed, preserve that numeric sign **every time the value is repeated**, including narrative summaries after a table.
+
+- If the evidence/declaration is `-3.502` percentage points, write a signed number such as **`-3.502 pp`** or **`-3.502 percentage points`**.
+- Do **not** rewrite the same observation as “lost 3.502 percentage points”, “detracted 3.502 points”, or equivalent prose with a positive numeric figure. Grounding validates the number that is written; a verb does not negate a positive number.
+- The same rule applies to positive contributions: keep the explicit `+` when repeating a signed observed contribution if the sign matters to the statement.
+- If the user specifically wants the positive magnitude of a negative observed value, treat that as a derived figure (for example `0 - (-3.502)`) and declare/ground that derivation separately rather than borrowing the negative observation.
+
+Example:
+
+```markdown
+| Bond | Contribution |
+|---|---:|
+| GD38 | -3.502 pp |
+
+GD38 was the main detractor, with a contribution of **-3.502 percentage points**.
+```
+
 ## Output Format
 
 ```markdown
