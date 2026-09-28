@@ -707,7 +707,15 @@ def parse_figures_block(content: str) -> FiguresBlock:
         parts = [part.strip() for part in parts]
         if _is_header_or_rule(parts):
             continue
-        parsed = _parse_value(parts[0], document_reading) if parts else None
+        value_text = parts[0] if parts else ""
+        # Figures declarations are specified as normalized raw numbers. If a
+        # declaration already uses a dot decimal and no comma, do not let the
+        # surrounding prose's decimal-comma locale reinterpret three decimals
+        # as a thousands group (for example -1.776 -> -1776).
+        declaration_reading = (
+            False if "." in value_text and "," not in value_text else document_reading
+        )
+        parsed = _parse_value(value_text, declaration_reading) if parts else None
         role = parts[1].casefold() if len(parts) > 1 else ""
         if parsed is None or role not in ROLES:
             malformed.append((number, line.strip()[:120]))
@@ -893,6 +901,14 @@ def _currency_prefix_start(text: str, start: int) -> int:
         return len(head) - 1 - (letters if letters <= 3 else 0)
     code = _code_before(head)
     return len(head) - len(code) if code else start
+
+
+def _currency_prefix_sign(text: str, start: int) -> str:
+    """A unary sign glued to a currency prefix before the figure ("-ARS 1", "-$1")."""
+    prefix = _currency_prefix_start(text, start)
+    if prefix < start and prefix > 0 and text[prefix - 1 : prefix] in {"+", "-"}:
+        return text[prefix - 1]
+    return ""
 
 
 def _currency_suffix_end(text: str, end: int) -> int:
@@ -1082,7 +1098,9 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
     figures: list[Figure] = []
     for token in _numbers(text):
         unit, unit_end = _percent_mark(text, token.end)
-        reading = _reading(token.sign, token.digits, unit)
+        prefix_sign = "" if token.sign else _currency_prefix_sign(text, token.start)
+        effective_sign = token.sign or prefix_sign
+        reading = _reading(effective_sign, token.digits, unit)
         if reading is None:
             continue
         percent = unit > 0
@@ -1131,8 +1149,13 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 scale=1.0 if percent else magnitude_suffix(text, token.end)[0],
                 currency=currency,
                 digits=token.digits,
-                sign=token.sign,
-                extent=(view.start(_currency_prefix_start(text, token.start)), view.end(mark_end)),
+                sign=effective_sign,
+                extent=(
+                    view.start(
+                        _currency_prefix_start(text, token.start) - (1 if prefix_sign else 0)
+                    ),
+                    view.end(mark_end),
+                ),
                 fence=next(
                     (info for low, high, info, _ in fences if low <= start and digits_end <= high),
                     None,

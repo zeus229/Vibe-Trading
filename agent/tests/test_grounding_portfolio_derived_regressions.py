@@ -176,6 +176,70 @@ def test_structured_income_money_fields_still_reject_wrong_amount(tmp_path: Path
     }
 
 
+def test_derived_cost_magnitude_preserves_negative_observed_operand(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_attribution",
+            {
+                "data": {
+                    "currency": "ARS",
+                    "coverage": {
+                        "income_by_type_ars": {
+                            "ASSOCIATED_INCOME_COST": -698.64,
+                            "BOND_AMORTIZATION": 0.0,
+                        }
+                    },
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Costs subtracted ARS 698.64."
+        + _figures(
+            "698.64 | derived | 0 - -698.64 | portfolio_attribution"
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_derived_cost_magnitude_rejects_unobserved_negative_operand(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_attribution",
+            {
+                "data": {
+                    "currency": "ARS",
+                    "coverage": {
+                        "income_by_type_ars": {
+                            "ASSOCIATED_INCOME_COST": 698.64,
+                            "BOND_AMORTIZATION": 0.0,
+                        }
+                    },
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Costs subtracted ARS 698.64."
+        + _figures(
+            "698.64 | derived | 0 - -698.64 | portfolio_attribution"
+        )
+    )
+
+    assert result.valid is False
+    assert any(
+        issue.get("reason") == "additive_operand_not_observed"
+        for issue in result.issues
+    )
+
+
 def test_return_pct_is_not_reclassified_as_money() -> None:
     assert _is_structured_money_field("data.positions[0].portfolio_return_pct") is False
     assert _is_structured_money_field("data.positions[0].income_capital_return_ars") is True

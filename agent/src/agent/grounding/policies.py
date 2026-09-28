@@ -270,11 +270,18 @@ def _unanchored_term(tree: ast.Expression, observed: Callable[[float], bool]) ->
     """
 
     def anchored(node: ast.AST) -> bool:
-        return any(
-            observed(float(item.value))
-            for item in ast.walk(node)
-            if isinstance(item, ast.Constant) and _is_number(item.value)
-        )
+        def signed_constants(item: ast.AST, sign: float = 1.0) -> list[float]:
+            if isinstance(item, ast.UnaryOp) and isinstance(item.op, (ast.UAdd, ast.USub)):
+                next_sign = -sign if isinstance(item.op, ast.USub) else sign
+                return signed_constants(item.operand, next_sign)
+            if isinstance(item, ast.Constant) and _is_number(item.value):
+                return [sign * float(item.value)]
+            values: list[float] = []
+            for child in ast.iter_child_nodes(item):
+                values.extend(signed_constants(child, sign))
+            return values
+
+        return any(observed(value) for value in signed_constants(node))
 
     def visit(node: ast.AST, factor: bool) -> bool:
         node = _strip_sign(node)
@@ -284,15 +291,15 @@ def _unanchored_term(tree: ast.Expression, observed: Callable[[float], bool]) ->
             return visit(node.left, True) or visit(node.right, True)
         if factor and _is_unit_factor(node):
             return False
-        for side, other in ((node.left, node.right), (node.right, node.left)):
-            side, other = _strip_sign(side), _strip_sign(other)
+        for raw_side, raw_other in ((node.left, node.right), (node.right, node.left)):
+            side, other = _strip_sign(raw_side), _strip_sign(raw_other)
             unit_beside_ratio = (
                 isinstance(side, ast.Constant)
                 and side.value == 1
                 and isinstance(other, ast.BinOp)
                 and isinstance(other.op, ast.Div)
             )
-            if not _is_sum(side) and not unit_beside_ratio and not anchored(side):
+            if not _is_sum(side) and not unit_beside_ratio and not anchored(raw_side):
                 return True
         return visit(node.left, False) or visit(node.right, False)
 
