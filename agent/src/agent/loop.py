@@ -2054,18 +2054,22 @@ class AgentLoop:
                                 and iteration < self.max_iterations
                                 and grounding_revisions < MAX_GROUNDING_REVISIONS
                             ):
-                                # A numeric conflict means the gate already
-                                # has evidence and rejected how the draft used
-                                # it. Do not let that correction turn re-fetch
-                                # the same observations. Other rejection classes
-                                # may still need research tools, so keep this
-                                # deliberately narrow.
-                                grounding_correction_text_only = bool(
-                                    validation.issues
-                                ) and all(
-                                    issue.get("code") == "numeric_claim_conflict"
-                                    for issue in validation.issues
-                                )
+                                # A rejection that still has an explicit bounded
+                                # recovery step (identity resolution / missing
+                                # price evidence) took the ``recovery_action``
+                                # branch above and never reaches here. Once that
+                                # is exhausted (or was never applicable, as for
+                                # a pure numeric_claim_conflict, where the gate
+                                # already has the evidence and only the
+                                # arithmetic is wrong), this correction turn
+                                # must not re-open tool access: a model that
+                                # cannot resolve the identity or find the price
+                                # would otherwise keep re-issuing the same
+                                # read-only call forever, and ToolProgress would
+                                # eventually abort the run as no_progress
+                                # instead of cleanly releasing the redacted
+                                # draft within the revision budget.
+                                grounding_correction_text_only = True
                                 self._emit(
                                     "grounding_status",
                                     {

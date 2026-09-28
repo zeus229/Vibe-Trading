@@ -846,7 +846,15 @@ class _PolicyMixin:
                 else:
                     return None
 
-            if not key_records and not key_metrics:
+            # A composite ``call::field`` ref is always a recognized, exact
+            # scope, even when it matches nothing (a tool name written where a
+            # call id belongs, for example) — the caller (``_check_observed``)
+            # tells that empty-but-scoped result apart from "ref names
+            # nothing at all" and offers the exact call ids instead
+            # (``field_ref_needs_call_id``). Only a bare key that matched no
+            # field, call, tool or symbol falls through to the legacy
+            # "ref recognized nothing" contract below.
+            if not key_records and not key_metrics and "::" not in key:
                 return None
             records.extend(key_records)
             metrics.extend(key_metrics)

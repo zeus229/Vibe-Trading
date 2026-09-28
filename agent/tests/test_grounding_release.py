@@ -1085,6 +1085,139 @@ def test_goal_continuation_resets_correction_mode_but_not_a_forced_release(
     assert_system_messages_only_lead(llm.messages_history)
 
 
+# ---------------------------------------------------------------------------
+# Recovery-stub detection vs. the MAX_GROUNDING_REVISIONS cap (post-merge
+# regression coverage, #GGAL-D + #1600): the fork's ledger-level recovery-stub
+# rejection and upstream's bounded grounding-correction/recovery flow are two
+# independent safety mechanisms that must cooperate, not fight each other.
+# ---------------------------------------------------------------------------
+
+
+def test_normal_response_does_not_trigger_recovery_stub_handling(tmp_path: Path) -> None:
+    """A clean, valid answer with no pending recovery is released as-is."""
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=HDR)])
+    result, _events, agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert result.get("degraded") is None
+    assert result["content"] == HDR
+    trace = TraceWriter.read(tmp_path / "run")
+    assert not [e for e in trace if e.get("type") == "recovery_stub_discarded"]
+    # No recovery was ever requested, so the ledger has nothing pending.
+    assert agent._grounding.pending_recovery_stub(HDR) is None
+
+
+def test_recovery_stub_is_not_accepted_when_research_is_recoverable(tmp_path: Path) -> None:
+    """A model that declines a requested recovery call cannot silently bury real research.
+
+    Reproduces the GGAL.BA failure mode this mechanism exists for: the model's
+    first draft is genuine research with an unresolved instrument identity, so
+    the gate offers ``search_symbol`` recovery and tracks the rejected draft.
+    Instead of calling the tool, the model replies with a short operational
+    message that carries no figures at all. That reply must not be released as
+    the final answer in place of the redacted original research.
+    """
+    stub_reply = "好的，我将检查该股票的信息。"
+    llm = _ScriptedLLM(
+        [_Response(content="机器人ETF 现价 1.171，建议买入。"), _Response(content=stub_reply)]
+    )
+    result, _events, agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert result["degraded"] is True
+    # The stub itself never reaches the user...
+    assert result["content"] != stub_reply
+    assert "好的，我将检查" not in result["content"]
+    # ...the original research is released instead, with its unverified price cut.
+    assert "1.171" not in result["content"]
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [e for e in trace if e.get("type") == "recovery_stub_discarded"]
+    assert_system_messages_only_lead(llm.messages_history)
+
+
+def test_grounding_revisions_remain_capped_by_max_grounding_revisions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The revision budget still bounds the loop when every draft keeps failing."""
+    monkeypatch.setattr("src.agent.loop.MAX_GROUNDING_REVISIONS", 2)
+    rejected = HDR + "建议买入价为 0.881。"
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=rejected)])
+    result, _events, agent = _run(tmp_path, llm, max_iterations=20)
+
+    assert result["status"] == "success"
+    assert result["degraded"] is True
+    # Two corrections consumed (matching the cap), then a forced redacted release.
+    assert agent._grounding.validation_count == 2
+    assert "0.881" not in result["content"]
+    trace = TraceWriter.read(tmp_path / "run")
+    assert len([e for e in trace if e.get("type") == "answer_rejected"]) <= 2
+    assert [e for e in trace if e.get("type") == "answer_released_redacted"]
+
+
+def test_1600_text_only_correction_does_not_reopen_tool_calls(tmp_path: Path) -> None:
+    """A pure numeric-conflict correction stays text-only; it must not regain tools."""
+    rejected = (
+        HDR
+        + " 最低价 1.110 元，较高点 1.180 元已回撤约 8%。"
+        + _block(
+            HDR_ROW,
+            "1.110 | observed | low | prices",
+            "1.180 | observed | high | prices",
+            "8% | derived | (1.110 - 1.180) / 1.180 | prices",
+        )
+    )
+    corrected = (
+        HDR
+        + " 最低价 1.110 元，较高点 1.180 元已回撤约 5.9%。"
+        + _block(
+            HDR_ROW,
+            "1.110 | observed | low | prices",
+            "1.180 | observed | high | prices",
+            "5.9% | derived | (1.110 - 1.180) / 1.180 | prices",
+        )
+    )
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=rejected), _Response(content=corrected)])
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert result.get("degraded") is None
+    # The drafting turn has tools; the correction turn that follows a pure
+    # numeric_claim_conflict must not, since recovery_action found nothing to
+    # research (the gate already has the evidence, only the arithmetic is wrong).
+    assert llm.tools_history[len(_SCRIPT_HEAD)] is not None
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 1] is None
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [e for e in trace if e.get("type") == "grounding_correction_text_only"]
+    assert not [e for e in trace if e.get("type") == "grounding_recovery"]
+
+
+def test_no_loop_between_recovery_stub_and_grounding_revision_cap(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Recovery-stub detection and the revision cap must not cycle against each other.
+
+    A model that repeatedly declines recovery with stub replies must still
+    terminate within the iteration/revision budget instead of alternating
+    forever between "recovery requested" and "stub discarded".
+    """
+    monkeypatch.setattr("src.agent.loop.MAX_GROUNDING_REVISIONS", 2)
+    stub_reply = "好的，我将检查该股票的信息。"
+    llm = _ScriptedLLM(
+        [_Response(content="机器人ETF 现价 1.171，建议买入。")]
+        + [_Response(content=stub_reply)] * 6
+    )
+    result, _events, agent = _run(tmp_path, llm, max_iterations=12)
+
+    assert result["status"] == "success"
+    # The run terminates well inside the iteration budget: no runaway cycling.
+    assert llm.calls < 12
+    trace = TraceWriter.read(tmp_path / "run")
+    stub_events = [e for e in trace if e.get("type") == "recovery_stub_discarded"]
+    # The stub is consumed (one-shot) the first time it is detected; it cannot
+    # keep re-triggering on every subsequent iteration.
+    assert len(stub_events) <= 1
+
+
 def test_loop_repairs_a_missing_source_word_without_another_model_round(tmp_path: Path) -> None:
     missing_source = "562500.SS 在 2026-06-23 的已观测收盘价为 1.137 CNY，均线空头排列。"
     llm = _ScriptedLLM(
