@@ -52,6 +52,12 @@
 
 > ⚠️ **安全警告：** X 账号 `VibeTrading_HKU`、Virtuals 项目 `101845` 及代币合约 `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` 均非 Vibe-Trading 官方。我们从未发行或背书任何代币或 meme 币。请勿购买、连接钱包或签名。[详细说明](SECURITY.md#official-channels--impersonation)。
 
+- **2026-09-28** 🛠️ **数据源健康检查与券商能力透明化**：定时检查通过有时限、不携带凭据的公开数据源探测报告连接故障和数据异常（[#1627](https://github.com/HKUDS/Vibe-Trading/pull/1627)）；BaoStock socket 请求增加超时控制，并串行隔离并发会话（[#1615](https://github.com/HKUDS/Vibe-Trading/pull/1615)）。Copilot 凭据查询在短期缓存到期后重新读取（[#1619](https://github.com/HKUDS/Vibe-Trading/pull/1619)）。自动生成的券商矩阵分别列出各 profile 的模拟盘／实盘权限，明确区分能力声明与运行验证（[#1629](https://github.com/HKUDS/Vibe-Trading/pull/1629)）。 **数值核验与 MT5 补充修复**：保留证据中的显式标的及精确字段引用，本地化数字分组沿用既有数值容差（[#1584](https://github.com/HKUDS/Vibe-Trading/pull/1584)、[#1586](https://github.com/HKUDS/Vibe-Trading/pull/1586)、[#1588](https://github.com/HKUDS/Vibe-Trading/pull/1588)）；纯文本纠错受次数限制（[#1600](https://github.com/HKUDS/Vibe-Trading/pull/1600)）。MT5 搜索使用指定终端，拒绝歧义券商后缀；回测沙箱只接收校验后的终端连接设置（[#1597](https://github.com/HKUDS/Vibe-Trading/pull/1597)、[#1598](https://github.com/HKUDS/Vibe-Trading/pull/1598)）。
+
+- **2026-09-27** 🛠️ **可复核的运行卡片与更可靠的研究流程**：运行卡片在 JSON、Markdown 和运行详情页展示回测执行哈希记录及已核验的指标 CSV 引用（[#1612](https://github.com/HKUDS/Vibe-Trading/pull/1612)）。GTJA 高低点远近因子修正计日与并列极值处理（[#1604](https://github.com/HKUDS/Vibe-Trading/pull/1604)），印度市场回测平空仓按买入方向检查涨跌停（[#1608](https://github.com/HKUDS/Vibe-Trading/pull/1608)）。token 用量可读，同时不放行任意凭据字符串（[#1606](https://github.com/HKUDS/Vibe-Trading/pull/1606)）；异常 MCP schema 保留对象属性（[#1607](https://github.com/HKUDS/Vibe-Trading/pull/1607)）；即时下单目标检查不再误拦研究问题（[#1605](https://github.com/HKUDS/Vibe-Trading/pull/1605)）。配置文档明确默认使用 OpenRouter（[#1609](https://github.com/HKUDS/Vibe-Trading/issues/1609)）。
+
+- **2026-09-26** 🛠️ **指标计算与交易限额更可靠**：技术指标保留观测日期，并能恢复对话压缩时移除的结果，避免重复取数（[#1590](https://github.com/HKUDS/Vibe-Trading/pull/1590)、[#1601](https://github.com/HKUDS/Vibe-Trading/pull/1601)）。Qlib158 的五个 WVMA 窗口统一使用绝对收益率计算分子（[#1594](https://github.com/HKUDS/Vibe-Trading/pull/1594)）；Benford 检查在数值边界也能保留正确首位数字（[#1591](https://github.com/HKUDS/Vibe-Trading/pull/1591)）。明确设为零的敞口上限保持为零（[#1593](https://github.com/HKUDS/Vibe-Trading/pull/1593)），Dhan 模拟订单拒绝小数及无效数量，不再因舍入丢失输入精度（[#1595](https://github.com/HKUDS/Vibe-Trading/pull/1595)）。无效的可选数值环境变量回退到默认值，显式配置约束仍然生效（[#1592](https://github.com/HKUDS/Vibe-Trading/pull/1592)）。运行时触发器修复字段默认值，并保留子类工厂的正确行为（[#1599](https://github.com/HKUDS/Vibe-Trading/pull/1599)）。
+
 - **2026-09-25** 🛠️ **研究会话与频道诊断更可靠**：回测 CSV 中的文本列不再导致数值指标整行丢失（[#1579](https://github.com/HKUDS/Vibe-Trading/pull/1579)），对话压缩的保留消息预算现在计入推理内容（[#1582](https://github.com/HKUDS/Vibe-Trading/pull/1582)）。频道加载失败时会正确记录异常（[#1580](https://github.com/HKUDS/Vibe-Trading/pull/1580)）；Telegram 指南澄清了 CLI 与 Web 控件共享同一个 API 运行时（[#1583](https://github.com/HKUDS/Vibe-Trading/pull/1583)）。Robinhood 持仓读取拒绝格式错误的购买力对象，同时保留缺失或空值为未知（[#1526](https://github.com/HKUDS/Vibe-Trading/pull/1526)）。离开聊天页面时也会取消未执行的历史消息滚动定时器。感谢 [@Shizoqua](https://github.com/Shizoqua) 和 [@lorenzozanee](https://github.com/lorenzozanee)！
 
 - **2026-09-24** 💱 **美元标的被按比索记账、Email 与 WebSocket 进入 Web UI，以及一次 SDK 升级引发的 CI 故障**：BYMA 和多伦多交易所在本币标的之外还挂有美元报价的标的（GGALD.BA、DLR-U.TO），阿根廷或加拿大回测却把它们放进唯一的比索或加元资金池计价。现在加载器只接纳以本市场货币报价的标的，与 LSE 标的的既有规则一致；其他由数据源声明的报价货币随数据一起传递，回答写出的就是正确的货币（[#1576](https://github.com/HKUDS/Vibe-Trading/pull/1576)）。港股的人民币柜台和美元柜台（80700.HK、9834.HK）在港交所有各自的代码区间，出于同样原因不再进入港股回测，并按其本身的货币报价。个股概况在发行人基本面之外给出该上市标的自己的交易所与货币（[#1577](https://github.com/HKUDS/Vibe-Trading/pull/1577)），grounding 与标的搜索认识数据层支持的每个市场（[#1575](https://github.com/HKUDS/Vibe-Trading/pull/1575)），`technical_indicators` 返回成交量时附上数据源声明的单位——手或股，相差 100 倍（[#1571](https://github.com/HKUDS/Vibe-Trading/pull/1571)）。Email 与 WebSocket 加入引导式频道配置，邮件服务器证书现在会被校验，设置写入也不再接受跨站页面的请求，不走 SSL 的 IMAP 登录也会先用 STARTTLS 加密再发送密码（[#1544](https://github.com/HKUDS/Vibe-Trading/pull/1544)）。**修复：** openai 3.19.2 下显式的 provider 请求头会被环境里的同名头挤掉，曾让所有 PR 的 CI 变红（[#1568](https://github.com/HKUDS/Vibe-Trading/pull/1568)）；来自微秒精度数据源的回测被标成 1970 年（[#1560](https://github.com/HKUDS/Vibe-Trading/pull/1560)）；明摆着是下单指令的研究目标重新被拒绝（[#1562](https://github.com/HKUDS/Vibe-Trading/pull/1562)）；strict bench 的样本外切分可能让一侧为空（[#1559](https://github.com/HKUDS/Vibe-Trading/pull/1559)）；HRP 标签对齐、交叉验证标签顺序和量化输入里的非有限值（[#1555](https://github.com/HKUDS/Vibe-Trading/pull/1555)、[#1556](https://github.com/HKUDS/Vibe-Trading/pull/1556)、[#1557](https://github.com/HKUDS/Vibe-Trading/pull/1557)、[#1558](https://github.com/HKUDS/Vibe-Trading/pull/1558)）；影子账户过度交易的时间窗口（[#1563](https://github.com/HKUDS/Vibe-Trading/pull/1563)）；以及按日而非按年计算的资产增长率（[#1564](https://github.com/HKUDS/Vibe-Trading/pull/1564)）。感谢 [@Shizoqua](https://github.com/Shizoqua)、[@zeus229](https://github.com/zeus229) 和 [@shadowinlife](https://github.com/shadowinlife)！
@@ -934,7 +940,7 @@ Vibe-Trading 是高度依赖工具的智能体：skills、backtests、memory 和
 | **Sweet spot**（默认） | `deepseek-v4-pro`, `deepseek/deepseek-v4-pro`, `x-ai/grok-4.20`, `z-ai/glm-5.1`, `moonshotai/kimi-k2.6`, `qwen/qwen3-max-thinking` | 日常主力，约 1/10 成本下具备可靠工具调用 |
 | **避免用于 agent** | `*-nano`, `*-flash-lite`, `*-coder-next`, 小型 / 蒸馏变体 | 工具调用不可靠，智能体会看起来像是在“凭记忆回答”，而不是加载 skills 或运行回测 |
 
-默认 `agent/.env.example` 使用 DeepSeek 官方 API + `deepseek-v4-pro`；OpenRouter 用户可以使用 `deepseek/deepseek-v4-pro`。
+默认 `agent/.env.example` 使用 OpenRouter + `deepseek/deepseek-v4-pro`；使用 DeepSeek 官方 API 时，请选择 `LANGCHAIN_PROVIDER=deepseek` 和 `deepseek-v4-pro`。
 
 ---
 
@@ -1766,7 +1772,7 @@ Vibe-Trading 是 **[HKUDS](https://github.com/HKUDS)** 智能体生态的一部�
 
 | 阶段 | 功能 | 状态 |
 |------|------|------|
-| **Trust Layer** | 可复现 run cards 已输出并展示在 Run Detail；v1 会补充 tool traces 与 citations | v0 已发布 |
+| **Trust Layer** | 运行详情与 Markdown 展示回测执行哈希记录、已核验的 CSV 指标引用；兼容已有卡片 | 回测记录与引用展示已实现 |
 | **Hypothesis Registry** | 持久化研究假设：lifecycle status、data sources、skills、run-card links 与 invalidation notes | Backend MVP 已发布 |
 | **Research Autopilot** | 手动触发优先的研究循环：hypothesis → deterministic backtest → evidence report | 第 1–3 阶段已发布 |
 | **Data Bridge** | 自带数据：本地 CSV/Parquet/SQL connectors 与 schema mapping | 本地加载器已发布 |

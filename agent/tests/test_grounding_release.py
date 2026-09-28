@@ -745,7 +745,7 @@ def _tool_call(call_id: str, tool_name: str, **arguments: Any) -> SimpleNamespac
 
 
 def _run(
-    tmp_path: Path, llm: _ScriptedLLM, *, max_iterations: int
+    tmp_path: Path, llm: _ScriptedLLM, *, max_iterations: int, session_id: str = ""
 ) -> tuple[dict[str, Any], list[tuple[str, dict[str, Any]]], AgentLoop]:
     registry = ToolRegistry()
     registry.register(_ResolverTool(_resolver_payload()))
@@ -760,7 +760,7 @@ def _run(
     run_dir = tmp_path / "run"
     run_dir.mkdir()
     agent.memory.run_dir = str(run_dir)
-    return agent.run("请分析机器人ETF并给出买入价"), events, agent
+    return agent.run("请分析机器人ETF并给出买入价", session_id=session_id), events, agent
 
 
 _SCRIPT_HEAD = [
@@ -877,12 +877,69 @@ def test_grounding_correction_blocks_provider_tool_call_when_tools_are_withheld(
     )
     llm = _ScriptedLLM(
         _SCRIPT_HEAD
+        + [_Response(content=rejected), _Response(content=corrected)]
+    )
+
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert llm.calls == len(_SCRIPT_HEAD) + 2
+    assert llm.tools_history[len(_SCRIPT_HEAD)] is not None
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 1] is None
+    assert "5.9%" in result["content"]
+    assert "8%" not in result["content"]
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [
+        entry
+        for entry in trace
+        if entry.get("type") == "grounding_correction_text_only"
+    ]
+    assert_system_messages_only_lead(llm.messages_history)
+
+
+def test_grounding_revision_turn_is_text_only(tmp_path: Path) -> None:
+    """A rejected numeric draft is revised without opening another research loop."""
+    rejected = (
+        "562500.SS（Yahoo，CNY）最新收盘价 1.171 元。"
+        "建议买入价为 0.881。"
+    )
+    corrected = "562500.SS（Yahoo，CNY）最新收盘价 1.171 元。"
+    llm = _ScriptedLLM(
+        _SCRIPT_HEAD + [_Response(content=rejected), _Response(content=corrected)]
+    )
+
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert llm.calls == len(_SCRIPT_HEAD) + 2
+    # The original drafting turn still has the registry. Once grounding rejects
+    # it without requesting explicit recovery, the next turn receives no tools.
+    assert llm.tools_history[len(_SCRIPT_HEAD)] is not None
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 1] is None
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [
+        event
+        for event in trace
+        if event.get("type") == "grounding_correction_text_only"
+    ]
+
+
+def test_grounding_revision_blocks_unoffered_tool_calls(tmp_path: Path, monkeypatch) -> None:
+    """A provider cannot escape correction-only mode by emitting a tool call anyway."""
+    monkeypatch.setattr("src.agent.loop.MAX_GROUNDING_REVISIONS", 3)
+    rejected = (
+        "562500.SS（Yahoo，CNY）最新收盘价 1.171 元。"
+        "建议买入价为 0.881。"
+    )
+    corrected = "562500.SS（Yahoo，CNY）最新收盘价 1.171 元。"
+    llm = _ScriptedLLM(
+        _SCRIPT_HEAD
         + [
             _Response(content=rejected),
             _Response(
                 tool_calls=[
                     _tool_call(
-                        "unexpected-refetch",
+                        "refetch",
                         "get_market_data",
                         codes=[SYMBOL],
                         start_date="2026-06-23",
@@ -895,29 +952,270 @@ def test_grounding_correction_blocks_provider_tool_call_when_tools_are_withheld(
         ]
     )
 
-    result, _, _ = _run(tmp_path, llm, max_iterations=8)
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [
+        event
+        for event in trace
+        if event.get("type") == "grounding_correction_tool_call_blocked"
+    ]
+    # The attempted recovery call was never executed/recorded as a tool result.
+    assert not [
+        event
+        for event in trace
+        if event.get("type") == "tool_result" and event.get("call_id") == "refetch"
+    ]
+    # Correction-only survives the blocked attempt and remains text-only.
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 1] is None
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 2] is None
+    assert_system_messages_only_lead(llm.messages_history)
+
+
+@pytest.mark.parametrize("cap,max_iterations,expected_calls", [(2, 20, 4), (4, 20, 6), (8, 4, 4)])
+def test_forbidden_correction_calls_release_at_budget_or_final_iteration(
+    tmp_path: Path, monkeypatch, cap, max_iterations, expected_calls
+) -> None:
+    """Repeated tool requests cannot exhaust the run or replace the held draft."""
+    monkeypatch.setattr("src.agent.loop.MAX_GROUNDING_REVISIONS", cap)
+    rejected = HDR + "建议买入价为 0.881。"
+    forbidden = _Response(
+        content="THIS IS NOT THE ANSWER. Invented price 999.99.",
+        tool_calls=[_tool_call("forbidden", "get_market_data", codes=[SYMBOL])],
+    )
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=rejected), forbidden])
+    result, events, agent = _run(tmp_path, llm, max_iterations=max_iterations)
+
+    assert llm.calls == expected_calls
+    assert result["status"] == "success" and result["degraded"] is True
+    assert "1.171" in result["content"] and _REDACTION_MARKER_ZH in result["content"]
+    assert "0.881" not in result["content"] and "999.99" not in result["content"]
+    assert "THIS IS NOT THE ANSWER" not in result["content"]
+    assert agent._grounding.revalidate(result["content"]).valid
+    # Rechecking a held draft is not another model-authored numerical draft.
+    assert agent._grounding.validation_count == 1
+    assert all(tools is None for tools in llm.tools_history[3:])
+    assert_system_messages_only_lead(llm.messages_history)
+    assert all(
+        not message.get("tool_calls") or all(call.get("id") != "forbidden" for call in message["tool_calls"])
+        for messages in llm.messages_history for message in messages
+    )
+    trace = TraceWriter.read(tmp_path / "run")
+    assert not any(e.get("type") == "tool_result" and e.get("call_id") == "forbidden" for e in trace)
+    assert len([e for e in trace if e.get("type") == "answer_rejected"]) == 1
+    assert len([e for e in trace if e.get("type") == "answer"]) == 1
+    assert len([e for e in trace if e.get("type") == "grounding_correction_tool_call_blocked"]) == expected_calls - 3
+    visible = ""
+    for kind, data in events:
+        if kind == "stream_reset":
+            visible = ""
+        elif kind == "text_delta":
+            visible += data["delta"]
+    assert visible == result["content"]
+
+
+def test_forbidden_correction_call_uses_safe_fallback_without_price_evidence(tmp_path: Path) -> None:
+    """Exhausted identity recovery still ends safely when the correction calls a tool."""
+    rejected = "机器人ETF 现价 1.171，建议买入。"
+    forbidden = _Response(tool_calls=[_tool_call("forbidden", "get_market_data", codes=[SYMBOL])])
+    # Two unresolved-identity recovery rounds, then one ordinary rejected draft.
+    llm = _ScriptedLLM([_Response(content=rejected)] * 3 + [forbidden])
+    result, _events, agent = _run(tmp_path, llm, max_iterations=20)
+    assert llm.calls == 4
+    assert result["status"] == "success" and result["degraded"] is True
+    assert result["content"] == agent._grounding.safe_fallback()
+    assert "1.171" not in result["content"]
+    assert agent._grounding.validation_count == 3
+    assert llm.tools_history[1] is not None and llm.tools_history[2] is not None
+    assert llm.tools_history[3] is None
+    assert_system_messages_only_lead(llm.messages_history)
+
+
+def test_explicit_grounding_recovery_keeps_tools_then_correction_removes_them(tmp_path: Path) -> None:
+    """Missing identity/evidence may research; a later numeric rewrite may not."""
+    rejected = HDR + "建议买入价为 0.881。"
+    llm = _ScriptedLLM(
+        [_Response(content="机器人ETF 现价 1.171。")]
+        + _SCRIPT_HEAD
+        + [_Response(content=rejected), _Response(content=HDR)]
+    )
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=10)
+    assert result["status"] == "success" and not result.get("degraded")
+    assert llm.calls == 5
+    assert all(tools is not None for tools in llm.tools_history[:4])
+    assert llm.tools_history[4] is None
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [e["action"] for e in trace if e.get("type") == "grounding_recovery"] == ["search_symbol"]
+    assert_system_messages_only_lead(llm.messages_history)
+
+
+@pytest.mark.parametrize("forbidden", [False, True])
+def test_goal_continuation_resets_correction_mode_but_not_a_forced_release(
+    tmp_path: Path, monkeypatch, forbidden
+) -> None:
+    snapshot = {"goal": {"status": "active"}}
+
+    class GoalStore:
+        def account_usage(self, **_kwargs):
+            pass
+
+        def get_goal_snapshot(self, _goal_id):
+            return snapshot
+
+    monkeypatch.setattr("src.goal.GoalStore", GoalStore)
+    monkeypatch.setattr("src.agent.loop.SESSIONS_DIR", tmp_path / "sessions")
+    monkeypatch.setattr("src.agent.loop.get_current_goal_context", lambda _: ("", "goal-test"))
+    monkeypatch.setattr("src.agent.loop._goal_max_continuations", lambda: 1)
+    monkeypatch.setattr("src.agent.loop.format_goal_continuation_prompt", lambda *a, **kw: "Continue the goal.")
+    revision = (
+        _Response(tool_calls=[_tool_call("forbidden", "get_market_data", codes=[SYMBOL])])
+        if forbidden else _Response(content=HDR)
+    )
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=HDR + "建议买入价为 0.881。"), revision, _Response(content=HDR)])
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=10, session_id="goal-session")
+    assert result["status"] == "success"
+    assert llm.tools_history[3] is None
+    if forbidden:
+        assert result["degraded"] is True
+        assert llm.calls == 4
+    else:
+        assert llm.calls == 5
+        assert llm.tools_history[4] is not None
+    assert_system_messages_only_lead(llm.messages_history)
+
+
+# ---------------------------------------------------------------------------
+# Recovery-stub detection vs. the MAX_GROUNDING_REVISIONS cap (post-merge
+# regression coverage, #GGAL-D + #1600): the fork's ledger-level recovery-stub
+# rejection and upstream's bounded grounding-correction/recovery flow are two
+# independent safety mechanisms that must cooperate, not fight each other.
+# ---------------------------------------------------------------------------
+
+
+def test_normal_response_does_not_trigger_recovery_stub_handling(tmp_path: Path) -> None:
+    """A clean, valid answer with no pending recovery is released as-is."""
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=HDR)])
+    result, _events, agent = _run(tmp_path, llm, max_iterations=8)
 
     assert result["status"] == "success"
     assert result.get("degraded") is None
-    # Both post-rejection attempts are correction-only. The first tries to
-    # escape through a tool call; the loop blocks it and keeps the mode armed.
-    assert llm.tools_history[len(_SCRIPT_HEAD) + 1] is None
-    assert llm.tools_history[len(_SCRIPT_HEAD) + 2] is None
-    assert "5.9%" in result["content"]
-    assert "8%" not in result["content"]
-
+    assert result["content"] == HDR
     trace = TraceWriter.read(tmp_path / "run")
-    assert [
-        entry
-        for entry in trace
-        if entry.get("type") == "grounding_correction_tool_call_blocked"
-    ]
-    assert not [
-        entry
-        for entry in trace
-        if entry.get("type") == "tool_result"
-        and entry.get("call_id") == "unexpected-refetch"
-    ]
+    assert not [e for e in trace if e.get("type") == "recovery_stub_discarded"]
+    # No recovery was ever requested, so the ledger has nothing pending.
+    assert agent._grounding.pending_recovery_stub(HDR) is None
+
+
+def test_recovery_stub_is_not_accepted_when_research_is_recoverable(tmp_path: Path) -> None:
+    """A model that declines a requested recovery call cannot silently bury real research.
+
+    Reproduces the GGAL.BA failure mode this mechanism exists for: the model's
+    first draft is genuine research with an unresolved instrument identity, so
+    the gate offers ``search_symbol`` recovery and tracks the rejected draft.
+    Instead of calling the tool, the model replies with a short operational
+    message that carries no figures at all. That reply must not be released as
+    the final answer in place of the redacted original research.
+    """
+    stub_reply = "好的，我将检查该股票的信息。"
+    llm = _ScriptedLLM(
+        [_Response(content="机器人ETF 现价 1.171，建议买入。"), _Response(content=stub_reply)]
+    )
+    result, _events, agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert result["degraded"] is True
+    # The stub itself never reaches the user...
+    assert result["content"] != stub_reply
+    assert "好的，我将检查" not in result["content"]
+    # ...the original research is released instead, with its unverified price cut.
+    assert "1.171" not in result["content"]
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [e for e in trace if e.get("type") == "recovery_stub_discarded"]
+    assert_system_messages_only_lead(llm.messages_history)
+
+
+def test_grounding_revisions_remain_capped_by_max_grounding_revisions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The revision budget still bounds the loop when every draft keeps failing."""
+    monkeypatch.setattr("src.agent.loop.MAX_GROUNDING_REVISIONS", 2)
+    rejected = HDR + "建议买入价为 0.881。"
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=rejected)])
+    result, _events, agent = _run(tmp_path, llm, max_iterations=20)
+
+    assert result["status"] == "success"
+    assert result["degraded"] is True
+    # Two corrections consumed (matching the cap), then a forced redacted release.
+    assert agent._grounding.validation_count == 2
+    assert "0.881" not in result["content"]
+    trace = TraceWriter.read(tmp_path / "run")
+    assert len([e for e in trace if e.get("type") == "answer_rejected"]) <= 2
+    assert [e for e in trace if e.get("type") == "answer_released_redacted"]
+
+
+def test_1600_text_only_correction_does_not_reopen_tool_calls(tmp_path: Path) -> None:
+    """A pure numeric-conflict correction stays text-only; it must not regain tools."""
+    rejected = (
+        HDR
+        + " 最低价 1.110 元，较高点 1.180 元已回撤约 8%。"
+        + _block(
+            HDR_ROW,
+            "1.110 | observed | low | prices",
+            "1.180 | observed | high | prices",
+            "8% | derived | (1.110 - 1.180) / 1.180 | prices",
+        )
+    )
+    corrected = (
+        HDR
+        + " 最低价 1.110 元，较高点 1.180 元已回撤约 5.9%。"
+        + _block(
+            HDR_ROW,
+            "1.110 | observed | low | prices",
+            "1.180 | observed | high | prices",
+            "5.9% | derived | (1.110 - 1.180) / 1.180 | prices",
+        )
+    )
+    llm = _ScriptedLLM(_SCRIPT_HEAD + [_Response(content=rejected), _Response(content=corrected)])
+    result, _events, _agent = _run(tmp_path, llm, max_iterations=8)
+
+    assert result["status"] == "success"
+    assert result.get("degraded") is None
+    # The drafting turn has tools; the correction turn that follows a pure
+    # numeric_claim_conflict must not, since recovery_action found nothing to
+    # research (the gate already has the evidence, only the arithmetic is wrong).
+    assert llm.tools_history[len(_SCRIPT_HEAD)] is not None
+    assert llm.tools_history[len(_SCRIPT_HEAD) + 1] is None
+    trace = TraceWriter.read(tmp_path / "run")
+    assert [e for e in trace if e.get("type") == "grounding_correction_text_only"]
+    assert not [e for e in trace if e.get("type") == "grounding_recovery"]
+
+
+def test_no_loop_between_recovery_stub_and_grounding_revision_cap(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Recovery-stub detection and the revision cap must not cycle against each other.
+
+    A model that repeatedly declines recovery with stub replies must still
+    terminate within the iteration/revision budget instead of alternating
+    forever between "recovery requested" and "stub discarded".
+    """
+    monkeypatch.setattr("src.agent.loop.MAX_GROUNDING_REVISIONS", 2)
+    stub_reply = "好的，我将检查该股票的信息。"
+    llm = _ScriptedLLM(
+        [_Response(content="机器人ETF 现价 1.171，建议买入。")]
+        + [_Response(content=stub_reply)] * 6
+    )
+    result, _events, agent = _run(tmp_path, llm, max_iterations=12)
+
+    assert result["status"] == "success"
+    # The run terminates well inside the iteration budget: no runaway cycling.
+    assert llm.calls < 12
+    trace = TraceWriter.read(tmp_path / "run")
+    stub_events = [e for e in trace if e.get("type") == "recovery_stub_discarded"]
+    # The stub is consumed (one-shot) the first time it is detected; it cannot
+    # keep re-triggering on every subsequent iteration.
+    assert len(stub_events) <= 1
 
 
 def test_loop_repairs_a_missing_source_word_without_another_model_round(tmp_path: Path) -> None:
