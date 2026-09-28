@@ -707,7 +707,15 @@ def parse_figures_block(content: str) -> FiguresBlock:
         parts = [part.strip() for part in parts]
         if _is_header_or_rule(parts):
             continue
-        parsed = _parse_value(parts[0], document_reading) if parts else None
+        value_text = parts[0] if parts else ""
+        # Figures declarations are specified as normalized raw numbers. If a
+        # declaration already uses a dot decimal and no comma, do not let the
+        # surrounding prose's decimal-comma locale reinterpret three decimals
+        # as a thousands group (for example -1.776 -> -1776).
+        declaration_reading = (
+            False if "." in value_text and "," not in value_text else document_reading
+        )
+        parsed = _parse_value(value_text, declaration_reading) if parts else None
         role = parts[1].casefold() if len(parts) > 1 else ""
         if parsed is None or role not in ROLES:
             malformed.append((number, line.strip()[:120]))
