@@ -50,7 +50,7 @@ def _run_serve(argv: list[str]) -> str | None:
     The frontend mount / static-file branches are short-circuited because
     uvicorn.run raises SystemExit before reaching the server loop.
     """
-    return _run_serve_capturing(argv)["host"]
+    return _run_serve_capturing(argv)["host"]  # type: ignore[return-value]
 
 
 def _run_serve_capturing(argv: list[str]) -> dict[str, object]:
