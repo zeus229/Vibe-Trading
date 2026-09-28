@@ -74,7 +74,8 @@ _CORRECTION_REASONS = {
     "value_mismatch": "the observed evidence is {range}",
     "not_in_referenced_call": "call {ref} returned no such value",
     "ambiguous_field_ref": "{ref} names {sources}, which hold different values; use the one quoted as the ref",
-    "tail_risk_needs_field_ref": "this session holds {sources}, which are different measurements; declare the figure with a ref naming the field it quotes (data.tail_risk.var_99, var_99, or q1::historical_var)",
+    "tail_risk_needs_field_ref": "this session holds tail-risk identities {sources}; declare the figure with the exact field ref it quotes",
+    "field_ref_needs_call_id": "{ref} uses a tool name before ::; use one exact call_id::field ref from {sources}",
     "no_formula": "its note states no arithmetic",
     "formula_not_evaluable": "its note is not an arithmetic expression over two or more operands",
     "formula_not_anchored": "no operand of its note is a value this session observed",
@@ -121,6 +122,9 @@ def _correction_line(issue: dict[str, Any]) -> str:
         sources=", ".join(str(source) for source in issue.get("ambiguous_sources") or []),
         result=result if result else "a different value",
     )
+    candidates = issue.get("field_ref_candidates") or []
+    if candidates:
+        evidence += "; valid field refs: " + ", ".join(str(item) for item in candidates)
     nearest = issue.get("observed_nearest") or []
     if nearest:
         evidence += "; nearest observed " + ", ".join(_format_price(float(item)) for item in nearest)
@@ -203,11 +207,13 @@ class _ReleaseMixin:
                 "the arithmetic itself, with one operand this session observed; "
                 "proposed must be derived or lie inside the observed price range; "
                 "cited needs a source in its note; count is not checked.",
-                "For observed/derived refs, use ONLY exact literal tool names or exact "
-                "call ids from this session. Do not append labels, scopes, parentheses "
-                "or prose to a ref. If a formula uses operands from multiple calls, its "
-                "ref must include every operand source separated by `; `; when one tool "
-                "was called multiple times for different scopes, prefer exact call ids.",
+                "For observed/derived refs, use exact literal tool names or exact call ids "
+                "from this session; exact result-field paths and call_id::field are also valid "
+                "when field identity matters. Do not append labels, scopes, parentheses or prose "
+                "to a ref. If a formula uses operands from multiple calls, its ref must include "
+                "every operand source separated by `; `. When one tool was called multiple "
+                "times for different scopes, prefer exact call ids; when the same field appears "
+                "in multiple calls, use call_id::field, never tool_name::field.",
                 "Return the FULL revised answer, not just corrected prose. Preserve or "
                 "rebuild the final figures block on every revision; do not drop it after "
                 "fixing precision, wording, or refs. Every measured figure that remains "
