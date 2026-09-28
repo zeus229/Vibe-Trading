@@ -903,6 +903,14 @@ def _currency_prefix_start(text: str, start: int) -> int:
     return len(head) - len(code) if code else start
 
 
+def _currency_prefix_sign(text: str, start: int) -> str:
+    """A unary sign glued to a currency prefix before the figure ("-ARS 1", "-$1")."""
+    prefix = _currency_prefix_start(text, start)
+    if prefix < start and prefix > 0 and text[prefix - 1 : prefix] in {"+", "-"}:
+        return text[prefix - 1]
+    return ""
+
+
 def _currency_suffix_end(text: str, end: int) -> int:
     """Where a currency unit attached to the right of a figure ("0.95 元") ends.
 
@@ -1090,7 +1098,9 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
     figures: list[Figure] = []
     for token in _numbers(text):
         unit, unit_end = _percent_mark(text, token.end)
-        reading = _reading(token.sign, token.digits, unit)
+        prefix_sign = "" if token.sign else _currency_prefix_sign(text, token.start)
+        effective_sign = token.sign or prefix_sign
+        reading = _reading(effective_sign, token.digits, unit)
         if reading is None:
             continue
         percent = unit > 0
@@ -1139,8 +1149,13 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 scale=1.0 if percent else magnitude_suffix(text, token.end)[0],
                 currency=currency,
                 digits=token.digits,
-                sign=token.sign,
-                extent=(view.start(_currency_prefix_start(text, token.start)), view.end(mark_end)),
+                sign=effective_sign,
+                extent=(
+                    view.start(
+                        _currency_prefix_start(text, token.start) - (1 if prefix_sign else 0)
+                    ),
+                    view.end(mark_end),
+                ),
                 fence=next(
                     (info for low, high, info, _ in fences if low <= start and digits_end <= high),
                     None,
