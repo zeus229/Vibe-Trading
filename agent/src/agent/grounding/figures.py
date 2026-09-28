@@ -23,12 +23,26 @@ from typing import Iterable, Sequence
 
 from src.agent.grounding.identity import _CANONICAL_SYMBOL_RE
 
-#: Widest relative gap between a written figure and the precise value it rounds.
-#: This is a presentation-precision guard, not the raw evidence tolerance: two-decimal
-#: rendering of values below 1 can legitimately move by more than 0.5% while still
-#: rounding correctly. The written half-unit narrows this further, and materially coarse
-#: renderings such as 0.014 -> 0.01 remain outside this 1% band.
-ROUNDED_BAND = 0.01
+########################################################################
+# CONFLICTO NO RESUELTO AUTOMATICAMENTE - REQUIERE REVISION HUMANA
+# Fork (customizacion propia) queria ROUNDED_BAND = 0.01 (banda 1%),
+# argumentando que renderizados de dos decimales por debajo de 1 pueden
+# alejarse mas del 0.5% sin dejar de ser un redondeo correcto.
+# Upstream/main (commit 47a036d6, tip actual) mantiene deliberadamente
+# ROUNDED_BAND = 0.005 (banda 0.5%), con el mismo caso de prueba
+# (0.8246699... -> "0.82") rindiendo resultados opuestos (True en fork,
+# False en upstream). Esto no es un simple choque textual: cambia que
+# valores redondeados acepta o rechaza grounding como evidencia valida.
+# Se conserva aqui el valor de upstream (mas estricto = mas seguro,
+# rechaza mas en vez de aceptar de mas) SOLO como placeholder para poder
+# armar el candidato completo. NO DESPLEGAR sin que un humano confirme
+# si la banda ampliada de fork resolvia falsos rechazos reales en
+# produccion antes de descartarla.
+########################################################################
+#: Maximum relative rounding gap; written precision can only narrow this.
+#: Coarse rounding such as 0.82467 -> 0.82 exceeds the existing 0.5% policy;
+#: the answer must retain more digits instead of widening its evidence band.
+ROUNDED_BAND = 0.005
 
 #: The five roles a declaration may carry (spec §2).
 ROLES = ("observed", "derived", "proposed", "cited", "count")
@@ -421,8 +435,9 @@ def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
 
     A comma is a decimal point when the integer part is exactly "0" ("0,666"),
     or when a one- or two-digit fraction carries a percent, pp/bp or currency
-    mark ("12,5 %", "3,95 EUR", "€3,95"). A document that writes an unambiguous
-    decimal comma anywhere and no unambiguous grouping ("1,234,567",
+    mark ("12,5 %", "3,95 EUR", "€3,95"). Document-level notation needs
+    stronger evidence than a bare one-digit "0,1" pair; see
+    :func:`_writes_decimal_commas`. A document with that evidence and no grouping ("1,234,567",
     "1,234.56") reads every single-comma number as a decimal, so "2,237" and
     "−5,132%" beside "1,57%" are 2.237 and −5.132%, not 2237 and −5132%.
 
@@ -504,7 +519,8 @@ def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
 def _writes_decimal_commas(text: str) -> bool:
     """Whether a document writes decimal commas and never a thousands grouping.
 
-    Evidence for a decimal comma is unambiguous on its own: a "0," integer part,
+    Evidence for a decimal comma is a zero integer part with at least two
+    fractional digits (a bare "0,1" could be a list and changes no other number),
     dotted thousands with a decimal comma ("1.234,56"), a fraction of any length
     carrying a percent/pp/bp mark ("17,9318145214327%"), or a one- or two-digit
     fraction carrying a currency mark ("3,95 EUR"). An unmarked "1,50" or a lone
@@ -518,13 +534,13 @@ def _writes_decimal_commas(text: str) -> bool:
         if body.count(",") >= 2 or ("," in body and "." in body):
             grouped = True
         elif body.startswith("0,"):
-            decimal = True
+            decimal = len(body.split(",", 1)[1]) >= 2 or decimal
         elif body.isdigit() and text[match.end() : match.end() + 1] == ",":
             fraction = _digit_run(text, match.end() + 1)
             stop = match.end() + 1 + len(fraction)
             if (
-                body == "0"
-                or _percent_mark(text, stop)[0] > 0
+                (body == "0" and len(fraction) >= 2)
+                or (bool(fraction) and _percent_mark(text, stop)[0] > 0)
                 or (
                     1 <= len(fraction) <= 2
                     and (
@@ -699,12 +715,12 @@ def parse_figures_block(content: str) -> FiguresBlock:
         stripped = line.strip().replace("｜", "|")
         if not stripped:
             continue
-        parts = stripped.split("|")
+        # Four logical columns; a literal pipe may belong to the ref itself.
         if stripped.startswith("|"):
-            parts = parts[1:]
-        if len(parts) > 1 and stripped.endswith("|"):
-            parts = parts[:-1]
-        parts = [part.strip() for part in parts]
+            stripped = stripped[1:].lstrip()
+            if stripped.endswith("|"):
+                stripped = stripped[:-1].rstrip()
+        parts = [part.strip() for part in stripped.split("|", 3)]
         if _is_header_or_rule(parts):
             continue
         value_text = parts[0] if parts else ""
