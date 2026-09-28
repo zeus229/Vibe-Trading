@@ -258,6 +258,10 @@ def test_replayable_repeatable_result_restores_gate_after_one_replay(harness):
     assert json.loads(replay["content"])["status"] == "ok"
     assert len(h.tool.calls) == 1, "lost readonly data must replay without refetch"
 
+    # In the real loop the replay is protected until the next model input.
+    # Simulate that decision before asking the planner to repeat the call.
+    h.agent._consume_replay_visibility_lease(h.messages, h.trace, 2)
+
     repeated = h.call(args)
     repeated_payload = json.loads(repeated["content"])
     assert repeated_payload.get("skipped") is True

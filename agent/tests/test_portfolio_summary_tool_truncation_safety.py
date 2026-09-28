@@ -34,7 +34,15 @@ def _fake_context(n_positions: int = 40) -> dict:
         for i in range(n_positions)
     ]
     return {
+        "snapshot_id": "snapshot-1",
         "as_of": "2026-09-15T13:00:00-03:00",
+        "read_identity": {
+            "mode": "latest",
+            "snapshot_id": "snapshot-1",
+            "as_of": "2026-09-15T13:00:00-03:00",
+            "valuation_version": 3,
+            "configuration_fingerprint": "a" * 64,
+        },
         "complete": True,
         "totals": {"usd": 0.0, "cny": 0.0, "native_by_currency": {"ARS": 227_966_606.41}},
         "account_allocation": [{"broker_alias": "account_1", "status": "ok"}],
@@ -59,7 +67,7 @@ def test_reorder_preserves_every_field_unchanged():
     reordered = _reorder_for_truncation_safety(context)
     assert reordered == context  # same keys/values, dict equality ignores order
     assert list(reordered.keys()) != list(context.keys())  # but order actually changed
-    assert list(reordered.keys())[:4] == ["as_of", "complete", "totals", "daily_change"]
+    assert list(reordered.keys())[:4] == ["snapshot_id", "as_of", "read_identity", "complete"]
 
 
 def test_reordered_daily_change_survives_real_truncation_limit():
@@ -91,7 +99,7 @@ def test_tool_execute_emits_daily_change_before_the_position_arrays(monkeypatch)
     context = _fake_context(n_positions=40)
     monkeypatch.setattr(
         "src.tools.portfolio_tool.PortfolioService",
-        lambda: type("_S", (), {"analysis_context": staticmethod(lambda: context)})(),
+        lambda: type("_S", (), {"analysis_context": staticmethod(lambda **_: context)})(),
     )
     result = PortfolioSummaryTool().execute()
     idx_daily = result.find('"daily_change"')
@@ -107,7 +115,45 @@ def test_tool_execute_emits_daily_change_before_the_position_arrays(monkeypatch)
 def test_tool_execute_still_returns_empty_status_with_no_snapshot(monkeypatch):
     monkeypatch.setattr(
         "src.tools.portfolio_tool.PortfolioService",
-        lambda: type("_S", (), {"analysis_context": staticmethod(lambda: None)})(),
+        lambda: type("_S", (), {"analysis_context": staticmethod(lambda **_: None)})(),
     )
     result = json.loads(PortfolioSummaryTool().execute())
     assert result["status"] == "empty"
+
+
+def test_tool_exposes_pinned_snapshot_and_explicit_freshness_contract(monkeypatch):
+    context = _fake_context(n_positions=1)
+    seen = {}
+
+    class _Service:
+        def analysis_context(self, snapshot_id=None):
+            seen["snapshot_id"] = snapshot_id
+            return context
+
+    monkeypatch.setattr("src.tools.portfolio_tool.PortfolioService", _Service)
+    tool = PortfolioSummaryTool()
+    result = json.loads(tool.execute(snapshot_id="snapshot-1"))
+
+    assert result["status"] == "ok"
+    assert seen["snapshot_id"] == "snapshot-1"
+    assert tool.is_readonly is True
+    assert tool.repeatable is True
+    assert tool.replay_after_compaction is True
+    assert "snapshot_id" in tool.parameters["properties"]
+    assert "no_cache" in tool.parameters["properties"]
+
+
+def test_missing_pinned_snapshot_fails_closed(monkeypatch):
+    monkeypatch.setattr(
+        "src.tools.portfolio_tool.PortfolioService",
+        lambda: type(
+            "_S",
+            (),
+            {"analysis_context": staticmethod(lambda **_: None)},
+        )(),
+    )
+    result = json.loads(PortfolioSummaryTool().execute(snapshot_id="missing"))
+
+    assert result["status"] == "error"
+    assert result["error_code"] == "snapshot_not_found"
+    assert result["snapshot_id"] == "missing"
