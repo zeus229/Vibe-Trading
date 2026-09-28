@@ -135,6 +135,24 @@ def test_zero_decimal_comma_sets_document_locale() -> None:
     assert _writes_decimal_commas("ratio 0,8246699017713774") is True
 
 
+def test_normalized_three_decimal_declaration_stays_decimal_in_comma_document() -> None:
+    content = (
+        "DICP aportó -1,776 pp y GD38 -3,502 pp; referencia 0,82."
+        + _figures(
+            "-1.776 | observed | contribution_pct | attribution_tool",
+            "-3.502 | observed | contribution_pct | attribution_tool",
+        )
+    )
+
+    block = parse_figures_block(content)
+
+    assert [declaration.value for declaration in block.declarations] == [-1.776, -3.502]
+    assert [declaration.value_text for declaration in block.declarations] == [
+        "-1.776",
+        "-3.502",
+    ]
+
+
 def test_live_shape_links_localized_prose_to_precise_declarations() -> None:
     content = (
         "PAMP.BA (Yahoo, ARS): cierre AR$5.165; volumen 502.408; "
