@@ -135,6 +135,35 @@ def test_zero_decimal_comma_sets_document_locale() -> None:
     assert _writes_decimal_commas("ratio 0,8246699017713774") is True
 
 
+@pytest.mark.parametrize(
+    ("prose", "expected"),
+    [
+        ("Costo individual: -ARS 614,63; ratio 0,82.", -614.63),
+        ("Costo individual: -$16,20; ratio 0,82.", -16.20),
+        ("Ajuste individual: +USD 12,50; ratio 0,82.", 12.50),
+    ],
+)
+def test_sign_glued_before_currency_prefix_belongs_to_figure(
+    prose: str, expected: float
+) -> None:
+    block = parse_figures_block(prose)
+    figures = [figure for figure in scan_figures(prose, block) if figure.currency]
+
+    assert len(figures) == 1
+    assert figures[0].value == expected
+    assert figures[0].sign == ("-" if expected < 0 else "+")
+
+
+def test_separated_sign_before_currency_prefix_is_not_inherited() -> None:
+    prose = "Cambio - ARS 614,63; ratio 0,82."
+    block = parse_figures_block(prose)
+    figures = [figure for figure in scan_figures(prose, block) if figure.currency]
+
+    assert len(figures) == 1
+    assert figures[0].value == 614.63
+    assert figures[0].sign == ""
+
+
 def test_normalized_three_decimal_declaration_stays_decimal_in_comma_document() -> None:
     content = (
         "DICP aportó -1,776 pp y GD38 -3,502 pp; referencia 0,82."
