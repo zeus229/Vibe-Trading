@@ -515,11 +515,15 @@ def _replay_context_result(result: str) -> str:
     return json.dumps(replay_payload, ensure_ascii=False)
 
 
-def _microcompact(messages: list) -> list:
+def _microcompact(
+    messages: list, preserve_tool_call_ids: set[str] | None = None
+) -> list:
     """Layer 1: silently prune old tool results, keeping the most recent N intact.
 
     Args:
         messages: Message list (mutated in place).
+        preserve_tool_call_ids: Replayed result IDs that have not yet been
+            included in a successful model request.
 
     Returns:
         Names of tools whose every result just became unreadable (legacy
@@ -529,8 +533,11 @@ def _microcompact(messages: list) -> list:
     tool_msgs = [m for m in messages if m.get("role") == "tool"]
     if len(tool_msgs) <= KEEP_RECENT:
         return []
+    preserve_tool_call_ids = preserve_tool_call_ids or set()
     newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
+        if msg.get("tool_call_id") in preserve_tool_call_ids:
+            continue
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
         # re-clearing it would rewrite the recorded original size with the
@@ -1164,6 +1171,9 @@ class AgentLoop:
         self._readonly_replay_cache: dict[tuple[str, str], str] = {}
         self._readonly_replay_ready: set[tuple[str, str]] = set()
         self._readonly_replay_protected: set[tuple[str, str]] = set()
+        # A restored result gets one model-request visibility window. This is
+        # message identity state, separate from the call-identity re-fetch gate.
+        self._readonly_replay_visibility_pending: set[str] = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
 
@@ -1285,6 +1295,7 @@ class AgentLoop:
         self._readonly_replay_cache = {}
         self._readonly_replay_ready = set()
         self._readonly_replay_protected = set()
+        self._readonly_replay_visibility_pending = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
         run_started_wall = _time.time()
@@ -1406,7 +1417,14 @@ class AgentLoop:
                 # tool history available for the model to reference instead of
                 # having every result past the most recent few cleared.
                 if tokens > int(_token_threshold() * 0.5):
-                    self._microcompact_and_unblock(messages, trace, iteration)
+                    self._microcompact_and_unblock(
+                        messages,
+                        trace,
+                        iteration,
+                        preserve_tool_call_ids=(
+                            self._readonly_replay_visibility_pending
+                        ),
+                    )
                     tokens = estimate_tokens(messages)
 
                 # Layer 2: context collapse (fold long text, zero API cost)
@@ -1634,6 +1652,10 @@ class AgentLoop:
                     )
                 else:
                     stream_failure_streak = 0
+
+                self._consume_readonly_replay_visibility(
+                    messages, trace, current_iter
+                )
 
                 # Cancelled mid-stream: discard this turn's partial response and
                 # end the run now, without executing any of its tool calls.
@@ -2512,6 +2534,7 @@ class AgentLoop:
                         tc.id, tc.name, truncate_tool_result(restored)
                     )
                 )
+                self._readonly_replay_visibility_pending.add(tc.id)
                 self._successful_call_keys[tc.id] = dedup_key
                 self._called_ok.add(dedup_key)
                 self._readonly_replay_ready.discard(dedup_key)
@@ -3126,7 +3149,13 @@ class AgentLoop:
             "file write is a failure."
         )
 
-    def _microcompact_and_unblock(self, messages: list, trace: TraceWriter, iteration: int) -> list[str]:
+    def _microcompact_and_unblock(
+        self,
+        messages: list,
+        trace: TraceWriter,
+        iteration: int,
+        preserve_tool_call_ids: set[str] | None = None,
+    ) -> list[str]:
         """Run layer-1 microcompact and re-open lost readonly call identities.
 
         A readable result for another argument variant, or a synthetic skip,
@@ -3145,7 +3174,7 @@ class AgentLoop:
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
-        _microcompact(messages)
+        _microcompact(messages, preserve_tool_call_ids)
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:
             trace.write({
@@ -3154,6 +3183,27 @@ class AgentLoop:
                 "tools": unreadable_tools,
             })
         return unreadable_tools
+
+    def _consume_readonly_replay_visibility(
+        self, messages: list, trace: TraceWriter, iteration: int
+    ) -> None:
+        """Consume replay leases only after a successful model request saw them."""
+        visible_call_ids = {
+            msg.get("tool_call_id")
+            for msg in messages
+            if msg.get("role") == "tool"
+            and msg.get("tool_call_id") in self._readonly_replay_visibility_pending
+            and not _result_data_gone(msg.get("content"))
+        }
+        for call_id in sorted(visible_call_ids):
+            self._readonly_replay_visibility_pending.discard(call_id)
+            trace.write(
+                {
+                    "type": "replay_visibility_consumed",
+                    "iter": iteration,
+                    "call_id": call_id,
+                }
+            )
 
     def _readable_success_keys(self, messages: list) -> set[tuple[str, str]]:
         """Identify surviving successful results, not synthetic skip/stub calls."""
