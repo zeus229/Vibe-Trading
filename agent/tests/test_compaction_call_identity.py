@@ -51,6 +51,8 @@ def harness(tmp_path):
     call_ids = count()
 
     def call(arguments, name=None):
+        # Each helper call models a model turn that saw prior tool results.
+        agent._consume_readonly_replay_visibility(messages, trace, 1)
         call_id = f"call_{next(call_ids)}"
         name = name or tool.name
         messages.append(
