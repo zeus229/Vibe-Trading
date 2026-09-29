@@ -54,7 +54,8 @@ def _two_symbol_metrics(tmp_path):
 def test_field_ref_candidates_and_values_never_borrow_other_symbol(tmp_path):
     ledger = _two_symbol_metrics(tmp_path)
     assert ledger._tool_field_ref_candidates("factor_analysis::var_95", "AAPL.US") == ["a::var_95"]
-    assert ledger._referenced("b::var_95", "AAPL.US", None) == ([], [], "provenance")
+    scoped = ledger._referenced("b::var_95", "AAPL.US", None)
+    assert scoped is not None and scoped == ([], [])
     assert 0.0399 not in ledger._metric_pool("AAPL.US")
 
 

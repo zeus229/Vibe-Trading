@@ -222,6 +222,8 @@ class _ReleaseMixin:
                 "the arithmetic itself, with one operand this session observed; "
                 "proposed must be derived or lie inside the observed price range; "
                 "cited needs a source in its note; count is not checked.",
+                "For a derived figure using multiple tools or calls, cite every exact "
+                "source ref, separated by semicolons; do not decorate refs with labels.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
@@ -306,13 +308,39 @@ class _ReleaseMixin:
                 return "get_market_data"
         return None
 
-    def record_recovery(self, action: str) -> None:
-        """Account one bounded recovery attempt against its budget."""
+    def record_recovery(
+        self,
+        action: str,
+        *,
+        draft: str | None = None,
+        validation: ValidationResult | None = None,
+    ) -> None:
+        """Account a bounded recovery and retain its rejected draft if supplied."""
         self._recovery_rounds += 1
         if action == _RESOLVER_TOOL:
             self._symbol_resolution_attempts += 1
         elif action == "get_market_data":
             self._price_evidence_attempts += 1
+        if draft is not None and validation is not None:
+            self._pending_recovery = {
+                "action": action,
+                "draft": draft,
+                "validation": validation,
+            }
+
+    def pending_recovery_stub(self, content: str) -> tuple[str, ValidationResult] | None:
+        """Consume an unfulfilled recovery when the next answer drops all figures."""
+        pending = self._pending_recovery
+        self._pending_recovery = None
+        if pending is None or self._has_measured_figures(content):
+            return None
+        return pending["draft"], pending["validation"]
+
+    @staticmethod
+    def _has_measured_figures(content: str) -> bool:
+        """Whether the answer contains any measured-shape figure."""
+        block = parse_figures_block(content)
+        return any(figure.shape == "measured" for figure in scan_figures(content, block))
 
     def recovery_prompt(self, action: str, validation: ValidationResult) -> str:
         """Build an executable next-step message for one bounded recovery turn."""

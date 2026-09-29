@@ -241,14 +241,21 @@ def _unanchored_term(tree: ast.Expression, observed: Callable[[float], bool]) ->
         if isinstance(item, ast.BinOp) and isinstance(item.op, ast.Pow)
     }
 
+    def signed_constants(item: ast.AST, sign: float = 1.0) -> list[float]:
+        if id(item) in exponents:
+            return []
+        if isinstance(item, ast.UnaryOp) and isinstance(item.op, (ast.UAdd, ast.USub)):
+            next_sign = -sign if isinstance(item.op, ast.USub) else sign
+            return signed_constants(item.operand, next_sign)
+        if isinstance(item, ast.Constant) and _is_number(item.value):
+            return [sign * float(item.value)]
+        values: list[float] = []
+        for child in ast.iter_child_nodes(item):
+            values.extend(signed_constants(child, sign))
+        return values
+
     def anchored(node: ast.AST) -> bool:
-        return any(
-            observed(float(item.value))
-            for item in ast.walk(node)
-            if isinstance(item, ast.Constant)
-            and _is_number(item.value)
-            and id(item) not in exponents
-        )
+        return any(observed(value) for value in signed_constants(node))
 
     def visit(node: ast.AST, factor: bool) -> bool:
         node = _strip_sign(node)
@@ -258,15 +265,25 @@ def _unanchored_term(tree: ast.Expression, observed: Callable[[float], bool]) ->
             return visit(node.left, True) or visit(node.right, True)
         if factor and _is_unit_factor(node):
             return False
-        for side, other in ((node.left, node.right), (node.right, node.left)):
-            side, other = _strip_sign(side), _strip_sign(other)
+        for raw_side, raw_other in ((node.left, node.right), (node.right, node.left)):
+            side, other = _strip_sign(raw_side), _strip_sign(raw_other)
             unit_beside_ratio = (
                 isinstance(side, ast.Constant)
                 and side.value == 1
                 and isinstance(other, ast.BinOp)
                 and isinstance(other.op, ast.Div)
             )
-            if not _is_sum(side) and not unit_beside_ratio and not anchored(side):
+            zero_identity = (
+                isinstance(side, ast.Constant)
+                and _is_number(side.value)
+                and float(side.value) == 0.0
+            )
+            if (
+                not _is_sum(side)
+                and not unit_beside_ratio
+                and not zero_identity
+                and not anchored(raw_side)
+            ):
                 return True
         return visit(node.left, False) or visit(node.right, False)
 
@@ -319,7 +336,11 @@ def _evaluate_formula(expression: str) -> tuple[float, list[float], ast.Expressi
             return value
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
             value = visit(node.operand)
-            return value if isinstance(node.op, ast.UAdd) else -value
+            if isinstance(node.op, ast.UAdd):
+                return value
+            if isinstance(node.operand, ast.Constant) and inputs:
+                inputs[-1] = -value
+            return -value
         if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Pow):
             # A square or a cube (HHI is a sum of squared weights). The
             # exponent is part of the operator, not an operand.
@@ -411,6 +432,11 @@ def _formula_in_note(note: str) -> tuple[float, list[float], ast.Expression] | N
         if evaluated is not None:
             return evaluated
     return None
+
+
+def _has_explicit_percent_scale(note: str) -> bool:
+    """Whether a percentage formula explicitly converts a fraction by 100."""
+    return bool(re.search(r"(?:×|✕|\*)\s*100(?:\.0+)?\b", note))
 
 
 class _PolicyMixin:
@@ -748,7 +774,56 @@ class _PolicyMixin:
             return line_symbols[figure.line]
         return None
 
+    def _has_asistente_casa_evidence(self) -> bool:
+        """Whether this run contains evidence from the Asistente Casa adapter."""
+        return any(
+            record.tool == "financial_rigor"
+            or record.tool.startswith("asistente_casa_")
+            for record in self._evidence
+        ) or any(
+            entry.get("tool") == "financial_rigor"
+            or str(entry.get("tool", "")).startswith("asistente_casa_")
+            for entry in self._analysis_metrics
+        )
+
     def _referenced(
+        self,
+        ref: str,
+        symbol: str | None,
+        figure: Figure | None,
+        *,
+        pool_ambiguous: bool = False,
+    ) -> tuple[list[EvidenceRecord], list[float]] | None:
+        """Resolve one exact ref or a complete comma/semicolon-separated set.
+
+        Multi-source derivations are common in the Asistente Casa adapter and
+        are also used by upstream's backtest comparison guidance. Every named
+        source must resolve; a missing source never borrows a matching value
+        from the wider evidence pool.
+        """
+        keys = [key.strip() for key in re.split(r"[,;]", ref or "") if key.strip()]
+        if not keys:
+            return None
+        resolved = [
+            self._referenced_one(key, symbol, figure, pool_ambiguous=pool_ambiguous)
+            for key in keys
+        ]
+        if len(keys) == 1:
+            result = resolved[0]
+            if result is None and self._has_asistente_casa_evidence():
+                normalized = _normalize_symbol(keys[0])
+                known_symbols = {r.symbol for r in self._evidence if r.symbol}
+                if normalized not in known_symbols:
+                    return [], []
+            return result
+        if any(result is None or (not result[0] and not result[1]) for result in resolved):
+            return [], []
+        return (
+            [record for result in resolved for record in result[0]],
+            [value for result in resolved for value in result[1]],
+        )
+
+    def _referenced_one(
         self,
         ref: str,
         symbol: str | None,
@@ -1402,6 +1477,18 @@ class _PolicyMixin:
                             field_ref_candidates=call_field_candidates,
                         )
                     ]
+                if self._has_asistente_casa_evidence():
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "not_in_referenced_call",
+                            f"is declared observed from {declaration.ref}, which does not identify an exact session source",
+                            source_tool_call_ids=[declaration.ref],
+                        )
+                    ]
             values = [float(record.value) for record in scoped_records] + metric_values
             money = figure.currency and not figure.percent
             # A call- or tool-scoped ref pools every field that call returned,
@@ -1595,16 +1682,19 @@ class _PolicyMixin:
         # belongs to no instrument, named by the ref, can anchor it then — a
         # difference between two backtests' Sharpes is a portfolio figure.
         unattributed = not symbol and len({record.symbol for record in records if record.symbol}) > 1
+        scoped = self._referenced(declaration.ref, symbol, None, pool_ambiguous=True)
+        strict_adapter_scope = bool(declaration.ref.strip()) and self._has_asistente_casa_evidence()
+        if strict_adapter_scope and (scoped is None or (not scoped[0] and not scoped[1])):
+            return "no_evidence"
         anchors: list[float] = []
-        if not unattributed:
+        if not strict_adapter_scope and not unattributed:
             # A money-marked result is derived from money: an RSI or a volume
             # is not a price to take a discount of.
             anchors = self._price_pool(symbol, records) + self._row_pool(symbol, money_only=money)
             if not money:
                 anchors += self._metric_pool(symbol)
-        # Arithmetic across two runs needs both runs' values: a field ref that
-        # names several sources anchors all of them instead of none.
-        scoped = self._referenced(declaration.ref, symbol, None, pool_ambiguous=True)
+        # An explicit adapter ref is authoritative: all operands must come from
+        # the complete source set named by the declaration.
         if scoped is not None:
             anchors.extend(
                 float(record.value)
@@ -1622,7 +1712,7 @@ class _PolicyMixin:
         magnitudes = [abs(anchor) for anchor in anchors]
 
         def observed(operand: float) -> bool:
-            return _close_any(abs(operand), magnitudes)
+            return _close_any(operand, anchors)
 
         if not any(observed(operand) for operand in operands):
             return "no_symbol" if unattributed else "formula_not_anchored"
@@ -1631,7 +1721,7 @@ class _PolicyMixin:
         return result, operands
 
     @staticmethod
-    def _result_matches(figure: Figure, result: float) -> bool:
+    def _result_matches(figure: Figure, result: float, note: str = "") -> bool:
         """Whether a formula's result is the value the prose figure states.
 
         The band is half a unit of the last digit the PROSE was written with
@@ -1643,7 +1733,13 @@ class _PolicyMixin:
         """
         # The normalized reading, so "0,666" is three decimals and "−5,13%" is signed.
         half_unit = _written_half_unit(figure.digits or figure.text)
-        targets = {result * 100.0} if figure.percent else {result, result * 100.0}
+        targets = (
+            {result}
+            if figure.percent and _has_explicit_percent_scale(note)
+            else {result * 100.0}
+            if figure.percent
+            else {result, result * 100.0}
+        )
         sign = _explicit_sign(figure.sign or figure.text)
         value = abs(figure.value)
         return any(
@@ -1679,7 +1775,7 @@ class _PolicyMixin:
                 )
             ]
         result, _ = derivation
-        if self._result_matches(figure, result):
+        if self._result_matches(figure, result, declaration.note):
             return []
         # Reported in the figure's own units, as ``_result_matches`` compares it.
         scaled = result * 100.0 if figure.percent else result
