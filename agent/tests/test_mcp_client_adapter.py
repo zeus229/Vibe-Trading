@@ -24,6 +24,8 @@ import src.tools.mcp as mcp_module
 from src.agent.grounding import GroundingLedger
 from src.config.schema import MCPServerConfig
 from src.tools.mcp import (
+    MCPRemoteTool,
+    MCPRemoteToolSpec,
     MCPServerAdapter,
     build_mcp_tool_wrappers,
     format_mcp_server_name_collision_warning,
@@ -402,6 +404,48 @@ def test_text_only_json_mcp_result_is_promoted_to_data() -> None:
     assert payload["data"] == structured
     assert "structured_content" not in payload
     assert json.loads(payload["text"]) == structured
+
+
+def test_only_curated_asistente_casa_report_reads_are_replayable():
+    adapter = object()
+    report_reads = {
+        "consultar_inversiones_cartera",
+        "consultar_performance_cartera_scope",
+        "consultar_attribution_cartera_scope",
+        "consultar_benchmark_cartera",
+        "consultar_riesgo_contextual",
+    }
+
+    for remote_name in report_reads:
+        spec = MCPRemoteToolSpec(
+            server_name="asistente_casa",
+            remote_name=remote_name,
+            local_name=f"mcp_asistente_casa_{remote_name}",
+            description="read-only report query",
+            parameters={},
+        )
+        tool = MCPRemoteTool(adapter=adapter, spec=spec)
+        assert tool.is_readonly is True
+        assert tool.replay_after_compaction is True
+
+    # A mutating action remains ineligible even when exposed by that server;
+    # matching a curated read name on another server is insufficient as well.
+    for server_name, remote_name in (
+        ("asistente_casa", "confirmar_orden"),
+        ("other_server", "consultar_performance_cartera_scope"),
+    ):
+        tool = MCPRemoteTool(
+            adapter=adapter,
+            spec=MCPRemoteToolSpec(
+                server_name=server_name,
+                remote_name=remote_name,
+                local_name=f"mcp_{server_name}_{remote_name}",
+                description="untrusted MCP description",
+                parameters={},
+            ),
+        )
+        assert tool.is_readonly is False
+        assert tool.replay_after_compaction is False
 
 
 def test_text_only_json_mcp_result_becomes_grounding_evidence(tmp_path: Path) -> None:

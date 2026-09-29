@@ -68,6 +68,19 @@ ResultT = TypeVar("ResultT")
 _MCP_SPECS_CACHE: dict[tuple[str, ...], list["MCPRemoteToolSpec"]] = {}
 _MCP_SPECS_LOCK = threading.Lock()
 
+# Curated Asistente Casa MCP reads used by Vibe's portfolio report. This is an
+# explicit server/tool policy: remote names, descriptions, and MCP annotations
+# alone never make a tool replayable. Keep actions and all unreviewed tools out.
+_ASISTENTE_CASA_REPLAYABLE_READS = frozenset(
+    {
+        "consultar_inversiones_cartera",
+        "consultar_performance_cartera_scope",
+        "consultar_attribution_cartera_scope",
+        "consultar_benchmark_cartera",
+        "consultar_riesgo_contextual",
+    }
+)
+
 
 def _fingerprint(text: str) -> str:
     """One-way fingerprint for a cache-key component that may carry secrets."""
@@ -855,6 +868,12 @@ class MCPRemoteTool(BaseTool):
         self.name = spec.local_name
         self.description = spec.description
         self.parameters = spec.parameters
+        replayable_read = (
+            spec.server_name == "asistente_casa"
+            and spec.remote_name in _ASISTENTE_CASA_REPLAYABLE_READS
+        )
+        self.is_readonly = replayable_read
+        self.replay_after_compaction = replayable_read
 
     def execute(self, **kwargs: Any) -> str:
         """Execute the remote MCP tool and return normalized JSON.

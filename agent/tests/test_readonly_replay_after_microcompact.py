@@ -80,6 +80,7 @@ def _loop(registry=None):
     loop._readonly_replay_cache = {}
     loop._readonly_replay_ready = set()
     loop._readonly_replay_protected = set()
+    loop._readonly_replay_visibility_pending = set()
     loop._readonly_replay_recoveries = 0
     loop._grounding = None
     loop._cancel_event = threading.Event()
@@ -129,6 +130,53 @@ def test_replay_restores_result_without_external_execution():
     assert trace.events[-1]["type"] == "tool_result_replayed"
     assert loop._tool_progress.finish_iteration() is False
     assert loop._tool_progress.stalled_iterations == 0
+
+
+def test_replay_visibility_lease_survives_budgeted_microcompact_until_successful_turn():
+    registry = _Registry(repeatable=True, replay_after_compaction=True)
+    loop = _loop(registry)
+    args = {"url": "https://example.test/report"}
+    key = loop._identical_call_key("read_url", args)
+    assert key is not None
+    loop._readonly_replay_cache[key] = '{"status":"ok","body":"report"}'
+    loop._readonly_replay_ready.add(key)
+    messages = []
+    trace = _Trace()
+
+    loop._process_tool_calls(
+        [SimpleNamespace(name="read_url", arguments=args, id="replay-lease")],
+        _Context(), messages, trace, [], 1,
+    )
+    messages.extend(
+        {"role": "tool", "tool_call_id": f"later-{i}", "name": "other", "content": "x" * 180}
+        for i in range(4)
+    )
+    assert loop._readonly_replay_visibility_pending == {"replay-lease"}
+
+    measure_calls = []
+    def measure(current):
+        measure_calls.append(current)
+        return sum(len(str(message.get("content", ""))) for message in current)
+
+    loop._microcompact_and_unblock(
+        messages, trace, 2, target_tokens=0, measure=measure
+    )
+    replay_message = next(m for m in messages if m.get("tool_call_id") == "replay-lease")
+    assert "report" in replay_message["content"]
+    assert all("[CLEARED FROM CONTEXT:" not in m["content"] for m in messages if m.get("tool_call_id") == "replay-lease")
+    assert measure_calls and loop._readonly_replay_visibility_pending == {"replay-lease"}
+
+    # A failed provider attempt does not call the success consumer; after a
+    # successful turn sees the readable message, its lease is consumed.
+    assert loop._readonly_replay_visibility_pending == {"replay-lease"}
+    loop._consume_readonly_replay_visibility(messages, trace, 3)
+    assert loop._readonly_replay_visibility_pending == set()
+    assert any(e["type"] == "replay_visibility_consumed" for e in trace.events)
+
+    loop._microcompact_and_unblock(
+        messages, trace, 4, target_tokens=0, measure=measure
+    )
+    assert "[CLEARED FROM CONTEXT:" in replay_message["content"]
 
 
 def test_repeatable_requires_explicit_compaction_replay_opt_in():
