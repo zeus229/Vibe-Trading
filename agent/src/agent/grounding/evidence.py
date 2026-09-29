@@ -377,6 +377,8 @@ def _is_structured_money_field(path: str) -> bool:
         return True
     if leaf.endswith("value") or leaf.endswith("amount") or leaf.endswith("total"):
         return True
+    if _leaf_name(path) in {"value_start", "value_end"}:
+        return True
     return _currency_from_path(path) is not None and any(
         component in _MONEY_PATH_FIELDS for component in components
     )
