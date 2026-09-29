@@ -224,6 +224,18 @@ class _ReleaseMixin:
                 "cited needs a source in its note; count is not checked.",
                 "For a derived figure using multiple tools or calls, cite every exact "
                 "source ref, separated by semicolons; do not decorate refs with labels.",
+                "For observed/derived refs, use ONLY exact literal tool names or exact "
+                "call ids from this session; prefer exact call ids when scopes differ.",
+                "Do not append labels, scopes, parentheses or prose to a ref. Return the "
+                "FULL revised answer, not just corrected prose. Preserve or rebuild the "
+                "final figures block on every revision.",
+                "In each figures declaration, use the normalized raw number: no currency "
+                "prefix or thousands separators, and use a dot decimal (not ARS "
+                "123.456.789,125). Preserve a percent sign when prose shows a percent, "
+                "for example `0.9562% | observed | ...`; 0.9562 and 0.9562% are "
+                "different representations.",
+                "If a figure previously needed multiple refs, preserve ALL of those refs "
+                "in every revised figures declaration.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",

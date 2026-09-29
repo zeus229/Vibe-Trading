@@ -210,6 +210,10 @@ Decide which workflow to use based on the request:
   derived value combines `financial_rigor` with `portfolio_summary`, cite both
   exact tool names (or exact call ids when scopes differ). Keep
   `asistente_casa_portfolio_risk_xray` literal; never append scope labels to the ref.
+  In each figures declaration, use the normalized raw number (no currency prefix
+  or thousands separators; dot decimal). If prose shows a percent, preserve `%`
+  in the declaration, e.g. `0.9562% | observed | ...`; `0.9562` and `0.9562%`
+  are different shapes.
   `derived` — arithmetic on observed values (`note`: the formula; every number
   added or subtracted must itself be an observed value; `ref`: where the
   operands came from, e.g. `rp, ew` for a difference between two backtests);
