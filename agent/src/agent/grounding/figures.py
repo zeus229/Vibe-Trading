@@ -23,22 +23,6 @@ from typing import Iterable, Sequence
 
 from src.agent.grounding.identity import _CANONICAL_SYMBOL_RE
 
-########################################################################
-# CONFLICTO NO RESUELTO AUTOMATICAMENTE - REQUIERE REVISION HUMANA
-# Fork (customizacion propia) queria ROUNDED_BAND = 0.01 (banda 1%),
-# argumentando que renderizados de dos decimales por debajo de 1 pueden
-# alejarse mas del 0.5% sin dejar de ser un redondeo correcto.
-# Upstream/main (commit 47a036d6, tip actual) mantiene deliberadamente
-# ROUNDED_BAND = 0.005 (banda 0.5%), con el mismo caso de prueba
-# (0.8246699... -> "0.82") rindiendo resultados opuestos (True en fork,
-# False en upstream). Esto no es un simple choque textual: cambia que
-# valores redondeados acepta o rechaza grounding como evidencia valida.
-# Se conserva aqui el valor de upstream (mas estricto = mas seguro,
-# rechaza mas en vez de aceptar de mas) SOLO como placeholder para poder
-# armar el candidato completo. NO DESPLEGAR sin que un humano confirme
-# si la banda ampliada de fork resolvia falsos rechazos reales en
-# produccion antes de descartarla.
-########################################################################
 #: Maximum relative rounding gap; written precision can only narrow this.
 #: Coarse rounding such as 0.82467 -> 0.82 exceeds the existing 0.5% policy;
 #: the answer must retain more digits instead of widening its evidence band.
