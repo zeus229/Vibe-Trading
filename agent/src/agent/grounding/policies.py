@@ -50,6 +50,28 @@ _PRIVATE_ASSERTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Positive wording for a market quote. Currency alone is not sufficient: EPS,
+# revenue, net income, and other financial amounts are also currency-marked.
+_MARKET_PRICE_CONTEXT_RE = re.compile(
+    r"(?:"
+    r"\bprice\s+target\b|\btarget\s+price\b|"
+    r"\bentry\s+price\b|\bbuy(?:ing)?\s+price\b|\bpurchase\s+price\b|"
+    r"\bclosing\s+price\b|\bopening\s+price\b|"
+    r"\bclos(?:e|ed)\s+at\b|\bopen(?:ed)?\s+at\b|"
+    r"\bintraday\s+high\b|\bintraday\s+low\b|"
+    r"\bprice\s+support\b|\bprice\s+resistance\b|"
+    r"precio\s+de\s+cierre|precio\s+de\s+apertura|precio\s+objetivo|"
+    r"precio\s+de\s+entrada|precio\s+de\s+compra|"
+    r"cerr[oó]\s+en|abri[oó]\s+en|"
+    r"cotizaci[oó]n|cotiz[oó]\b|"
+    r"m[aá]ximo\s+intradiario|m[ií]nimo\s+intradiario|"
+    r"soporte\s+de\s+precio|resistencia\s+de\s+precio|"
+    r"nivel\s+de\s+soporte|nivel\s+de\s+resistencia|"
+    r"开盘价|收盘价|最高价|最低价|现价|目标价|止损价|买入价|入场价|支撑位|阻力位|报价"
+    r")",
+    re.IGNORECASE,
+)
+
 # Loader ids are ASCII but the answer follows the user's language, so a source
 # is surfaced by any alias ("数据来源：腾讯财经" for ``tencent``).
 _SOURCE_ALIASES = {
@@ -696,6 +718,26 @@ class _PolicyMixin:
         market_records = self._price_records()
         if checked_price and market_records:
             issues.extend(self._validate_price_provenance(content, market_records))
+
+        # Keep upstream issue codes/reasons intact while restoring additive semantic
+        # metadata needed by bounded recovery and selective redaction. Attach it only
+        # to numeric figure issues; other issue classes remain explicitly unclassified.
+        figures_by_span = {(figure.start, figure.end): figure for figure in figures}
+        for issue in issues:
+            if issue.get("code") not in {"numeric_claim_unavailable", "numeric_claim_conflict"}:
+                continue
+            span = issue.get("span")
+            if not isinstance(span, (list, tuple)) or len(span) != 2:
+                continue
+            figure = figures_by_span.get((span[0], span[1]))
+            if figure is None:
+                continue
+            declaration = block.match(figure.value, figure.percent, figure.digits)
+            issue.update(
+                percent=figure.percent,
+                currency=figure.currency,
+                market_price=self._figure_is_market_price(content, figure, declaration),
+            )
         return issues
 
     @staticmethod
@@ -745,6 +787,21 @@ class _PolicyMixin:
             if declared:
                 return declared
         return self._written_symbol(content, figure, line_symbols, records) or document_symbol
+
+    @staticmethod
+    def _figure_is_market_price(
+        content: str, figure: Figure, declaration: Declaration | None
+    ) -> bool:
+        """Classify quote context positively; currency by itself is not a price."""
+        if figure.percent:
+            return False
+        if figure.column:
+            return _price_field_for_path(figure.column) is not None
+        left, right = segment_bounds(content, figure.start, figure.end)
+        return bool(
+            _MARKET_PRICE_CONTEXT_RE.search(content[left:right])
+            or (declaration is not None and _MARKET_PRICE_CONTEXT_RE.search(declaration.note))
+        )
 
     def _written_symbol(
         self,
@@ -1962,6 +2019,14 @@ class _PolicyMixin:
                 for figure in carried
             ):
                 continue
+            line_percent = all(figure.percent for figure in carried)
+            line_currency = any(figure.currency for figure in carried)
+            line_market_price = any(
+                self._figure_is_market_price(
+                    content, figure, block.match(figure.value, figure.percent, figure.digits)
+                )
+                for figure in carried
+            )
             for symbol in unknown:
                 reported.add(symbol)
                 issues.append(
@@ -1973,6 +2038,9 @@ class _PolicyMixin:
                         "reason": "symbol_never_handled",
                         "claim": line.strip()[:200],
                         "span": [offset, offset + len(line)],
+                        "percent": line_percent,
+                        "currency": line_currency,
+                        "market_price": line_market_price,
                         "message": (
                             f"No tool call in this session passed in or returned {symbol}, "
                             "yet the answer attaches figures to it. Retrieve it, or report "

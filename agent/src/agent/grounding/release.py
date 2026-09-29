@@ -314,6 +314,7 @@ class _ReleaseMixin:
             return None
         if self.identity_status == "locked" and any(
             issue.get("code") in {"numeric_claim_unavailable", "unsourced_symbol_figures"}
+            and issue.get("market_price") is True
             for issue in validation.issues
         ):
             if self._price_evidence_attempts < MAX_PRICE_EVIDENCE_ATTEMPTS:
@@ -394,24 +395,25 @@ class _ReleaseMixin:
             )
         # No observed price: tell unresolved identity apart from a draft citing
         # prices this session never observed.
-        issue_codes = {
-            code
-            for validation in self._validations
-            for code in (issue.get("code") for issue in validation.get("issues", []))
-        }
-        if issue_codes & _REDACTABLE_CODES and not self._analysis_completed:
+        # Describe only the latest rejected draft; earlier price issues must not
+        # color the fallback after the model has moved on to a fundamentals claim.
+        last_issues = self._validations[-1]["issues"] if self._validations else []
+        redactable = [issue for issue in last_issues if issue.get("code") in _REDACTABLE_CODES]
+        if redactable and not self._analysis_completed:
+            is_price = any(issue.get("market_price") is True for issue in redactable)
             if is_zh:
                 return (
-                    "我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的价格数字,无法核验。"
-                    "请重新发起任务,让模型先调用行情工具获取数据,或要求它去掉这些价格引用后重试。"
+                    f"我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的{'价格数字' if is_price else '数值'},无法核验。"
+                    "请重新发起任务,让模型先调用相应工具获取数据,或要求它去掉这些引用后重试。"
                 )
             return (
-                "My previous answer was rejected by the verification gate: it cited price "
-                "figures that this session never obtained through a tool, so they could not "
-                "be verified. Re-run the task and let the agent fetch the market data first, "
-                "or ask it to answer without the unverified prices."
+                f"My previous answer was rejected by the verification gate: it cited "
+                f"{'price figures' if is_price else 'numeric claim(s)'} that this session "
+                "never obtained through a tool, so they could not be verified. Re-run the task "
+                "and let the agent fetch the relevant data first, or ask it to answer without "
+                "the unverified figures."
             )
-        if issue_codes & _REDACTABLE_CODES:
+        if redactable:
             # A completed analysis whose report failed the check: the draft's
             # figures, not prices, are what failed, and the run's output is
             # not lost with it.
@@ -550,6 +552,12 @@ class _ReleaseMixin:
             return None
         return content.rstrip() + "\n\n" + note
 
+    @staticmethod
+    def _redaction_needs_price_evidence(issues: Sequence[dict[str, Any]]) -> bool:
+        """Require price evidence unless every redactable issue is known non-price."""
+        redactable = [issue for issue in issues if issue.get("code") in _REDACTABLE_CODES]
+        return not redactable or any(issue.get("market_price") is not False for issue in redactable)
+
     def redacted_release(self, content: str, validation: ValidationResult) -> str | None:
         """Release the last rejected draft with its unverified figures cut out.
 
@@ -577,7 +585,12 @@ class _ReleaseMixin:
         # so does a completed analysis: naming 600519.SH in a backtest request
         # makes it a market answer, but the backtest's own output is what the
         # surviving figures were checked against.
-        if self._identity_required and not self._price_records() and not self._analysis_completed:
+        if (
+            self._identity_required
+            and not self._price_records()
+            and not self._analysis_completed
+            and self._redaction_needs_price_evidence(validation.issues)
+        ):
             return None
         text = _strip_release_markers(content)
         # Stripping shifts offsets and the cuts anchor on issue spans, so the
