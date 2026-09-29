@@ -201,13 +201,22 @@ Decide which workflow to use based on the request:
   Once this session holds more than one tail-risk measurement (a VaR and an ES,
   or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no
   declaration at all cannot say which of them you are quoting, and the figure is
-  sent back for correction;
-  For Asistente Casa portfolio figures, keep provenance refs exact: if a derived
-  value combines `financial_rigor` with `portfolio_summary`, cite both exact tool
-  names (or exact call ids when scopes differ). Keep
+  sent back for correction.
+  A backtest's output (its metrics, weights, trades, p-values, final value) is
+  `observed` with the backtest's run directory as `ref`, e.g. `rp`, or the file
+  you read, e.g. `rp/artifacts/target_positions.csv`; two backtests are two
+  directories, so a comparison names each one (`rp::sharpe`, `ew::sharpe`);
+  For Asistente Casa portfolio figures, keep provenance refs exact: if a
+  derived value combines `financial_rigor` with `portfolio_summary`, cite both
+  exact tool names (or exact call ids when scopes differ). Keep
   `asistente_casa_portfolio_risk_xray` literal; never append scope labels to the ref.
+  In each figures declaration, use the normalized raw number (no currency prefix
+  or thousands separators; dot decimal). If prose shows a percent, preserve `%`
+  in the declaration, e.g. `0.9562% | observed | ...`; `0.9562` and `0.9562%`
+  are different shapes.
   `derived` — arithmetic on observed values (`note`: the formula; every number
-  added or subtracted must itself be an observed value);
+  added or subtracted must itself be an observed value; `ref`: where the
+  operands came from, e.g. `rp, ew` for a difference between two backtests);
   `proposed` — a price level you suggest, such as an entry, stop or target: inside
   the observed price range, or with a formula over observed values in `note`; a
   percentage is not a level, so state the price it implies;
@@ -229,15 +238,6 @@ Decide which workflow to use based on the request:
   1.8   | cited    | Sharpe ratio reported by the paper
   20    | count    | moving-average window, days
   ```
-  In the `value` field of a figures declaration, prefer the raw normalized
-  numeric spelling from the tool result: no currency prefix, no thousands
-  separators, and a dot for decimals (for example `123456789.125`, not
-  `ARS 123.456.789,125`). A percentage declaration must keep the percent sign
-  used in prose (`0.9562% | observed | ...`), because `0.9562` and `0.9562%`
-  are different figure shapes to the gate. Keep currency and localized formatting only in the
-  user-facing prose. In a `derived` note, likewise use raw numeric operands
-  exactly as returned by tools and plain arithmetic only; do not use localized
-  number formatting or explanatory prose inside the formula.
   The block is checked against this session's tool results and removed before
   the user sees the answer, so never refer to it in the prose. A figure you
   cannot declare truthfully under one of these roles must be removed, not
@@ -439,6 +439,7 @@ class ContextBuilder:
         tool_calls: list,
         content: Optional[str] = None,
         reasoning_content: Optional[str] = None,
+        provider_items: Optional[list] = None,
     ) -> Dict[str, Any]:
         """Format an assistant tool_calls message, preserving thinking text.
 
@@ -449,6 +450,9 @@ class ContextBuilder:
             reasoning_content: Provider-specific reasoning field (Kimi K2.5,
                 DeepSeek reasoner, Qwen thinking). Only attached to the output
                 message when not None, so non-thinking providers see no change.
+            provider_items: Opaque items the provider must receive back verbatim
+                with this turn (Codex encrypted reasoning). Attached only when
+                non-empty; only the adapter that produced them reads them.
 
         Returns:
             OpenAI-format assistant message.
@@ -481,4 +485,6 @@ class ContextBuilder:
             }
         if reasoning_content is not None:
             message["reasoning_content"] = reasoning_content
+        if provider_items:
+            message["provider_items"] = list(provider_items)
         return message

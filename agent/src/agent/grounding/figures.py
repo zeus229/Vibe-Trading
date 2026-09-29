@@ -23,26 +23,16 @@ from typing import Iterable, Sequence
 
 from src.agent.grounding.identity import _CANONICAL_SYMBOL_RE
 
-########################################################################
-# CONFLICTO NO RESUELTO AUTOMATICAMENTE - REQUIERE REVISION HUMANA
-# Fork (customizacion propia) queria ROUNDED_BAND = 0.01 (banda 1%),
-# argumentando que renderizados de dos decimales por debajo de 1 pueden
-# alejarse mas del 0.5% sin dejar de ser un redondeo correcto.
-# Upstream/main (commit 47a036d6, tip actual) mantiene deliberadamente
-# ROUNDED_BAND = 0.005 (banda 0.5%), con el mismo caso de prueba
-# (0.8246699... -> "0.82") rindiendo resultados opuestos (True en fork,
-# False en upstream). Esto no es un simple choque textual: cambia que
-# valores redondeados acepta o rechaza grounding como evidencia valida.
-# Se conserva aqui el valor de upstream (mas estricto = mas seguro,
-# rechaza mas en vez de aceptar de mas) SOLO como placeholder para poder
-# armar el candidato completo. NO DESPLEGAR sin que un humano confirme
-# si la banda ampliada de fork resolvia falsos rechazos reales en
-# produccion antes de descartarla.
-########################################################################
 #: Maximum relative rounding gap; written precision can only narrow this.
 #: Coarse rounding such as 0.82467 -> 0.82 exceeds the existing 0.5% policy;
 #: the answer must retain more digits instead of widening its evidence band.
 ROUNDED_BAND = 0.005
+
+#: A declared value written as a fraction of two integers ("1/3").
+_FRACTION_RE = re.compile(r"([1-9]\d{0,2})\s*/\s*([1-9]\d{0,2})")
+
+#: Marks of a multiple a declared value may carry ("5.5x", "3 倍").
+_MULTIPLE_MARKS = frozenset({"x", "X", "×", "倍"})
 
 #: The five roles a declaration may carry (spec §2).
 ROLES = ("observed", "derived", "proposed", "cited", "count")
@@ -659,6 +649,10 @@ def _parse_value(
         exactly one number and its marks.
     """
     field = _normalize(text).text.strip()
+    fraction = _FRACTION_RE.fullmatch(field)
+    if fraction is not None:
+        # "1/3" for an equal weight: a value, not two numbers.
+        return int(fraction.group(1)) / int(fraction.group(2)), False, field.replace(" ", "")
     tokens = _numbers(field, decimal_commas=decimal_commas)
     if len(tokens) != 1:
         return None
@@ -667,10 +661,11 @@ def _parse_value(
     if rest[:1] in _MAGNITUDES and not _is_currency_mark(rest):
         rest = rest[1:].lstrip()
     unit, consumed = _percent_mark(rest, 0)
-    if not (
-        _is_currency_mark(rest[consumed:].strip())
-        and _is_currency_mark(field[: token.start].strip())
-    ):
+    tail = rest[consumed:].strip()
+    if not unit and tail in _MULTIPLE_MARKS:
+        # "5.5x": a multiple, written the way the answer writes it.
+        tail = ""
+    if not (_is_currency_mark(tail) and _is_currency_mark(field[: token.start].strip())):
         return None
     reading = _reading(token.sign, token.digits, unit)
     if reading is None:

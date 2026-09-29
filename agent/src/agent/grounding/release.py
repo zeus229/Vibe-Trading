@@ -122,6 +122,19 @@ def _correction_line(issue: dict[str, Any]) -> str:
         sources=", ".join(str(source) for source in issue.get("ambiguous_sources") or []),
         result=result if result else "a different value",
     )
+    declared_as = issue.get("declared_as")
+    if declared_as:
+        evidence += (
+            f"; the figures block declares {declared_as}"
+            + (", with the opposite sign," if issue.get("declared_sign_differs") else "")
+            + f" which is not how the answer writes it — declare it exactly as written "
+            f"({issue.get('value')})"
+        )
+    if issue.get("sign_reversed"):
+        evidence += (
+            "; that is the same size with the opposite sign — the formula runs the other "
+            "way round from the answer, so write its operands in the order the answer states"
+        )
     candidates = issue.get("field_ref_candidates") or []
     if candidates:
         evidence += "; valid field refs: " + ", ".join(str(item) for item in candidates)
@@ -171,6 +184,8 @@ class _ReleaseMixin:
         """
         lines = [
             "[GROUNDING GATE] The previous draft was rejected and was not released to the user.",
+            "Reply with the corrected answer only, in the user's language, written as the "
+            "answer itself: do not mention this rejection, the check or the figures block.",
             "Every figure below, exactly as you wrote it, with what you declared and what the evidence says:",
         ]
         figures, others = [], []
@@ -207,29 +222,35 @@ class _ReleaseMixin:
                 "the arithmetic itself, with one operand this session observed; "
                 "proposed must be derived or lie inside the observed price range; "
                 "cited needs a source in its note; count is not checked.",
+                "For a derived figure using multiple tools or calls, cite every exact "
+                "source ref, separated by semicolons; do not decorate refs with labels.",
                 "For observed/derived refs, use ONLY exact literal tool names or exact "
-                "call ids from this session. Do not append labels, scopes, parentheses "
-                "or prose to a ref. If a formula uses operands from multiple calls, its "
-                "ref must include every operand source separated by `; `; when one tool "
-                "was called multiple times for different scopes, prefer exact call ids.",
-                "Return the FULL revised answer, not just corrected prose. Preserve or "
-                "rebuild the final figures block on every revision; do not drop it after "
-                "fixing precision, wording, or refs. Every measured figure that remains "
-                "in the prose must still have a valid declaration in that block.",
-                "In each figures declaration, write the value as a normalized raw number "
-                "without a currency prefix or thousands separators and with a dot decimal "
-                "(for example 123456789.125, not ARS 123.456.789,125). If the prose "
-                "writes a percentage, the declaration value MUST keep the percent sign "
-                "(for example 0.9562% | observed | ...); 0.9562 and 0.9562% are different "
-                "figure shapes to the gate. Derived notes must "
-                "use raw tool-result operands and plain arithmetic only. If a derived "
-                "figure previously needed multiple refs, preserve ALL of those refs in "
-                "the corrected declaration; never collapse it back to the calculator alone.",
+                "call ids from this session; prefer exact call ids when scopes differ.",
+                "Do not append labels, scopes, parentheses or prose to a ref. Return the "
+                "FULL revised answer, not just corrected prose. Preserve or rebuild the "
+                "final figures block on every revision.",
+                "In each figures declaration, use the normalized raw number: no currency "
+                "prefix or thousands separators, and use a dot decimal (not ARS "
+                "123.456.789,125). Preserve a percent sign when prose shows a percent, "
+                "for example `0.9562% | observed | ...`; 0.9562 and 0.9562% are "
+                "different representations.",
+                "If a figure previously needed multiple refs, preserve ALL of those refs "
+                "in every revised figures declaration.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
             ]
         )
+        if self._backtest_scopes:
+            runs = ", ".join(f"`{scope}`" for scope in sorted(set(self._backtest_scopes.values())) if scope)
+            lines.append(
+                "A value a backtest wrote is observed with that backtest's run directory "
+                "as ref"
+                + (f" ({runs})" if runs else "")
+                + ", or the file you read under it; a difference between two backtests "
+                "is derived, with both run directories as ref. A figure the answer writes "
+                "as a percent is declared as a percent."
+            )
         recovery = self.recovery_action(validation)
         if recovery == _RESOLVER_TOOL:
             lines.extend(
@@ -291,21 +312,6 @@ class _ReleaseMixin:
             if self._symbol_resolution_attempts < MAX_SYMBOL_RESOLUTION_ATTEMPTS:
                 return _RESOLVER_TOOL
             return None
-        # The issue CODE alone does not say whether the rejected
-        # figure was ever a market quote — ``numeric_claim_unavailable`` and
-        # ``unsourced_symbol_figures`` both fire just as readily on a
-        # fundamentals ratio (ROE, ROA, an efficiency/capital ratio, a YoY
-        # growth %) or a currency-marked fundamental (EPS, net income,
-        # revenue, assets, equity, capex, FCF) as on a genuine price.
-        # ``get_market_data`` can only ever satisfy the latter, so this is a
-        # POSITIVE condition, not "not a percent" and not "has currency":
-        # ``market_price`` is True only when the figure sat in a recognized
-        # OHLC table column, or an explicit price/quote/target/support/
-        # resistance signal was present in its clause or declared note (see
-        # ``_figure_is_market_price`` in ``policies.py``, and its aggregate
-        # in ``_validate_unsourced_symbols``). Uncertain cases (the flag
-        # missing entirely, or False) do NOT trigger — the correction/cited/
-        # redacted-release path handles those instead.
         if self.identity_status == "locked" and any(
             issue.get("code") in {"numeric_claim_unavailable", "unsourced_symbol_figures"}
             and issue.get("market_price") is True
@@ -322,22 +328,7 @@ class _ReleaseMixin:
         draft: str | None = None,
         validation: ValidationResult | None = None,
     ) -> None:
-        """Account one bounded recovery attempt against its budget.
-
-        Args:
-            action: The recovery tool requested (``search_symbol`` or
-                ``get_market_data``).
-            draft: The rejected draft this recovery was requested for.
-            validation: That draft's validation result.
-
-        When ``draft``/``validation`` are supplied they are tracked as a
-        pending recovery: if the model's next VALID answer turns
-        out to carry no measured figure at all and ``action`` was never
-        actually called since, that answer is an operational reply about the
-        recovery, not a revision of the rejected research — see
-        ``pending_recovery_stub``. Optional so existing callers that only
-        ever cared about the budget (tests included) are unaffected.
-        """
+        """Account a bounded recovery and retain its rejected draft if supplied."""
         self._recovery_rounds += 1
         if action == _RESOLVER_TOOL:
             self._symbol_resolution_attempts += 1
@@ -351,41 +342,16 @@ class _ReleaseMixin:
             }
 
     def pending_recovery_stub(self, content: str) -> tuple[str, ValidationResult] | None:
-        """Detect an operational reply silently standing in for declined recovery.
-
-        Consumes (resolves, one-shot) the recovery tracked by
-        :meth:`record_recovery`. Called once, right after the model's next
-        final answer has already validated: if a recovery was requested and
-        its tool was never actually called since (cleared in
-        ``GroundingLedger.ingest_tool_result``, which also lives in this
-        package), a validated answer with NO
-        measured figure at all cannot be a substantive revision of a
-        quantitative research draft — a real revision, even a much shorter
-        one, still carries the numbers the user asked for. This is a
-        structural (figure-count) signal, deliberately not a length or
-        natural-language-word heuristic — see ``figures.py``'s own "reads no
-        natural-language word" design note.
-
-        Args:
-            content: The new, already-VALID final answer to check.
-
-        Returns:
-            The pending ``(rejected_draft, its_validation)`` to release
-            instead (via ``redacted_release``/``safe_fallback``), or None
-            when there is no pending recovery, it was fulfilled, or
-            ``content`` itself carries a measured figure (a real revision).
-        """
+        """Consume an unfulfilled recovery when the next answer drops all figures."""
         pending = self._pending_recovery
         self._pending_recovery = None
-        if pending is None:
-            return None
-        if self._has_measured_figures(content):
+        if pending is None or self._has_measured_figures(content):
             return None
         return pending["draft"], pending["validation"]
 
     @staticmethod
     def _has_measured_figures(content: str) -> bool:
-        """Whether ``content`` carries at least one measured-shape figure."""
+        """Whether the answer contains any measured-shape figure."""
         block = parse_figures_block(content)
         return any(figure.shape == "measured" for figure in scan_figures(content, block))
 
@@ -428,27 +394,41 @@ class _ReleaseMixin:
                 "I will not invent an entry price without a visible derivation or refreshed evidence."
             )
         # No observed price: tell unresolved identity apart from a draft citing
-        # unverified figures. The narrative is decided from the LAST validation
-        # only (a stale draft's price issue must not color the final message
-        # once the run has moved on to a purely fundamentals rejection).
+        # prices this session never observed.
+        # Describe only the latest rejected draft; earlier price issues must not
+        # color the fallback after the model has moved on to a fundamentals claim.
         last_issues = self._validations[-1]["issues"] if self._validations else []
-        redactable_issues = [
-            issue for issue in last_issues if issue.get("code") in _REDACTABLE_CODES
-        ]
-        if redactable_issues:
-            is_price = any(issue.get("market_price") is True for issue in redactable_issues)
+        redactable = [issue for issue in last_issues if issue.get("code") in _REDACTABLE_CODES]
+        if redactable and not self._analysis_completed:
+            is_price = any(issue.get("market_price") is True for issue in redactable)
             if is_zh:
-                subject = "价格数字" if is_price else "数值"
                 return (
-                    f"我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的{subject},无法核验。"
+                    f"我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的{'价格数字' if is_price else '数值'},无法核验。"
                     "请重新发起任务,让模型先调用相应工具获取数据,或要求它去掉这些引用后重试。"
                 )
-            subject = "price figures" if is_price else "numeric claim(s)"
             return (
-                f"My previous answer was rejected by the verification gate: it cited {subject} "
-                "that this session never obtained through a tool, so they could not "
-                "be verified. Re-run the task and let the agent fetch the data first, "
-                "or ask it to answer without the unverified figures."
+                f"My previous answer was rejected by the verification gate: it cited "
+                f"{'price figures' if is_price else 'numeric claim(s)'} that this session "
+                "never obtained through a tool, so they could not be verified. Re-run the task "
+                "and let the agent fetch the relevant data first, or ask it to answer without "
+                "the unverified figures."
+            )
+        if redactable:
+            # A completed analysis whose report failed the check: the draft's
+            # figures, not prices, are what failed, and the run's output is
+            # not lost with it.
+            if is_zh:
+                return (
+                    "我的回答没有通过数字核验：草稿里有数字无法与本会话工具返回的结果对上，"
+                    "按规则没有发布。分析本身已经完成，结果文件保存在本次运行的 artifacts "
+                    "目录中。可以重试，或让我只列出工具直接返回的数字。"
+                )
+            return (
+                "My answer did not pass the figure check: some of its figures could not be "
+                "matched to what this session's tools returned, so it was not released. "
+                "The analysis itself completed; its result files are in this run's "
+                "artifacts directory. Retry, or ask me to list only the figures the tools "
+                "returned."
             )
         if is_zh:
             return (
@@ -574,27 +554,9 @@ class _ReleaseMixin:
 
     @staticmethod
     def _redaction_needs_price_evidence(issues: Sequence[dict[str, Any]]) -> bool:
-        """Whether a redaction with no price evidence anywhere must fail closed.
-
-        ``market_price`` is produced by ``policies.py`` and consumed here as-is
-        — this reads no additional wording of its own. False explicitly means a
-        known fundamental (redactable without ever needing a quote); True means
-        a real price; missing or None means the figure was never classified.
-        Fail-closed by default: price evidence is required unless there is at
-        least one redactable issue and every one of them is explicitly False.
-
-        Args:
-            issues: This validation's issues (not history from prior drafts).
-
-        Returns:
-            True when price evidence is required (no redactable issue, or one
-            whose ``market_price`` is True or unclassified); False when every
-            redactable issue is a known-explicit fundamental.
-        """
+        """Require price evidence unless every redactable issue is known non-price."""
         redactable = [issue for issue in issues if issue.get("code") in _REDACTABLE_CODES]
-        if not redactable:
-            return True
-        return any(issue.get("market_price") is not False for issue in redactable)
+        return not redactable or any(issue.get("market_price") is not False for issue in redactable)
 
     def redacted_release(self, content: str, validation: ValidationResult) -> str | None:
         """Release the last rejected draft with its unverified figures cut out.
@@ -618,16 +580,15 @@ class _ReleaseMixin:
             The redacted, re-validated answer without its declaration block and
             with a note stating how many figures were removed, or None.
         """
-        # A market answer with no observed price has nothing to stand on once
-        # its figures are cut UNLESS every one of this validation's redactable
-        # issues is explicitly known to be a non-price (fundamentals) figure:
-        # cutting those never needed a quote in the first place. Any issue
-        # whose market_price is True, or missing/None (never classified), is
-        # treated as a possible price and fails closed — see
-        # ``_redaction_needs_price_evidence``.
+        # A market answer with no observed price has nothing to stand on once its
+        # figures are cut; a general answer (no instrument asked about) does, and
+        # so does a completed analysis: naming 600519.SH in a backtest request
+        # makes it a market answer, but the backtest's own output is what the
+        # surviving figures were checked against.
         if (
             self._identity_required
             and not self._price_records()
+            and not self._analysis_completed
             and self._redaction_needs_price_evidence(validation.issues)
         ):
             return None
