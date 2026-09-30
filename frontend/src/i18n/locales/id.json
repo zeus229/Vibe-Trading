@@ -219,7 +219,10 @@
     "verdictUnreadable": "Kesimpulan terbaru tidak dapat dibaca",
     "verdictNoCalls": "Tidak ada sinyal",
     "verdictDelta": "{{was}} → {{now}}",
-    "verdictRecorded": "per {{when}}"
+    "verdictRecorded": "per {{when}}",
+    "deliveryKnownTargetLabel": "Tujuan dikenal",
+    "deliveryKnownTargetPlaceholder": "Pilih tujuan yang dikenal…",
+    "deliverySuggestionKind_private_chat": "Chat pribadi saya"
   },
   "reports": {
     "badge": "Laporan",

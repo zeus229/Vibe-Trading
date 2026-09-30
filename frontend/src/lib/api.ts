@@ -881,6 +881,12 @@ export interface UpdateDataSourceSettingsRequest {
   source_orders?: SourceOrderUpdate[];
 }
 
+export interface DeliveryTargetSuggestion {
+  target: string;
+  kind?: string;
+  label?: string;
+}
+
 export interface ChannelAdapterStatus {
   name: string;
   display_name: string;
@@ -895,6 +901,7 @@ export interface ChannelAdapterStatus {
   delivery_target_kind?: string;
   delivery_target_placeholder?: string;
   delivery_target_input_type?: string;
+  delivery_target_suggestions?: DeliveryTargetSuggestion[];
 }
 
 export interface ChannelRuntimeStatus {

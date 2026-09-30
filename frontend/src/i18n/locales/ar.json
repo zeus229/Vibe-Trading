@@ -214,7 +214,10 @@
     "verdictUnreadable": "تعذر قراءة أحدث تقييم",
     "verdictNoCalls": "لا إشارات",
     "verdictDelta": "{{was}} ← {{now}}",
-    "verdictRecorded": "اعتبارًا من {{when}}"
+    "verdictRecorded": "اعتبارًا من {{when}}",
+    "deliveryKnownTargetLabel": "وجهة معروفة",
+    "deliveryKnownTargetPlaceholder": "اختر وجهة معروفة…",
+    "deliverySuggestionKind_private_chat": "محادثتي الخاصة"
   },
   "reports": {
     "badge": "التقارير",

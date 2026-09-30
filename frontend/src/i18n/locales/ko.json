@@ -214,7 +214,10 @@
     "verdictUnreadable": "최신 판정을 읽을 수 없음",
     "verdictNoCalls": "호출 없음",
     "verdictDelta": "{{was}} → {{now}}",
-    "verdictRecorded": "{{when}} 기준"
+    "verdictRecorded": "{{when}} 기준",
+    "deliveryKnownTargetLabel": "알려진 대상",
+    "deliveryKnownTargetPlaceholder": "알려진 대상 선택…",
+    "deliverySuggestionKind_private_chat": "내 비공개 채팅"
   },
   "reports": {
     "badge": "리포트",

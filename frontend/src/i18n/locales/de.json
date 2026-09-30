@@ -219,7 +219,10 @@
     "verdictUnreadable": "Letztes Urteil nicht lesbar",
     "verdictNoCalls": "Keine Calls",
     "verdictDelta": "{{was}} → {{now}}",
-    "verdictRecorded": "Stand {{when}}"
+    "verdictRecorded": "Stand {{when}}",
+    "deliveryKnownTargetLabel": "Bekanntes Ziel",
+    "deliveryKnownTargetPlaceholder": "Bekanntes Ziel auswählen…",
+    "deliverySuggestionKind_private_chat": "Privater Chat"
   },
   "reports": {
     "badge": "Berichte",

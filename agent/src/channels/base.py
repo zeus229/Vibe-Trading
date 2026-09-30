@@ -41,6 +41,10 @@ class BaseChannel(ABC):
     delivery_target_placeholder: ClassVar[str] = "Chat, group, user, address, or channel ID"
     delivery_target_input_type: ClassVar[str] = "text"
 
+    def delivery_target_suggestions(self) -> list[dict[str, str]]:
+        """Return safe destination suggestions for scheduled delivery."""
+        return []
+
     def __init__(self, config: Any, bus: MessageBus) -> None:
         """Initialize the channel.
 

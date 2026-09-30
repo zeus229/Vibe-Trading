@@ -219,7 +219,10 @@
     "verdictUnreadable": "No se pudo leer el último veredicto",
     "verdictNoCalls": "Sin señales",
     "verdictDelta": "{{was}} → {{now}}",
-    "verdictRecorded": "a fecha de {{when}}"
+    "verdictRecorded": "a fecha de {{when}}",
+    "deliveryKnownTargetLabel": "Destino conocido",
+    "deliveryKnownTargetPlaceholder": "Elegir un destino conocido…",
+    "deliverySuggestionKind_private_chat": "Mi chat privado"
   },
   "reports": {
     "badge": "Informes",
