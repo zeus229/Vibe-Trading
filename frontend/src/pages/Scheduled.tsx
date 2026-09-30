@@ -36,7 +36,10 @@ function browserTimezone(): string {
 }
 
 function maskDeliveryTarget(target: string): string {
-  if (target.length <= 6) return target;
+  if (target.length <= 2) return "•".repeat(target.length);
+  if (target.length <= 6) {
+    return `${target.slice(0, 1)}${"•".repeat(target.length - 2)}${target.slice(-1)}`;
+  }
   const prefixLength = target.startsWith("-100") ? 4 : 3;
   return `${target.slice(0, prefixLength)}••••${target.slice(-2)}`;
 }
