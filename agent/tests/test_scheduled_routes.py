@@ -21,7 +21,12 @@ from fastapi.testclient import TestClient
 
 import api_server
 from src.api import scheduled_routes
-from src.scheduled_research.models import JobStatus, ScheduledResearchJob
+from src.scheduled_research.models import (
+    DeliveryRecord,
+    DeliveryStatus,
+    JobStatus,
+    ScheduledResearchJob,
+)
 from src.scheduled_research.store import ScheduledResearchJobStore
 
 
@@ -209,6 +214,43 @@ def test_patch_updates_authored_fields_without_replacing_runtime_history(
     assert saved.created_at == original_created_at
     assert saved.last_run_at == 1_700_000_100_000
     assert saved.delivery.status.value == "none"
+
+
+def test_patch_same_cadence_and_delivery_preserves_next_run_and_receipt(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(
+        store,
+        id="stable",
+        prompt="old prompt",
+        schedule="0 9 * * 1-5",
+        timezone="UTC",
+        next_run_at=1_900_000_000_000,
+        delivery_channel="email",
+        delivery_target="person@example.com",
+        delivery=DeliveryRecord(
+            status=DeliveryStatus.SENT,
+            provider_message_id="provider-1",
+        ),
+    )
+
+    response = client.patch(
+        "/scheduled-runs/stable",
+        json={
+            "prompt": "new prompt",
+            "schedule": "0 9 * * 1-5",
+            "timezone": "UTC",
+            "delivery_channel": "email",
+            "delivery_target": "person@example.com",
+            "delivery_target_ref": None,
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["next_run_at"] == 1_900_000_000_000
+    assert body["delivery_status"] == "sent"
+    assert body["delivery_provider_message_id"] == "provider-1"
 
 
 def test_patch_rejects_incomplete_delivery_target(
