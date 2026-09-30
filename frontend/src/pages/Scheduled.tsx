@@ -619,7 +619,7 @@ export function Scheduled() {
                       <span className={hintClass}>{zone}</span>
                       <StatusPill label={status.label} tone={status.tone} />
                     </div>
-                    <p className="truncate text-sm text-muted-foreground">{run.prompt}</p>
+                    <p className="line-clamp-2 break-words text-sm text-muted-foreground">{run.prompt}</p>
                     <p className={hintClass}>
                       {run.status === "expired"
                         ? t("scheduled.noFurtherRuns", { defaultValue: "No further runs" })
@@ -641,58 +641,91 @@ export function Scheduled() {
                       </p>
                     )}
                     {run.delivery_channel && (
-                      <p
-                        className={
-                          run.delivery_status === "failed"
-                            ? "break-words text-xs text-danger"
-                            : hintClass
-                        }
-                      >
-                        {t(`scheduled.delivery_${run.delivery_status}`, {
-                          channel: run.delivery_channel,
-                          defaultValue: t("scheduled.delivery_none", {
-                            channel: run.delivery_channel,
-                          }),
-                        })}
-                        {run.delivery_status === "failed" && run.delivery_error
-                          ? ` — ${run.delivery_error}`
-                          : ""}
-                      </p>
+                      <>
+                        <p className={hintClass}>
+                          {t("scheduled.deliverySummary", {
+                            channel:
+                              channelStatus[run.delivery_channel]?.display_name ||
+                              run.delivery_channel,
+                            target:
+                              run.delivery_target_label ||
+                              run.delivery_target ||
+                              t("scheduled.deliveryUnknownTarget"),
+                          })}
+                        </p>
+                        <p
+                          className={
+                            run.delivery_status === "failed"
+                              ? "break-words text-xs text-danger"
+                              : hintClass
+                          }
+                        >
+                          {t(`scheduled.delivery_${run.delivery_status}`, {
+                            channel:
+                              channelStatus[run.delivery_channel]?.display_name ||
+                              run.delivery_channel,
+                            defaultValue: t("scheduled.delivery_none", {
+                              channel:
+                                channelStatus[run.delivery_channel]?.display_name ||
+                                run.delivery_channel,
+                            }),
+                          })}
+                          {run.delivery_status === "failed" && run.delivery_error
+                            ? ` — ${run.delivery_error}`
+                            : ""}
+                        </p>
+                      </>
                     )}
                     {verdictCell(run)}
                   </div>
-                  {pendingDelete === run.id ? (
-                    <div className="flex items-center gap-1.5">
-                      {/* Cancel first so it inherits the Delete button's spot —
-                          an accidental double-click disarms instead of destroying. */}
-                      <button
-                        type="button"
-                        onClick={() => setPendingDelete(null)}
-                        className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
-                      >
-                        {t("layout.cancel")}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => void handleConfirmedDelete(run.id)}
-                        aria-label={t("scheduled.confirmDeleteAria", { prompt: run.prompt })}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-danger bg-danger/10 px-2.5 py-1.5 text-xs text-danger transition"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                        {t("scheduled.confirmDelete")}
-                      </button>
-                    </div>
-                  ) : (
+                  <div className="flex items-center gap-1.5">
                     <button
                       type="button"
-                      onClick={() => setPendingDelete(run.id)}
-                      aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
-                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                      onClick={() => beginEdit(run)}
+                      disabled={run.status === "running"}
+                      aria-label={t("scheduled.editAria", { prompt: run.prompt })}
+                      title={
+                        run.status === "running"
+                          ? t("scheduled.editRunningDisabled")
+                          : undefined
+                      }
+                      className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
                     >
-                      <Trash2 className="h-3.5 w-3.5" aria-hidden />
-                      {t("scheduled.delete")}
+                      <Pencil className="h-3.5 w-3.5" aria-hidden />
+                      {t("scheduled.edit")}
                     </button>
-                  )}
+                    {pendingDelete === run.id ? (
+                      <>
+                        {/* Cancel first so an accidental double-click disarms instead of destroying. */}
+                        <button
+                          type="button"
+                          onClick={() => setPendingDelete(null)}
+                          className="rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                        >
+                          {t("layout.cancel")}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => void handleConfirmedDelete(run.id)}
+                          aria-label={t("scheduled.confirmDeleteAria", { prompt: run.prompt })}
+                          className="inline-flex items-center gap-1.5 rounded-md border border-danger bg-danger/10 px-2.5 py-1.5 text-xs text-danger transition"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                          {t("scheduled.confirmDelete")}
+                        </button>
+                      </>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => setPendingDelete(run.id)}
+                        aria-label={t("scheduled.deleteAria", { prompt: run.prompt })}
+                        className="inline-flex items-center gap-1.5 rounded-md border px-2.5 py-1.5 text-xs text-muted-foreground transition hover:bg-muted"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" aria-hidden />
+                        {t("scheduled.delete")}
+                      </button>
+                    )}
+                  </div>
                 </li>
               );
             })}
