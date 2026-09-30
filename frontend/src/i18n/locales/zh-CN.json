@@ -214,7 +214,10 @@
     "verdictUnreadable": "最新判定无法解析",
     "verdictNoCalls": "无调用",
     "verdictDelta": "{{was}} → {{now}}",
-    "verdictRecorded": "记于 {{when}}"
+    "verdictRecorded": "记于 {{when}}",
+    "deliveryKnownTargetLabel": "已知目标",
+    "deliveryKnownTargetPlaceholder": "选择已知目标…",
+    "deliverySuggestionKind_private_chat": "我的私聊"
   },
   "reports": {
     "badge": "报告",
