@@ -37,6 +37,7 @@ class BaseChannel(ABC):
     # describe the address they accept so generic UIs never need to hard-code
     # channel names or ask users to guess provider-specific target formats.
     delivery_target_label: ClassVar[str] = "Destination"
+    delivery_target_kind: ClassVar[str] = "destination"
     delivery_target_placeholder: ClassVar[str] = "Chat, group, user, address, or channel ID"
     delivery_target_input_type: ClassVar[str] = "text"
 
