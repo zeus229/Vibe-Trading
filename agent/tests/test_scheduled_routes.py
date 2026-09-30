@@ -165,6 +165,77 @@ def test_list_rejects_out_of_range_limit(client: TestClient):
     assert client.get("/scheduled-runs", params={"limit": 500}).status_code == 422
 
 
+
+def test_patch_updates_authored_fields_without_replacing_runtime_history(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    job = _seed(
+        store,
+        id="editable",
+        prompt="old prompt",
+        schedule="0 9 * * 1-5",
+        timezone="UTC",
+        status=JobStatus.COMPLETED,
+        last_run_at=1_700_000_100_000,
+        delivery_channel="telegram",
+        delivery_target="123",
+    )
+    original_created_at = job.created_at
+
+    response = client.patch(
+        "/scheduled-runs/editable",
+        json={
+            "prompt": "new prompt",
+            "schedule": "30 10 * * 1-5",
+            "timezone": "Europe/London",
+            "delivery_channel": "email",
+            "delivery_target": "person@example.com",
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["prompt"] == "new prompt"
+    assert body["schedule"] == "30 10 * * 1-5"
+    assert body["timezone"] == "Europe/London"
+    assert body["delivery_channel"] == "email"
+    assert body["delivery_target"] == "person@example.com"
+    assert body["created_at"] == original_created_at
+    assert body["last_run_at"] == 1_700_000_100_000
+    assert body["status"] == "completed"
+
+    saved = store.get("editable")
+    assert saved is not None
+    assert saved.created_at == original_created_at
+    assert saved.last_run_at == 1_700_000_100_000
+    assert saved.delivery.status.value == "none"
+
+
+def test_patch_rejects_incomplete_delivery_target(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="editable")
+    response = client.patch(
+        "/scheduled-runs/editable",
+        json={"delivery_channel": "email", "delivery_target": None},
+    )
+    assert response.status_code == 422
+    assert "delivery_target" in response.json()["detail"]
+
+
+def test_patch_unknown_job_returns_404(client: TestClient):
+    response = client.patch("/scheduled-runs/missing", json={"prompt": "updated"})
+    assert response.status_code == 404
+
+
+def test_patch_running_job_returns_409(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(store, id="running", status=JobStatus.RUNNING)
+    response = client.patch("/scheduled-runs/running", json={"prompt": "updated"})
+    assert response.status_code == 409
+
+
 def test_delete_removes_job_and_returns_204(
     client: TestClient, store: ScheduledResearchJobStore
 ):
