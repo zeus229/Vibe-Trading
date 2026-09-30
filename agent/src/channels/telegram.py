@@ -430,6 +430,9 @@ class TelegramChannel(BaseChannel):
 
     name = "telegram"
     display_name = "Telegram"
+    delivery_target_label = "Telegram chat"
+    delivery_target_kind = "chat"
+    delivery_target_placeholder = "Chat, group, or user ID"
 
     # Commands registered with Telegram's command menu
     BOT_COMMANDS = [
