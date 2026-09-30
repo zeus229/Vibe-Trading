@@ -145,6 +145,65 @@ describe("Scheduled page", () => {
     );
   });
 
+
+  it("edits prompt, wall-clock schedule, and delivery without recreating the job", async () => {
+    mocked.listScheduledRuns.mockResolvedValue([
+      run({
+        prompt: "old briefing",
+        schedule: "20 10 * * 1-5",
+        timezone: "America/Buenos_Aires",
+        delivery_channel: "email",
+        delivery_target: "old@example.com",
+      }),
+    ]);
+    mocked.updateScheduledRun.mockResolvedValue(run());
+    render(<Scheduled />);
+
+    fireEvent.click(await screen.findByRole("button", { name: /Edit scheduled run/ }));
+    expect(screen.getByLabelText("Research prompt")).toHaveValue("old briefing");
+    expect(screen.getByLabelText("Local time")).toHaveValue("10:20");
+    expect(screen.getByLabelText("Delivery channel")).toHaveValue("email");
+    expect(screen.getByLabelText("Recipient email address")).toHaveValue("old@example.com");
+
+    fireEvent.change(screen.getByLabelText("Research prompt"), {
+      target: { value: "updated briefing" },
+    });
+    fireEvent.change(screen.getByLabelText("Local time"), { target: { value: "10:35" } });
+    fireEvent.change(screen.getByLabelText("Recipient email address"), {
+      target: { value: "new@example.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
+
+    await waitFor(() =>
+      expect(mocked.updateScheduledRun).toHaveBeenCalledWith(
+        "auckland-scan",
+        expect.objectContaining({
+          prompt: "updated briefing",
+          schedule: "35 10 * * 1-5",
+          timezone: "America/Buenos_Aires",
+          delivery_channel: "email",
+          delivery_target: "new@example.com",
+        }),
+      ),
+    );
+    expect(mocked.createScheduledRun).not.toHaveBeenCalled();
+  });
+
+  it("lists only enabled configured channels and adapts the destination field", async () => {
+    render(<Scheduled />);
+    await screen.findByText(/No scheduled runs yet/);
+
+    const channel = screen.getByLabelText("Delivery channel");
+    expect(within(channel).getByRole("option", { name: "Email" })).toBeInTheDocument();
+    expect(within(channel).getByRole("option", { name: "Telegram" })).toBeInTheDocument();
+    expect(within(channel).queryByRole("option", { name: "Discord" })).not.toBeInTheDocument();
+
+    fireEvent.change(channel, { target: { value: "email" } });
+    const target = screen.getByLabelText("Recipient email address");
+    expect(target).toHaveAttribute("type", "email");
+    expect(target).toHaveAttribute("placeholder", "name@example.com");
+  });
+
   it("surfaces a validation error from the backend", async () => {
     mocked.createScheduledRun.mockRejectedValue(
       new ApiError("timezone 'Not/AZone' is not a recognized IANA timezone key", 422),
@@ -199,7 +258,7 @@ describe("Scheduled page", () => {
 
 
 describe("briefing delivery", () => {
-  it("keeps delivery off unless a channel is typed", async () => {
+  it("keeps delivery off unless a channel is selected", async () => {
     render(<Scheduled />);
     fireEvent.change(screen.getByLabelText(/prompt/i), {
       target: { value: "pre-open scan" },
@@ -217,7 +276,7 @@ describe("briefing delivery", () => {
     fireEvent.change(screen.getByLabelText(/prompt/i), {
       target: { value: "pre-open scan" },
     });
-    fireEvent.change(screen.getByLabelText(/deliver to channel/i), {
+    fireEvent.change(screen.getByLabelText(/delivery channel/i), {
       target: { value: "telegram" },
     });
     fireEvent.click(screen.getByRole("button", { name: /schedule|create/i }));
@@ -231,10 +290,10 @@ describe("briefing delivery", () => {
     fireEvent.change(screen.getByLabelText(/prompt/i), {
       target: { value: "pre-open scan" },
     });
-    fireEvent.change(screen.getByLabelText(/deliver to channel/i), {
-      target: { value: " telegram " },
+    fireEvent.change(screen.getByLabelText(/delivery channel/i), {
+      target: { value: "telegram" },
     });
-    fireEvent.change(screen.getByLabelText(/channel target/i), {
+    fireEvent.change(screen.getByLabelText(/telegram chat/i), {
       target: { value: " chat-9 " },
     });
     fireEvent.click(screen.getByRole("button", { name: /schedule|create/i }));
