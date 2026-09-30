@@ -976,7 +976,9 @@ class _PolicyMixin:
             records = [
                 record
                 for record in records
-                if not _is_price_kind(record) and not _is_metadata_count_leaf(record.field)
+                if not _is_price_kind(record)
+                and not _is_metadata_count_leaf(record.field)
+                and record.unit != "count"
             ]
         elif figure is not None and figure.currency:
             records = [record for record in records if _is_price_kind(record)]
