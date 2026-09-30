@@ -579,6 +579,7 @@ class ChannelManager:
                     "loaded": True,
                     "running": channel.is_running,
                     "display_name": getattr(channel, "display_name", name),
+                    "delivery_target_suggestions": channel.delivery_target_suggestions(),
                 }
             )
         return status
