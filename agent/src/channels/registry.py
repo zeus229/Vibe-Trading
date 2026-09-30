@@ -96,6 +96,7 @@ class ChannelAvailability:
     error: str = ""
     install_hint: str = ""
     delivery_target_label: str = "Destination"
+    delivery_target_kind: str = "destination"
     delivery_target_placeholder: str = "Chat, group, user, address, or channel ID"
     delivery_target_input_type: str = "text"
 
@@ -108,6 +109,7 @@ class ChannelAvailability:
             "error": self.error,
             "install_hint": self.install_hint,
             "delivery_target_label": self.delivery_target_label,
+            "delivery_target_kind": self.delivery_target_kind,
             "delivery_target_placeholder": self.delivery_target_placeholder,
             "delivery_target_input_type": self.delivery_target_input_type,
         }
@@ -174,6 +176,9 @@ def inspect_channel(name: str) -> ChannelAvailability:
         delivery_target_label = str(
             getattr(cls, "delivery_target_label", "Destination")
         )
+        delivery_target_kind = str(
+            getattr(cls, "delivery_target_kind", "destination")
+        )
         delivery_target_placeholder = str(
             getattr(
                 cls,
@@ -195,6 +200,7 @@ def inspect_channel(name: str) -> ChannelAvailability:
                     name, f"pip install 'vibe-trading-ai[{name}]'"
                 ),
                 delivery_target_label=delivery_target_label,
+                delivery_target_kind=delivery_target_kind,
                 delivery_target_placeholder=delivery_target_placeholder,
                 delivery_target_input_type=delivery_target_input_type,
             )
@@ -203,6 +209,7 @@ def inspect_channel(name: str) -> ChannelAvailability:
             available=True,
             display_name=str(display),
             delivery_target_label=delivery_target_label,
+            delivery_target_kind=delivery_target_kind,
             delivery_target_placeholder=delivery_target_placeholder,
             delivery_target_input_type=delivery_target_input_type,
         )
