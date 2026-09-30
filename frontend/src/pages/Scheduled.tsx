@@ -35,6 +35,12 @@ function browserTimezone(): string {
   }
 }
 
+function maskDeliveryTarget(target: string): string {
+  if (target.length <= 6) return target;
+  const prefixLength = target.startsWith("-100") ? 4 : 3;
+  return `${target.slice(0, prefixLength)}••••${target.slice(-2)}`;
+}
+
 function timezoneOptions(): string[] {
   // Not yet in the project's TS lib target, hence the local type.
   const supported = (Intl as { supportedValuesOf?: (key: "timeZone") => string[] })
@@ -373,6 +379,7 @@ export function Scheduled() {
     selectedChannel?.delivery_target_placeholder || t("scheduled.deliveryTargetPlaceholder");
   const targetInputType =
     selectedChannel?.delivery_target_input_type === "email" ? "email" : "text";
+  const targetSuggestions = selectedChannel?.delivery_target_suggestions ?? [];
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
@@ -555,6 +562,35 @@ export function Scheduled() {
               }
               className={fieldClass}
             />
+            {deliveryChannel && targetSuggestions.length > 0 && (
+              <select
+                aria-label={t("scheduled.deliveryKnownTargetLabel")}
+                value=""
+                onChange={(e) => {
+                  if (!e.target.value) return;
+                  setDeliveryTarget(e.target.value);
+                  setDeliveryTargetRef(null);
+                }}
+                className={fieldClass}
+              >
+                <option value="">{t("scheduled.deliveryKnownTargetPlaceholder")}</option>
+                {targetSuggestions.map((suggestion) => {
+                  const label = suggestion.kind
+                    ? t(`scheduled.deliverySuggestionKind_${suggestion.kind}`, {
+                        defaultValue: suggestion.label || suggestion.target,
+                      })
+                    : suggestion.label || suggestion.target;
+                  return (
+                    <option
+                      key={`${suggestion.kind || "target"}:${suggestion.target}`}
+                      value={suggestion.target}
+                    >
+                      {label} · {maskDeliveryTarget(suggestion.target)}
+                    </option>
+                  );
+                })}
+              </select>
+            )}
           </div>
         </div>
 
