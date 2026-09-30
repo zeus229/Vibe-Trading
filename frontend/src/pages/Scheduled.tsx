@@ -377,7 +377,20 @@ export function Scheduled() {
         </div>
       </header>
 
-      <form onSubmit={handleCreate} className="space-y-4 rounded-lg border bg-card p-4">
+      <form onSubmit={handleSubmit} className="space-y-4 rounded-lg border bg-card p-4">
+        {editingId && (
+          <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border bg-muted/40 px-3 py-2">
+            <p className="text-sm">{t("scheduled.editingHint")}</p>
+            <button
+              type="button"
+              onClick={resetComposer}
+              className="inline-flex items-center gap-1.5 text-xs text-muted-foreground transition hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden />
+              {t("scheduled.cancelEdit")}
+            </button>
+          </div>
+        )}
         <div className="space-y-1.5">
           <label htmlFor="scheduled-prompt" className={labelClass}>
             {t("scheduled.promptLabel")}
@@ -480,24 +493,53 @@ export function Scheduled() {
             <label htmlFor="scheduled-delivery-channel" className={labelClass}>
               {t("scheduled.deliveryChannelLabel")}
             </label>
-            <input
+            <select
               id="scheduled-delivery-channel"
               value={deliveryChannel}
-              onChange={(e) => setDeliveryChannel(e.target.value)}
-              placeholder={t("scheduled.deliveryChannelPlaceholder")}
+              onChange={(e) => {
+                const nextChannel = e.target.value;
+                if (nextChannel !== deliveryChannel) setDeliveryTarget("");
+                setDeliveryChannel(nextChannel);
+              }}
               className={fieldClass}
-            />
-            <p className={hintClass}>{t("scheduled.deliveryHint")}</p>
+            >
+              <option value="">{t("scheduled.deliveryInApp")}</option>
+              {deliveryChannel && !selectedChannelIsAvailable && (
+                <option value={deliveryChannel}>
+                  {t("scheduled.deliveryChannelUnavailable", {
+                    channel: selectedChannel?.display_name || deliveryChannel,
+                  })}
+                </option>
+              )}
+              {configuredDeliveryChannels.map((channel) => (
+                <option key={channel.name} value={channel.name}>
+                  {channel.display_name}
+                </option>
+              ))}
+            </select>
+            {channelLoadError ? (
+              <p className="text-xs text-danger">{t("scheduled.deliveryChannelsLoadFailed")}</p>
+            ) : configuredDeliveryChannels.length === 0 && !deliveryChannel ? (
+              <p className={hintClass}>{t("scheduled.deliveryNoChannels")}</p>
+            ) : (
+              <p className={hintClass}>{t("scheduled.deliveryHint")}</p>
+            )}
           </div>
           <div className="space-y-1.5">
             <label htmlFor="scheduled-delivery-target" className={labelClass}>
-              {t("scheduled.deliveryTargetLabel")}
+              {targetLabel}
             </label>
             <input
               id="scheduled-delivery-target"
+              type={targetInputType}
+              disabled={!deliveryChannel}
               value={deliveryTarget}
               onChange={(e) => setDeliveryTarget(e.target.value)}
-              placeholder={t("scheduled.deliveryTargetPlaceholder")}
+              placeholder={
+                deliveryChannel
+                  ? targetPlaceholder
+                  : t("scheduled.deliveryTargetDisabled")
+              }
               className={fieldClass}
             />
           </div>
@@ -515,9 +557,25 @@ export function Scheduled() {
             disabled={saving}
             className="inline-flex items-center gap-2 rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
           >
-            {saving ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Plus className="h-4 w-4" aria-hidden />}
-            {t("scheduled.create")}
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+            ) : editingId ? (
+              <Save className="h-4 w-4" aria-hidden />
+            ) : (
+              <Plus className="h-4 w-4" aria-hidden />
+            )}
+            {editingId ? t("scheduled.saveChanges") : t("scheduled.create")}
           </button>
+          {editingId && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={resetComposer}
+              className="rounded-md border px-3 py-2 text-sm text-muted-foreground transition hover:bg-muted disabled:opacity-60"
+            >
+              {t("scheduled.cancelEdit")}
+            </button>
+          )}
           <p className={hintClass}>{t("scheduled.executorHint")}</p>
         </div>
       </form>
