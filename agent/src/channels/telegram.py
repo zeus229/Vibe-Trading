@@ -441,7 +441,7 @@ class TelegramChannel(BaseChannel):
         for item in self.config.allow_from:
             value = str(item).strip()
             candidate = value.split("|", 1)[0] if "|" in value else value
-            if not candidate.isdigit() or candidate in seen:
+            if re.fullmatch(r"[0-9]+", candidate) is None or candidate in seen:
                 continue
             seen.add(candidate)
             suggestions.append({"kind": "private_chat", "target": candidate})
