@@ -224,9 +224,14 @@ class _ReleaseMixin:
                 "cited needs a source in its note; count is not checked.",
                 "For a derived figure using multiple tools or calls, cite every exact "
                 "source ref, separated by semicolons; do not decorate refs with labels.",
-                "For observed/derived refs, use ONLY exact literal tool names or exact "
-                "call ids from this session; prefer exact call ids when scopes differ.",
-                "Do not append labels, scopes, parentheses or prose to a ref. Return the "
+                "When a scalar already appears in a tool result, declare it observed; "
+                "rounding it or displaying a decimal fraction as a percent does not make "
+                "it derived. Use its exact `call_id::full.field.path` ref. For a real "
+                "derivation, show the formula and exact source call_id::field.path refs.",
+                "For field refs, use ONLY `call_id::full.field.path` from the exact call "
+                "in this session. Never use a bare tool name, decorated tool name, or "
+                "`tool_name(args)::field.path`; do not append labels, scopes, parentheses "
+                "or prose to a ref. Return the "
                 "FULL revised answer, not just corrected prose. Preserve or rebuild the "
                 "final figures block on every revision.",
                 "In each figures declaration, use the normalized raw number: no currency "

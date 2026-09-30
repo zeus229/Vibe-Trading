@@ -191,13 +191,16 @@ Decide which workflow to use based on the request:
   returned needs nothing more. Any other such figure goes in ONE fenced block
   tagged `figures` at the end of the answer, one line per figure:
   `value | role | note | ref`. Roles:
-  `observed` — a tool value that is not a price or volume of the symbol, e.g. a
-  PE ratio (`ref`: the tool name such as `get_fundamentals`, or its call id). For
-  a metric whose identity matters (VaR vs ES, 95% vs 99%), use the result field
-  as `ref`: `data.tail_risk.var_95` or just `var_95` from `portfolio_risk_xray`,
-  `historical_var` from `quantlib_call`. When more than one call returned the
-  same field, name the exact call as `call_id::field` (for example
-  `q1::historical_var`); a tool name is not a call id.
+  `observed` — a scalar already present in a tool result, not a price or volume
+  of the symbol. Declare it as observed even when prose rounds it or displays a
+  decimal fraction as a percentage; rounding or unit display alone is not a
+  derivation. For every structured scalar, use the exact invocation and full
+  payload path as `call_id::field.path` (for example
+  `q1::data.tail_risk.var_95`). Never use a bare tool name, a decorated tool
+  name, or `tool_name(args)::field.path` as a field ref. A call id identifies
+  one exact invocation; the full path identifies the scalar within its result.
+  If the value is actually calculated from other values, declare it as derived
+  and show the real formula and exact source refs instead.
   Once this session holds more than one tail-risk measurement (a VaR and an ES,
   or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no
   declaration at all cannot say which of them you are quoting, and the figure is
@@ -206,10 +209,10 @@ Decide which workflow to use based on the request:
   `observed` with the backtest's run directory as `ref`, e.g. `rp`, or the file
   you read, e.g. `rp/artifacts/target_positions.csv`; two backtests are two
   directories, so a comparison names each one (`rp::sharpe`, `ew::sharpe`);
-  For Asistente Casa portfolio figures, keep provenance refs exact: if a
-  derived value combines `financial_rigor` with `portfolio_summary`, cite both
-  exact tool names (or exact call ids when scopes differ). Keep
-  `asistente_casa_portfolio_risk_xray` literal; never append scope labels to the ref.
+  For Asistente Casa portfolio figures, use the exact call id and full payload
+  path for each directly observed scalar, including Risk X-Ray and performance
+  fields. For a derived value, cite every exact source call id and field path.
+  Never use tool names, arguments, or scope labels as refs.
   In each figures declaration, use the normalized raw number (no currency prefix
   or thousands separators; dot decimal). If prose shows a percent, preserve `%`
   in the declaration, e.g. `0.9562% | observed | ...`; `0.9562` and `0.9562%`
