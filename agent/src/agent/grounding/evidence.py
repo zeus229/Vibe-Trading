@@ -346,6 +346,112 @@ _MONEY_PATH_FIELDS = frozenset(
         "valuation",
     }
 )
+# Currency declarations that scope a payload's monetary leaves. ``financial_currency``
+# is the currency of statement figures, which can differ from the quote currency.
+_UNIT_SCOPE_KEYS = _CURRENCY_CONTEXT_FIELDS | frozenset(
+    {"financial_currency", "reporting_currency", "statement_currency"}
+)
+
+# A leaf's own name says when it is not money even inside a monetary scope:
+# ratios, percents and counts sit next to amounts under the same currency.
+_RATIO_TOKENS = frozenset(
+    (
+        "pct percent percentage pp bps ratio ratios rate rates growth margin margins "
+        "yield yields weight weights return returns roe roa roic roi beta pe peg corr "
+        "correlation vol volatility drawdown probability prob concentration sharpe "
+        "sortino alpha hhi to"
+    ).split()
+)
+_COUNT_TOKENS = frozenset(
+    (
+        "count counts number num n quantity qty units shares opinions analysts "
+        "revisions holders positions trades employees obs observations days window "
+        "lookback duration rank age volume lots offset limit page returned index id "
+        "version year years month months"
+    ).split()
+)
+# A leaf that ends in an amount noun is an amount whatever else its name says.
+_AMOUNT_TOKENS = frozenset(
+    "amount value price cost balance proceeds total cash pnl".split()
+)
+# An explicit unit string naming a dimensionless quantity.
+_RATIO_UNITS = frozenset("% pct percent percentage ratio fraction x pp bps".split())
+_SYMBOL_LIKE_RE = re.compile(r"[A-Z0-9]{1,8}")
+
+
+def _name_tokens(name: str) -> list[str]:
+    """Lower-case words of a camelCase / snake_case field name."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
+    return [token for token in re.split(r"[^0-9A-Za-z\u3400-\u9fff]+", spaced.lower()) if token]
+
+
+def _leaf_dimension(path: str) -> str | None:
+    """The dimensionless unit a field name implies, or None.
+
+    A leaf keyed by a symbol or a currency code (``weights.YPFD``) is named by its
+    container, so the nearest descriptive ancestor is read instead.
+
+    Args:
+        path: Recorded evidence field, e.g. ``"data.sections.financials.revenueGrowth"``.
+
+    Returns:
+        ``"ratio"`` for a ratio, percent or metric, ``"count"`` for a count, else None.
+    """
+    parts = [re.sub(r"\[\d+\]$", "", part) for part in str(path or "").split(".")]
+    parts = [part for part in parts if part]
+    while (
+        len(parts) > 1
+        and _SYMBOL_LIKE_RE.fullmatch(parts[-1])
+        and not {*_name_tokens(parts[-1])} & (_RATIO_TOKENS | _COUNT_TOKENS | _AMOUNT_TOKENS)
+    ):
+        parts.pop()
+    if not parts:
+        return None
+    tokens = _name_tokens(parts[-1])
+    # A trailing amount noun or currency code (``bond_coupon_ars``) is the leaf's
+    # own unit declaration and outweighs any ratio word before it.
+    if not tokens or tokens[-1] in _AMOUNT_TOKENS or (
+        len(tokens) > 1 and _currency_code(tokens[-1])
+    ):
+        return None
+    if any(token in _RATIO_TOKENS for token in tokens) or _metric_kind_for_path(parts[-1]):
+        return "ratio"
+    if any(token in _COUNT_TOKENS for token in tokens) or _is_metadata_count_leaf(parts[-1]):
+        return "count"
+    return None
+
+
+def _declared_unit(hint: Any) -> str | None:
+    """The unit an explicit per-leaf declaration (``_units``) names, or None."""
+    if not isinstance(hint, str) or not hint.strip():
+        return None
+    text = hint.strip()
+    if _currency_code(text):
+        return "money"
+    return "ratio" if text.casefold() in _RATIO_UNITS else "other"
+
+
+def _declares_currency_scope(payload: Mapping[str, Any]) -> bool:
+    """Whether a payload's descriptor objects declare a monetary unit.
+
+    Only the payload root and its first two levels count (``data.listing``), so a
+    currency in one deep row does not scope unrelated leaves elsewhere.
+    """
+
+    def walk(node: Any, depth: int) -> bool:
+        if not isinstance(node, Mapping) or depth > 2:
+            return False
+        if any(
+            str(key).casefold() in _UNIT_SCOPE_KEYS and _currency_code(item)
+            for key, item in node.items()
+        ):
+            return True
+        return any(walk(item, depth + 1) for item in node.values())
+
+    return walk(payload, 0)
+
+
 def _currency_code(value: Any) -> str | None:
     """Return an ISO-shaped currency code carried by generic tool data."""
     if not isinstance(value, str):
@@ -364,13 +470,17 @@ def _currency_from_path(path: str) -> str | None:
 
 
 def _is_structured_money_field(path: str) -> bool:
-    """Whether a path names a value-like leaf or a currency-valued container."""
+    """Whether a path names a value-like leaf, for a record with no unit of its own.
+
+    A dimensionless leaf is never money, and a currency in the path only makes a
+    leaf money when the leaf is itself the currency key of an amount mapping.
+    """
     components = [
         component.casefold()
         for component in re.split(r"[.\[\]_]+", path)
         if component
     ]
-    if not components:
+    if not components or _leaf_dimension(path):
         return False
     leaf = components[-1]
     if leaf in _MONEY_PATH_FIELDS or leaf in _AMOUNT_FIELDS:
@@ -379,7 +489,7 @@ def _is_structured_money_field(path: str) -> bool:
         return True
     if _leaf_name(path) in {"value_start", "value_end"}:
         return True
-    return _currency_from_path(path) is not None and any(
+    return _currency_code(leaf) is not None and any(
         component in _MONEY_PATH_FIELDS for component in components
     )
 
@@ -696,6 +806,10 @@ class EvidenceRecord:
     value was read from and the backtest run directory that produced it, both
     relative to the ledger's run directory ("" is that directory itself). A
     declaration's ``ref`` may name either one.
+
+    ``unit`` is what the evidence says the value is: ``money`` (an explicit
+    currency unit, or a declared currency scope), ``ratio``, ``count`` or
+    ``other``. None means the payload said nothing, so name rules apply.
     """
 
     call_id: str
@@ -711,6 +825,7 @@ class EvidenceRecord:
     currency_conversion: str | None = None
     artifact: str | None = None
     scope: str | None = None
+    unit: str | None = None
 
 
 def _is_price_kind(record: EvidenceRecord) -> bool:
@@ -728,8 +843,10 @@ def _is_price_kind(record: EvidenceRecord) -> bool:
         or _price_field_for_path(record.field) is not None
         or _is_registered_price_indicator(record.tool, record.field)
         or _leaf_name(record.field) in _AMOUNT_FIELDS
+        or record.unit == "money"
         or (
-            record.currency is not None
+            record.unit is None
+            and record.currency is not None
             and _is_structured_money_field(record.field)
         )
     )
@@ -1210,12 +1327,14 @@ class _EvidenceMixin:
         source = str(payload.get("source") or tool_name)
         remaining = _MAX_GENERIC_EVIDENCE
         timestamp_fields = (*_TIMESTAMP_FIELDS, "latest_date", "as_of")
+        payload_scope = _declares_currency_scope(payload)
 
         def visit(
             value: Any,
             path: str,
             timestamp: str | None = None,
             currency: str | None = None,
+            unit_hint: Any = None,
         ) -> None:
             nonlocal remaining
             if remaining <= 0:
@@ -1226,6 +1345,12 @@ class _EvidenceMixin:
                     or _currency_from_path(path)
                     or _infer_currency(symbol or "")
                 )
+                # The unit is what the payload declares, never what the venue of
+                # the symbol implies: an explicit per-leaf unit, else a declared
+                # currency scope for a leaf that is not a ratio or a count.
+                unit = _declared_unit(unit_hint) or _leaf_dimension(path)
+                if unit is None and (currency or payload_scope):
+                    unit = "money"
                 self._evidence.append(
                     EvidenceRecord(
                         call_id=call_id,
@@ -1238,6 +1363,7 @@ class _EvidenceMixin:
                         status="observed",
                         currency=evidence_currency,
                         venue=_infer_venue(symbol or ""),
+                        unit=unit,
                     )
                 )
                 remaining -= 1
@@ -1255,6 +1381,8 @@ class _EvidenceMixin:
                 for key, item in value.items():
                     if str(key).casefold() in _CURRENCY_CONTEXT_FIELDS:
                         local_currency = _currency_code(item) or local_currency
+                units = value.get("_units")
+                units = units if isinstance(units, dict) else {}
                 for key, item in value.items():
                     if str(key).casefold() in timestamp_fields:
                         continue
@@ -1264,6 +1392,7 @@ class _EvidenceMixin:
                         child_path,
                         local_timestamp,
                         local_currency or _currency_from_path(child_path),
+                        units.get(key),
                     )
             elif isinstance(value, list):
                 for index, item in enumerate(value):
