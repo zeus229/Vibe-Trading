@@ -479,3 +479,89 @@ def test_derived_ref_rejects_unknown_or_decorated_sources_even_when_value_exists
             issue.get("reason") == "no_evidence"
             for issue in rejected.issues
         ), rejected.issues
+
+
+def test_observed_report_scalars_accept_exact_call_id_paths_and_display_rounding(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {
+                "meta": {"total_value_ars": 215541733.628},
+                "data": {
+                    "concentration": {
+                        "effective_n": 4.365122655282235,
+                        "top1_weight": 0.37989309196356547,
+                    },
+                    "volatility": {"annualized_vol": 0.3566521561834192},
+                    "drawdown": {"max_drawdown": -0.15741318223114723},
+                    "tail_risk": {
+                        "var_95": 0.029498672702435575,
+                        "expected_shortfall_95": 0.03709882179428407,
+                    },
+                },
+            },
+            "xray-call",
+        ),
+        (
+            "asistente_casa_consultar_performance_cartera_scope",
+            {"portfolio": {"return_pct": 0.123456}},
+            "performance-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Valor total ARS 215.541.733,63; effective N 4,37; volatilidad 35,67%; "
+        "drawdown -15,74%; VaR (nivel 95) 2,95%; expected shortfall (nivel 95) 3,71%; "
+        "mayor posición 37,99%; rendimiento 12,35%."
+        + _figures(
+            "215541733.63 | observed | meta.total_value_ars | xray-call::meta.total_value_ars",
+            "4.37 | observed | effective_n | xray-call::data.concentration.effective_n",
+            "35.6652% | observed | annualized_vol | xray-call::data.volatility.annualized_vol",
+            "-15.7413% | observed | max_drawdown | xray-call::data.drawdown.max_drawdown",
+            "2.9499% | observed | VaR 95% | xray-call::data.tail_risk.var_95",
+            "3.7099% | observed | expected shortfall 95% | xray-call::data.tail_risk.expected_shortfall_95",
+            "37.9893% | observed | top1_weight | xray-call::data.concentration.top1_weight",
+            "12.3456% | observed | return_pct | performance-call::portfolio.return_pct",
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_observed_field_ref_cannot_borrow_another_call_or_tool_args_ref(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {"data": {"concentration": {"effective_n": 4.36}}},
+            "acciones-call",
+        ),
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {"data": {"concentration": {"effective_n": 11.04}}},
+            "cedears-call",
+        ),
+    )
+
+    wrong_call = ledger.validate_final_answer(
+        "Effective N is 4.36."
+        + _figures(
+            "4.36 | observed | effective_n | cedears-call::data.concentration.effective_n"
+        )
+    )
+    decorated = ledger.validate_final_answer(
+        "Effective N is 4.36."
+        + _figures(
+            "4.36 | observed | effective_n | "
+            "asistente_casa_portfolio_risk_xray(scope=ACCIONES)::data.concentration.effective_n"
+        )
+    )
+
+    assert wrong_call.valid is False
+    assert decorated.valid is False
+    assert any(issue.get("reason") == "not_in_referenced_call" for issue in wrong_call.issues), wrong_call.issues

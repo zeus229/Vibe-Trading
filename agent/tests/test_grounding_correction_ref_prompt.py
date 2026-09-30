@@ -18,9 +18,11 @@ def test_correction_prompt_requires_literal_refs_and_full_figures_block(tmp_path
 
     prompt = ledger.correction_prompt(validation)
 
-    assert "exact literal tool names or exact call ids" in prompt
-    assert "Do not append labels, scopes, parentheses or prose to a ref" in prompt
-    assert "prefer exact call ids" in prompt
+    assert "When a scalar already appears in a tool result, declare it observed" in prompt
+    assert "Use its exact `call_id::full.field.path` ref" in prompt
+    assert "ONLY `call_id::full.field.path`" in prompt
+    assert "`tool_name(args)::field.path`" in prompt
+    assert "do not append labels, scopes, parentheses" in prompt
     assert "Return the FULL revised answer" in prompt
     assert "Preserve or rebuild the final figures block on every revision" in prompt
     assert "normalized raw number" in prompt
@@ -33,3 +35,10 @@ def test_correction_prompt_requires_literal_refs_and_full_figures_block(tmp_path
 def test_system_prompt_keeps_percent_unit_in_figures_declaration() -> None:
     assert "0.9562% | observed | ..." in _SYSTEM_PROMPT
     assert "`0.9562` and `0.9562%`" in _SYSTEM_PROMPT
+
+
+def test_system_prompt_requires_observed_exact_field_refs_for_direct_scalars() -> None:
+    assert "Declare it as observed even when prose rounds it" in _SYSTEM_PROMPT
+    assert "`call_id::field.path`" in _SYSTEM_PROMPT
+    assert "`tool_name(args)::field.path`" in _SYSTEM_PROMPT
+    assert "For every structured scalar" in _SYSTEM_PROMPT
