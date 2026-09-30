@@ -227,8 +227,12 @@ describe("Scheduled page", () => {
     fireEvent.change(knownTarget, { target: { value: "1381234567" } });
 
     expect(target).toHaveValue("1381234567");
-    expect(within(knownTarget).getByRole("option", { name: /Private chat.*138.*67/ })).toBeInTheDocument();
-    expect(within(knownTarget).getByRole("option", { name: /Private chat.*1.*6/ })).toBeInTheDocument();
+    expect(
+      within(knownTarget).getByRole("option", { name: "Private chat · 138••••67" }),
+    ).toBeInTheDocument();
+    expect(
+      within(knownTarget).getByRole("option", { name: "Private chat · 1••••6" }),
+    ).toBeInTheDocument();
     expect(within(knownTarget).queryByRole("option", { name: /123456/ })).not.toBeInTheDocument();
   });
 
