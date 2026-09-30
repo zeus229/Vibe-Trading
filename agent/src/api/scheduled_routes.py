@@ -669,13 +669,13 @@ def register_scheduled_routes(
             "delivery_target",
             "delivery_target_ref",
         }
-        delivery_changed = bool(delivery_fields & fields)
+        delivery_requested = bool(delivery_fields & fields)
         delivery_channel = job.delivery_channel
         delivery_target = job.delivery_target
         delivery_target_ref = job.delivery_target_ref
         delivery_target_label = job.delivery_target_label
 
-        if delivery_changed:
+        if delivery_requested:
             if request.delivery_target_ref:
                 from src.channels.targets import resolve_delivery_target
 
@@ -709,6 +709,13 @@ def register_scheduled_routes(
                         status_code=422,
                         detail="delivery_target is required when delivery_channel is set",
                     )
+
+        delivery_changed = delivery_requested and (
+            delivery_channel != job.delivery_channel
+            or delivery_target != job.delivery_target
+            or delivery_target_ref != job.delivery_target_ref
+            or delivery_target_label != job.delivery_target_label
+        )
 
         job.prompt = prompt
         job.title = title
