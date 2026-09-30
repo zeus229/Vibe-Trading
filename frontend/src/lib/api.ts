@@ -892,6 +892,7 @@ export interface ChannelAdapterStatus {
   error?: string;
   install_hint?: string;
   delivery_target_label?: string;
+  delivery_target_kind?: string;
   delivery_target_placeholder?: string;
   delivery_target_input_type?: "text" | "email";
 }
