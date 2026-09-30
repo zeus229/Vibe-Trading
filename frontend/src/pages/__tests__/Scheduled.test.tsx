@@ -94,6 +94,7 @@ beforeEach(() => {
         delivery_target_input_type: "text",
         delivery_target_suggestions: [
           { kind: "private_chat", target: "1381234567" },
+          { kind: "private_chat", target: "123456" },
         ],
       },
       discord: {
@@ -227,6 +228,8 @@ describe("Scheduled page", () => {
 
     expect(target).toHaveValue("1381234567");
     expect(within(knownTarget).getByRole("option", { name: /Private chat.*138.*67/ })).toBeInTheDocument();
+    expect(within(knownTarget).getByRole("option", { name: /Private chat.*1.*6/ })).toBeInTheDocument();
+    expect(within(knownTarget).queryByRole("option", { name: /123456/ })).not.toBeInTheDocument();
   });
 
   it("surfaces a validation error from the backend", async () => {
