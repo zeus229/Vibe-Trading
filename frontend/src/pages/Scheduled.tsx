@@ -218,7 +218,6 @@ export function Scheduled() {
       setAdvanced(run.schedule);
     }
 
-    window.scrollTo({ top: 0, behavior: "smooth" });
   }
 
   async function handleSubmit(event: React.FormEvent) {
