@@ -101,6 +101,7 @@ export function Scheduled() {
   // it means the briefing stays in the app.
   const [deliveryChannel, setDeliveryChannel] = useState("");
   const [deliveryTarget, setDeliveryTarget] = useState("");
+  const [deliveryTargetRef, setDeliveryTargetRef] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -187,6 +188,7 @@ export function Scheduled() {
     setTimezone(browserTimezone());
     setDeliveryChannel("");
     setDeliveryTarget("");
+    setDeliveryTargetRef(null);
     setComposerError(null);
   }
 
@@ -198,6 +200,7 @@ export function Scheduled() {
     setTimezone(displayZone(run));
     setDeliveryChannel(run.delivery_channel ?? "");
     setDeliveryTarget(run.delivery_target ?? "");
+    setDeliveryTargetRef(run.delivery_target_ref);
     setComposerError(null);
 
     if (cadence.kind === "daily") {
@@ -244,7 +247,7 @@ export function Scheduled() {
         timezone,
         delivery_channel: channel || null,
         delivery_target: channel ? target : null,
-        delivery_target_ref: null,
+        delivery_target_ref: channel ? deliveryTargetRef : null,
       };
       if (editingId) {
         await api.updateScheduledRun(editingId, payload);
@@ -360,8 +363,12 @@ export function Scheduled() {
   const selectedChannelIsAvailable = configuredDeliveryChannels.some(
     (channel) => channel.name === deliveryChannel,
   );
-  const targetLabel =
-    selectedChannel?.delivery_target_label || t("scheduled.deliveryTargetLabel");
+  const targetLabel = selectedChannel?.delivery_target_kind
+    ? t(`scheduled.deliveryTargetKind_${selectedChannel.delivery_target_kind}`, {
+        defaultValue:
+          selectedChannel.delivery_target_label || t("scheduled.deliveryTargetLabel"),
+      })
+    : selectedChannel?.delivery_target_label || t("scheduled.deliveryTargetLabel");
   const targetPlaceholder =
     selectedChannel?.delivery_target_placeholder || t("scheduled.deliveryTargetPlaceholder");
   const targetInputType =
@@ -498,7 +505,10 @@ export function Scheduled() {
               value={deliveryChannel}
               onChange={(e) => {
                 const nextChannel = e.target.value;
-                if (nextChannel !== deliveryChannel) setDeliveryTarget("");
+                if (nextChannel !== deliveryChannel) {
+                  setDeliveryTarget("");
+                  setDeliveryTargetRef(null);
+                }
                 setDeliveryChannel(nextChannel);
               }}
               className={fieldClass}
@@ -534,7 +544,10 @@ export function Scheduled() {
               type={targetInputType}
               disabled={!deliveryChannel}
               value={deliveryTarget}
-              onChange={(e) => setDeliveryTarget(e.target.value)}
+              onChange={(e) => {
+                setDeliveryTarget(e.target.value);
+                setDeliveryTargetRef(null);
+              }}
               placeholder={
                 deliveryChannel
                   ? targetPlaceholder
