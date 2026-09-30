@@ -649,7 +649,12 @@ def register_scheduled_routes(
         if "end_at" in fields and end_at is not None and end_at <= now_ms:
             raise HTTPException(status_code=422, detail="end_at must be in the future")
 
-        schedule_changed = schedule != job.schedule or timezone != job.timezone
+        # Interval schedules are timezone-agnostic. A timezone-only edit must
+        # not move their next fire time; only cron schedules use timezone as
+        # part of their execution cadence.
+        schedule_changed = schedule != job.schedule or (
+            not is_interval_schedule(schedule) and timezone != job.timezone
+        )
         next_run_at = job.next_run_at
         if schedule_changed:
             if is_interval_schedule(schedule):

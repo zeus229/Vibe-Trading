@@ -253,6 +253,33 @@ def test_patch_same_cadence_and_delivery_preserves_next_run_and_receipt(
     assert body["delivery_provider_message_id"] == "provider-1"
 
 
+def test_patch_interval_timezone_only_preserves_next_run(
+    client: TestClient, store: ScheduledResearchJobStore
+):
+    _seed(
+        store,
+        id="interval-timezone",
+        schedule="60000",
+        timezone="UTC",
+        next_run_at=1_900_000_000_000,
+    )
+
+    response = client.patch(
+        "/scheduled-runs/interval-timezone",
+        json={"timezone": "America/New_York"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["timezone"] == "America/New_York"
+    assert body["next_run_at"] == 1_900_000_000_000
+
+    saved = store.get("interval-timezone")
+    assert saved is not None
+    assert saved.timezone == "America/New_York"
+    assert saved.next_run_at == 1_900_000_000_000
+
+
 def test_patch_rejects_incomplete_delivery_target(
     client: TestClient, store: ScheduledResearchJobStore
 ):

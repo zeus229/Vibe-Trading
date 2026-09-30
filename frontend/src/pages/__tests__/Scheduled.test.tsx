@@ -279,7 +279,9 @@ describe("briefing delivery", () => {
     fireEvent.change(screen.getByLabelText(/prompt/i), {
       target: { value: "pre-open scan" },
     });
-    fireEvent.change(screen.getByLabelText(/delivery channel/i), {
+    const channel = screen.getByLabelText(/delivery channel/i);
+    await within(channel).findByRole("option", { name: "Telegram" });
+    fireEvent.change(channel, {
       target: { value: "telegram" },
     });
     fireEvent.click(screen.getByRole("button", { name: /schedule|create/i }));
@@ -293,10 +295,12 @@ describe("briefing delivery", () => {
     fireEvent.change(screen.getByLabelText(/prompt/i), {
       target: { value: "pre-open scan" },
     });
-    fireEvent.change(screen.getByLabelText(/delivery channel/i), {
+    const channel = screen.getByLabelText(/delivery channel/i);
+    await within(channel).findByRole("option", { name: "Telegram" });
+    fireEvent.change(channel, {
       target: { value: "telegram" },
     });
-    fireEvent.change(screen.getByLabelText(/telegram chat/i), {
+    fireEvent.change(await screen.findByLabelText(/telegram chat/i), {
       target: { value: " chat-9 " },
     });
     fireEvent.click(screen.getByRole("button", { name: /schedule|create/i }));
