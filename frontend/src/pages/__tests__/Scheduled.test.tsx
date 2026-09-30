@@ -92,6 +92,9 @@ beforeEach(() => {
         delivery_target_kind: "chat",
         delivery_target_placeholder: "Chat, group, or user ID",
         delivery_target_input_type: "text",
+        delivery_target_suggestions: [
+          { kind: "private_chat", target: "1381234567" },
+        ],
       },
       discord: {
         name: "discord",
@@ -205,6 +208,25 @@ describe("Scheduled page", () => {
     const target = screen.getByLabelText("Recipient email address");
     expect(target).toHaveAttribute("type", "email");
     expect(target).toHaveAttribute("placeholder", "name@example.com");
+  });
+
+  it("keeps manual target entry and can fill it from a known Telegram destination", async () => {
+    render(<Scheduled />);
+    await screen.findByText(/No scheduled runs yet/);
+
+    const channel = screen.getByLabelText("Delivery channel");
+    await within(channel).findByRole("option", { name: "Telegram" });
+    fireEvent.change(channel, { target: { value: "telegram" } });
+
+    const target = await screen.findByLabelText("Telegram chat");
+    expect(target).toHaveValue("");
+    expect(target).toHaveAttribute("placeholder", "Chat, group, or user ID");
+
+    const knownTarget = screen.getByLabelText("Known destination");
+    fireEvent.change(knownTarget, { target: { value: "1381234567" } });
+
+    expect(target).toHaveValue("1381234567");
+    expect(within(knownTarget).getByRole("option", { name: /Private chat.*138.*67/ })).toBeInTheDocument();
   });
 
   it("surfaces a validation error from the backend", async () => {
