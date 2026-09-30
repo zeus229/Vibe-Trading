@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
-import { CalendarClock, Loader2, Plus, Trash2 } from "lucide-react";
+import { CalendarClock, Loader2, Pencil, Plus, Save, Trash2, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { api, ApiError, type ScheduledRun } from "@/lib/api";
+import { api, ApiError, type ChannelAdapterStatus, type ScheduledRun } from "@/lib/api";
 import {
   describeCadence,
   formatIntervalMs,
@@ -19,6 +19,13 @@ const POLL_MS = 15_000;
 
 type DaysChoice = "every" | "weekdays";
 type ComposerMode = "time" | "advanced";
+
+function isWeekdayCadence(weekdays: number[]): boolean {
+  return (
+    weekdays.length === 5 &&
+    weekdays.every((day, index) => day === index + 1)
+  );
+}
 
 function browserTimezone(): string {
   try {
@@ -80,6 +87,9 @@ export function Scheduled() {
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [pendingDelete, setPendingDelete] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [channelStatus, setChannelStatus] = useState<Record<string, ChannelAdapterStatus>>({});
+  const [channelLoadError, setChannelLoadError] = useState(false);
 
   const [prompt, setPrompt] = useState("");
   const [mode, setMode] = useState<ComposerMode>("time");
@@ -131,6 +141,24 @@ export function Scheduled() {
     };
   }, [refresh]);
 
+  useEffect(() => {
+    let cancelled = false;
+    void api.getChannelStatus()
+      .then((status) => {
+        if (cancelled) return;
+        setChannelStatus(status.channels ?? {});
+        setChannelLoadError(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setChannelStatus({});
+        setChannelLoadError(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Auto-disarm an armed delete after a few seconds (blur is unreliable on
   // Safari/iOS, where buttons do not take focus on click).
   useEffect(() => {
@@ -149,7 +177,48 @@ export function Scheduled() {
     return `${Number(match[2])} ${Number(match[1])} * * ${days === "every" ? "*" : "1-5"}`;
   }
 
-  async function handleCreate(event: React.FormEvent) {
+  function resetComposer() {
+    setEditingId(null);
+    setPrompt("");
+    setMode("time");
+    setTime("09:00");
+    setDays("weekdays");
+    setAdvanced("");
+    setTimezone(browserTimezone());
+    setDeliveryChannel("");
+    setDeliveryTarget("");
+    setComposerError(null);
+  }
+
+  function beginEdit(run: ScheduledRun) {
+    const cadence = describeCadence(run.schedule);
+    setPendingDelete(null);
+    setEditingId(run.id);
+    setPrompt(run.prompt);
+    setTimezone(displayZone(run));
+    setDeliveryChannel(run.delivery_channel ?? "");
+    setDeliveryTarget(run.delivery_target ?? "");
+    setComposerError(null);
+
+    if (cadence.kind === "daily") {
+      setMode("time");
+      setDays("every");
+      setTime(formatWallTime(cadence.hour, cadence.minute));
+      setAdvanced("");
+    } else if (cadence.kind === "weekly" && isWeekdayCadence(cadence.weekdays)) {
+      setMode("time");
+      setDays("weekdays");
+      setTime(formatWallTime(cadence.hour, cadence.minute));
+      setAdvanced("");
+    } else {
+      setMode("advanced");
+      setAdvanced(run.schedule);
+    }
+
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+
+  async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
     setComposerError(null);
     if (!prompt.trim()) {
@@ -169,14 +238,20 @@ export function Scheduled() {
         setComposerError(t("scheduled.deliveryTargetRequired"));
         return;
       }
-      await api.createScheduledRun({
+      const payload = {
         prompt: prompt.trim(),
         schedule,
         timezone,
         delivery_channel: channel || null,
         delivery_target: channel ? target : null,
-      });
-      setPrompt("");
+        delivery_target_ref: null,
+      };
+      if (editingId) {
+        await api.updateScheduledRun(editingId, payload);
+      } else {
+        await api.createScheduledRun(payload);
+      }
+      resetComposer();
       await refresh();
     } catch (error) {
       setComposerError(error instanceof ApiError ? error.message : String(error));
@@ -189,6 +264,7 @@ export function Scheduled() {
     setPendingDelete(null);
     try {
       await api.deleteScheduledRun(id);
+      if (editingId === id) resetComposer();
       await refresh();
     } catch (error) {
       setListError(error instanceof ApiError ? error.message : String(error));
@@ -275,6 +351,21 @@ export function Scheduled() {
         return { label: t("scheduled.statusPending"), tone: "neutral" };
     }
   }
+
+  const configuredDeliveryChannels = Object.values(channelStatus)
+    .filter((channel) => channel.configured && channel.enabled && channel.available)
+    .sort((a, b) => a.display_name.localeCompare(b.display_name));
+
+  const selectedChannel = deliveryChannel ? channelStatus[deliveryChannel] : undefined;
+  const selectedChannelIsAvailable = configuredDeliveryChannels.some(
+    (channel) => channel.name === deliveryChannel,
+  );
+  const targetLabel =
+    selectedChannel?.delivery_target_label || t("scheduled.deliveryTargetLabel");
+  const targetPlaceholder =
+    selectedChannel?.delivery_target_placeholder || t("scheduled.deliveryTargetPlaceholder");
+  const targetInputType =
+    selectedChannel?.delivery_target_input_type === "email" ? "email" : "text";
 
   return (
     <div className="mx-auto max-w-4xl space-y-6 p-6">
