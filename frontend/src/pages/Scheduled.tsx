@@ -362,12 +362,13 @@ export function Scheduled() {
   const selectedChannelIsAvailable = configuredDeliveryChannels.some(
     (channel) => channel.name === deliveryChannel,
   );
-  const targetLabel = selectedChannel?.delivery_target_kind
-    ? t(`scheduled.deliveryTargetKind_${selectedChannel.delivery_target_kind}`, {
-        defaultValue:
-          selectedChannel.delivery_target_label || t("scheduled.deliveryTargetLabel"),
-      })
-    : selectedChannel?.delivery_target_label || t("scheduled.deliveryTargetLabel");
+  const targetLabel =
+    selectedChannel?.delivery_target_label ||
+    (selectedChannel?.delivery_target_kind
+      ? t(`scheduled.deliveryTargetKind_${selectedChannel.delivery_target_kind}`, {
+          defaultValue: t("scheduled.deliveryTargetLabel"),
+        })
+      : t("scheduled.deliveryTargetLabel"));
   const targetPlaceholder =
     selectedChannel?.delivery_target_placeholder || t("scheduled.deliveryTargetPlaceholder");
   const targetInputType =
