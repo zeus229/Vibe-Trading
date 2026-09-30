@@ -403,7 +403,7 @@ def test_text_only_json_mcp_result_is_promoted_to_data() -> None:
     assert payload["status"] == "ok"
     assert payload["data"] == structured
     assert "structured_content" not in payload
-    assert json.loads(payload["text"]) == structured
+    assert "text" not in payload
 
 
 def test_only_curated_asistente_casa_report_reads_are_replayable():
