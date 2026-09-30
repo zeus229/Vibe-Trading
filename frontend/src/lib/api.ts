@@ -894,7 +894,7 @@ export interface ChannelAdapterStatus {
   delivery_target_label?: string;
   delivery_target_kind?: string;
   delivery_target_placeholder?: string;
-  delivery_target_input_type?: "text" | "email";
+  delivery_target_input_type?: string;
 }
 
 export interface ChannelRuntimeStatus {
