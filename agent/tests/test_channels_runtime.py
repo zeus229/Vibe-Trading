@@ -215,7 +215,7 @@ def test_telegram_status_suggests_numeric_authorized_private_chats() -> None:
             "telegram": {
                 "enabled": True,
                 "token": "test-token",
-                "allow_from": ["1381234567", "alice", "*", "1381234567|alice"],
+                "allow_from": ["1381234567", "alice", "*", "1381234567|alice", "１２３４５６"],
             }
         },
         MessageBus(),
