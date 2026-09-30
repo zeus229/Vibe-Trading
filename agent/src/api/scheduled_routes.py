@@ -649,7 +649,7 @@ def register_scheduled_routes(
         if "end_at" in fields and end_at is not None and end_at <= now_ms:
             raise HTTPException(status_code=422, detail="end_at must be in the future")
 
-        schedule_changed = bool({"schedule", "timezone"} & fields)
+        schedule_changed = schedule != job.schedule or timezone != job.timezone
         next_run_at = job.next_run_at
         if schedule_changed:
             if is_interval_schedule(schedule):
