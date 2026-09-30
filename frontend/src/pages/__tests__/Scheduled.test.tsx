@@ -76,6 +76,7 @@ beforeEach(() => {
         loaded: true,
         running: true,
         delivery_target_label: "Recipient email address",
+        delivery_target_kind: "email_address",
         delivery_target_placeholder: "name@example.com",
         delivery_target_input_type: "email",
       },
@@ -88,6 +89,7 @@ beforeEach(() => {
         loaded: true,
         running: true,
         delivery_target_label: "Telegram chat",
+        delivery_target_kind: "chat",
         delivery_target_placeholder: "Chat, group, or user ID",
         delivery_target_input_type: "text",
       },
@@ -163,7 +165,7 @@ describe("Scheduled page", () => {
     expect(screen.getByLabelText("Research prompt")).toHaveValue("old briefing");
     expect(screen.getByLabelText("Local time")).toHaveValue("10:20");
     expect(screen.getByLabelText("Delivery channel")).toHaveValue("email");
-    expect(screen.getByLabelText("Recipient email address")).toHaveValue("old@example.com");
+    expect(await screen.findByLabelText("Recipient email address")).toHaveValue("old@example.com");
 
     fireEvent.change(screen.getByLabelText("Research prompt"), {
       target: { value: "updated briefing" },
@@ -194,6 +196,7 @@ describe("Scheduled page", () => {
     await screen.findByText(/No scheduled runs yet/);
 
     const channel = screen.getByLabelText("Delivery channel");
+    await within(channel).findByRole("option", { name: "Email" });
     expect(within(channel).getByRole("option", { name: "Email" })).toBeInTheDocument();
     expect(within(channel).getByRole("option", { name: "Telegram" })).toBeInTheDocument();
     expect(within(channel).queryByRole("option", { name: "Discord" })).not.toBeInTheDocument();
