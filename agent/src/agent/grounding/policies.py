@@ -117,6 +117,19 @@ _TOLERANCE = 0.005
 #: Most exact refs a correction lists for a ref whose call id names nothing.
 _MAX_FIELD_REF_CANDIDATES = 5
 
+# a.0.b and a[0].b name the same list element; evidence paths are
+# emitted with brackets, so refs are compared in that spelling.
+_DOTTED_INDEX_RE = re.compile(r"(?<=\w)\.(\d+)(?=\.|\[|$)")
+_INDEX_RE = re.compile(r"\[\d+\]")
+_MAX_INDEXED_REF_CANDIDATES = 12
+_MAX_CONTAINER_REF_CANDIDATES = 5
+_MAX_CALL_REF_CANDIDATES = 5
+
+
+def _index_normalized(path: str) -> str:
+    """Spell dotted collection indices with brackets."""
+    return _DOTTED_INDEX_RE.sub(r"[\1]", path)
+
 #: A plain integer is read as a price only for an instrument quoted in the
 #: thousands (600519.SH, an index, BTC). Below that, a prose integer is a window,
 #: a horizon or a count ("20 日均线", "200-day") and stays unchecked.
@@ -1023,8 +1036,13 @@ class _PolicyMixin:
         dropped here, before any count of calls, so two instruments' closes do
         not make ``close`` ambiguous.
         """
+        wanted = _index_normalized(field)
+
         def named(path: Any) -> bool:
-            return isinstance(path, str) and (path == field or path.endswith("." + field))
+            if not isinstance(path, str):
+                return False
+            path = _index_normalized(path)
+            return path == wanted or path.endswith("." + wanted)
 
         records = [
             record
@@ -1218,9 +1236,13 @@ class _PolicyMixin:
         return sorted(refs)
 
     def _tool_field_ref_candidates(
-        self, ref: str, symbol: str | None
+        self, ref: str, symbol: str | None, figure: Figure | None = None
     ) -> list[str]:
-        """Exact call refs for a mistaken tool_name::field declaration."""
+        """Exact call refs for a mistaken tool_name::field declaration.
+
+        With figure, refs whose observed value matches it come first, most
+        recent call first among equals. The hint never authorizes a value.
+        """
         key = (ref or "").strip()
         if "::" not in key:
             return []
@@ -1228,17 +1250,129 @@ class _PolicyMixin:
         if not scope or not field:
             return []
         records, entries = self._field_sources(field, symbol)
-        refs = {
-            self._ref_source(record.call_id, record.field, record.scope)[1]
-            for record in records
-            if record.tool == scope and record.call_id and record.field
+        found: dict[str, list[float]] = {}
+        for record in records:
+            if record.tool == scope and record.call_id and record.field:
+                label = self._ref_source(record.call_id, record.field, record.scope)[1]
+                found.setdefault(label, []).append(float(record.value))
+        for entry in entries:
+            if entry.get("tool") == scope and entry.get("call_id") and entry.get("field"):
+                label = self._ref_source(str(entry["call_id"]), str(entry["field"]), None)[1]
+                found.setdefault(label, []).append(float(entry["value"]))
+        if figure is None:
+            return sorted(found)
+        recency = {item: index for index, item in enumerate(found)}
+        ranked = sorted(
+            found,
+            key=lambda item: (
+                not self._matches_evidence(figure, found[item], found[item]),
+                -recency[item],
+                item,
+            ),
+        )
+        return ranked[:_MAX_CALL_REF_CANDIDATES]
+
+    def _indexed_field_ref_candidates(
+        self, ref: str, figure: Figure
+    ) -> list[str]:
+        """Exact indexed leaf refs for an unresolved structured ref."""
+        found: dict[str, float] = {}
+        containers: set[str] = set()
+        for key in (part.strip() for part in re.split(r"[;,]", ref or "")):
+            if "::" not in key:
+                continue
+            scope, field = (part.strip() for part in key.split("::", 1))
+            if not scope or not field:
+                continue
+            wanted = _index_normalized(field)
+            bare = _INDEX_RE.sub("", wanted)
+            below = re.compile(r"(?:^|\.)" + re.escape(wanted) + r"(?=[.\[])")
+            for call_id, tool, path, value, record in (
+                *(
+                    (r.call_id, r.tool, r.field, r.value, r)
+                    for r in self._evidence
+                    if r.status == "observed"
+                ),
+                *(
+                    (e.get("call_id"), e.get("tool"), e.get("field"), e.get("value"), None)
+                    for e in self._analysis_metrics
+                ),
+            ):
+                if not (
+                    call_id
+                    and isinstance(path, str)
+                    and value is not None
+                    and scope in (call_id, tool)
+                ):
+                    continue
+                if record is not None and not self._kind_fits(record, figure):
+                    continue
+                item = f"{call_id}::{path}"
+                normalized_path = _index_normalized(path)
+                if below.search(normalized_path):
+                    containers.add(item)
+                    found[item] = float(value)
+                elif _INDEX_RE.search(path):
+                    stripped = _INDEX_RE.sub("", path)
+                    if stripped == bare or stripped.endswith("." + bare):
+                        found[item] = float(value)
+        matches = {
+            item: self._matches_evidence(figure, [value], [value])
+            for item, value in found.items()
         }
-        refs |= {
-            self._ref_source(str(entry.get("call_id")), str(entry.get("field")), None)[1]
-            for entry in entries
-            if entry.get("tool") == scope and entry.get("call_id") and entry.get("field")
-        }
-        return sorted(refs)
+        kept = [item for item in found if item not in containers or matches[item]]
+        ranked = sorted(kept, key=lambda item: (not matches[item], item))
+        cap = _MAX_CONTAINER_REF_CANDIDATES if containers else _MAX_INDEXED_REF_CANDIDATES
+        return ranked[:cap]
+
+    def _other_call_field_ref_candidates(
+        self, ref: str, symbol: str | None, figure: Figure
+    ) -> list[str]:
+        """Same-field refs from other calls of the same tool that match figure."""
+        found: dict[str, None] = {}
+        for key in (part.strip() for part in re.split(r"[;,]", ref or "")):
+            if "::" not in key:
+                continue
+            scope, field = (part.strip() for part in key.split("::", 1))
+            tools = {r.tool for r in self._evidence if r.call_id == scope}
+            tools |= {
+                str(e.get("tool"))
+                for e in self._analysis_metrics
+                if e.get("call_id") == scope and e.get("tool")
+            }
+            if not scope or not field or not tools:
+                continue
+            records, entries = self._field_sources(field, symbol)
+            for call_id, tool, path, value, record in (
+                *((r.call_id, r.tool, r.field, r.value, r) for r in records),
+                *((e.get("call_id"), e.get("tool"), e.get("field"), e.get("value"), None) for e in entries),
+            ):
+                if (
+                    call_id
+                    and call_id != scope
+                    and tool in tools
+                    and isinstance(path, str)
+                    and value is not None
+                    and (record is None or self._kind_fits(record, figure))
+                    and self._matches_evidence(figure, [float(value)], [float(value)])
+                ):
+                    found[f"{call_id}::{path}"] = None
+        return list(reversed(found))[:_MAX_CALL_REF_CANDIDATES]
+
+    @staticmethod
+    def _kind_fits(record: EvidenceRecord, figure: Figure) -> bool:
+        """Whether record is of a kind that figure can quote."""
+        if figure.column and record.field != figure.column:
+            return False
+        if figure.percent:
+            return (
+                not _is_price_kind(record)
+                and not _is_metadata_count_leaf(record.field)
+                and record.unit != "count"
+            )
+        if figure.currency:
+            return _is_price_kind(record)
+        return True
 
     def _unknown_call_field_ref_candidates(
         self, ref: str, symbol: str | None, figure: Figure
@@ -1572,7 +1706,7 @@ class _PolicyMixin:
                 and not metric_values
             ):
                 call_field_candidates = self._tool_field_ref_candidates(
-                    declaration.ref, symbol
+                    declaration.ref, symbol, figure
                 )
                 if call_field_candidates:
                     return [
@@ -1686,6 +1820,14 @@ class _PolicyMixin:
                     f"is declared observed from {declaration.ref}, whose results "
                     f"{'for ' + symbol + ' ' if symbol else ''}do not contain it",
                     source_tool_call_ids=[declaration.ref],
+                    field_ref_candidates=list(
+                        dict.fromkeys(
+                            [
+                                *self._indexed_field_ref_candidates(declaration.ref, figure),
+                                *self._other_call_field_ref_candidates(declaration.ref, symbol, figure),
+                            ]
+                        )
+                    ),
                     observed_nearest=self._nearest_prints(figure, scoped_records, values),
                 )
             ]
