@@ -201,6 +201,11 @@ Decide which workflow to use based on the request:
   use a bare tool name, a decorated tool
   name, or `tool_name(args)::field.path` as a field ref. A call id identifies
   one exact invocation; the full path identifies the scalar within its result.
+  Each element of a list is its own field: address it by index, for example
+  `call_id::data.positions[0].contribution_pct`; the dotted spelling
+  `positions.0.contribution_pct` is equivalent. A field name without the
+  index does not select an element, and a ref naming a list/object container
+  grounds nothing until it ends at the numeric leaf being quoted.
   If the value is actually calculated from other values, declare it as derived
   and show the real formula and exact source refs instead.
   Once this session holds more than one tail-risk measurement (a VaR and an ES,
