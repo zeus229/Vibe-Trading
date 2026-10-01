@@ -163,6 +163,50 @@ def test_aggregate_metric_remains_available_only_to_unscoped_claim(tmp_path: Pat
     _claim(scoped, "AAA.US Sharpe", 1.75, "call_1::aggregate.sharpe", valid=False)
 
 
+def test_symbol_in_user_message_does_not_scope_symbol_less_portfolio_total(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        {"total_value": 5000.0},
+        tool="portfolio_summary",
+        message="How is my portfolio vs AAA.US?",
+    )
+    record = next(record for record in ledger._evidence if record.field == "total_value")
+    assert record.symbol is None and record.identity_scope == "aggregate"
+    _claim(ledger, "Portfolio total", 5000.0, "call_1::total_value", valid=True)
+    _claim(ledger, "AAA.US total", 5000.0, "call_1::total_value", valid=False)
+
+
+def test_symbol_less_analysis_scalar_stays_unscoped_even_when_message_names_symbol(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        {"status": "ok", "sharpe": 1.25},
+        tool="factor_analysis",
+        message="Analyze AAA.US",
+    )
+    entry = next(entry for entry in ledger._analysis_metrics if entry["field"] == "sharpe")
+    assert entry.get("symbol") is None and entry["identity_scope"] == "aggregate"
+    _claim(ledger, "Overall Sharpe", 1.25, "call_1::sharpe", valid=True)
+    _claim(ledger, "AAA.US Sharpe", 1.25, "call_1::sharpe", valid=False)
+
+
+def test_unknown_identity_can_ground_only_an_unscoped_exact_claim(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        ANONYMOUS,
+        message="Summarize these observations",
+    )
+    records = [record for record in ledger._evidence if record.value is not None]
+    assert records and all(record.identity_scope == "unknown" for record in records)
+    _claim(ledger, "Second observation", 202.5, "call_1::data.items[1].value", valid=True)
+
+    scoped = _ledger(
+        tmp_path / "scoped",
+        ANONYMOUS,
+        message="Compare AAA.US and BBB.US observations",
+    )
+    _claim(scoped, "AAA.US", 202.5, "call_1::data.items[1].value", valid=False)
+
+
 def test_indexed_ref_boundaries_remain_strict(tmp_path: Path) -> None:
     ledger = _ledger(tmp_path, LISTED)
     _claim(ledger, "AAA.US", 202.5, "call_1::data.items[0].value", valid=False)
