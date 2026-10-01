@@ -22,6 +22,7 @@ from src.agent.grounding.identity import (
 )
 from src.agent.grounding.evidence import (
     EvidenceRecord,
+    _record_matches_entity,
     _is_metadata_count_leaf,
     _is_number,
     _is_price_kind,
@@ -969,7 +970,7 @@ class _PolicyMixin:
                     return None
         if symbol:
             records = [
-                record for record in records if not record.symbol or record.symbol == symbol
+                record for record in records if _record_matches_entity(record, symbol)
             ]
         if figure is not None and figure.column:
             # A table cell quotes its own column, not whatever else the call returned.
@@ -989,23 +990,26 @@ class _PolicyMixin:
         return records, metrics
 
     def _analysis_entries(self, symbol: str | None) -> list[dict[str, Any]]:
-        """Scope metrics by explicit observed symbols recorded on their call.
-
-        Symbol-less aggregate calls remain eligible. A multi-symbol call cannot
-        attribute its otherwise unlabelled metric to one particular instrument.
-        Symbol-labelled EvidenceRecords remain available through their own path.
-        """
-        if not symbol:
-            return list(self._analysis_metrics)
+        """Scope analysis metrics to their own item, retaining legacy aggregates."""
         call_symbols: dict[str, set[str]] = {}
         for record in self._evidence:
             if record.symbol and record.status == "observed":
                 call_symbols.setdefault(record.call_id, set()).add(record.symbol)
-        return [
-            entry for entry in self._analysis_metrics
-            if not call_symbols.get(entry.get("call_id"))
-            or call_symbols[entry.get("call_id")] == {symbol}
-        ]
+        selected = []
+        for entry in self._analysis_metrics:
+            scope = entry.get("identity_scope")
+            if scope in {"unknown", "conflict"}:
+                continue
+            if not symbol:
+                selected.append(entry)
+            elif scope == "entity":
+                if entry.get("symbol") == symbol:
+                    selected.append(entry)
+            elif scope == "aggregate":
+                continue
+            elif not call_symbols.get(entry.get("call_id")) or call_symbols[entry["call_id"]] == {symbol}:
+                selected.append(entry)
+        return selected
 
     def _field_sources(
         self, field: str, symbol: str | None
@@ -1028,7 +1032,7 @@ class _PolicyMixin:
             if named(record.field)
             and record.status == "observed"
             and record.value is not None
-            and (not symbol or not record.symbol or record.symbol == symbol)
+            and _record_matches_entity(record, symbol)
         ]
         entries = [
             entry
@@ -1473,7 +1477,7 @@ class _PolicyMixin:
             if record.status == "observed"
             and record.value is not None
             and _metric_kind_for_path(record.field) is not None
-            and (not symbol or not record.symbol or record.symbol == symbol)
+            and _record_matches_entity(record, symbol)
         )
         return values
 
@@ -1705,7 +1709,7 @@ class _PolicyMixin:
         session_records = [
             record
             for record in self._evidence
-            if not symbol or not record.symbol or record.symbol == symbol
+            if _record_matches_entity(record, symbol)
         ]
         tail_risk = self._tail_risk_ref_required(
             figure, session_records, self._analysis_entries(symbol)
@@ -1834,8 +1838,6 @@ class _PolicyMixin:
         # A formula's constants are parsed unsigned ("−0.2099 − (−0.2158)"
         # holds 0.2099 and 0.2158), so an operand is matched by magnitude, as
         # a figure is: without it no drawdown or loss could ever anchor.
-        magnitudes = [abs(anchor) for anchor in anchors]
-
         def observed(operand: float) -> bool:
             return _close_any(operand, anchors)
 
@@ -2118,18 +2120,28 @@ class _PolicyMixin:
                 )
         return issues
 
-    @staticmethod
     def _symbol_for_claim(
+        self,
         content: str,
         records: Sequence[EvidenceRecord],
     ) -> str | None:
-        """Return one canonical evidence symbol explicitly named in a claim."""
-        known = {record.symbol for record in records if record.symbol}
+        """Return one canonical symbol named in a claim or this session."""
+        known = {record.symbol for record in records if record.symbol} | self._session_symbols
         matches = {
             _normalize_symbol(match.group(0))
             for match in _CANONICAL_SYMBOL_RE.finditer(content)
             if _normalize_symbol(match.group(0)) in known
         }
+        # Explicit entity_id values need not use a market-symbol spelling.
+        # Match only identities already carried by evidence/session, and never
+        # let a bare identifier match the prefix of a venue-qualified one.
+        for identity in known:
+            if identity and not _CANONICAL_SYMBOL_RE.fullmatch(identity) and re.search(
+                r"(?<![A-Za-z0-9_])" + re.escape(identity) + r"(?![A-Za-z0-9_.\/-])",
+                content,
+                re.IGNORECASE,
+            ):
+                matches.add(identity)
         return next(iter(matches)) if len(matches) == 1 else None
 
     def _validate_price_provenance(

@@ -96,9 +96,15 @@ def test_multisymbol_call_does_not_attribute_unlabelled_analysis_to_one_symbol(t
     from dataclasses import replace
 
     ledger = _two_symbol_metrics(tmp_path)
-    # A mixed call has two explicit record identities but no per-metric identity.
+    # A legacy mixed call with no per-metric identity remains unavailable.
     ledger._evidence.append(replace(ledger._evidence[-1], call_id="a"))
+    for entry in ledger._analysis_metrics:
+        if entry["call_id"] == "a":
+            entry.pop("symbol", None)
+            entry.pop("identity_scope", None)
     assert not any(entry["call_id"] == "a" for entry in ledger._analysis_entries("AAPL.US"))
-    # A truly symbol-less aggregate remains available.
-    ledger._analysis_metrics.append({"call_id": "aggregate", "field": "var_95", "value": 0.055})
-    assert any(entry["call_id"] == "aggregate" for entry in ledger._analysis_entries("AAPL.US"))
+    # A truly symbol-less aggregate remains available without being attributed
+    # to an individual symbol.
+    ledger._analysis_metrics.append({"call_id": "aggregate", "field": "var_95", "value": 0.055, "identity_scope": "aggregate"})
+    assert any(entry["call_id"] == "aggregate" for entry in ledger._analysis_entries(None))
+    assert not any(entry["call_id"] == "aggregate" for entry in ledger._analysis_entries("AAPL.US"))

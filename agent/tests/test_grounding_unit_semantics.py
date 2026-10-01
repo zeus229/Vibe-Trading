@@ -39,8 +39,8 @@ def _ledger(tmp_path: Path, tool: str, payload: dict[str, Any], args: dict[str, 
     return ledger
 
 
-def _issues(ledger: GroundingLedger, prose: str, value: str, ref: str, role: str = "observed") -> list[tuple[str, str]]:
-    text = f"AAA.US {prose}\n\n```figures\n{value} | {role} | AAA.US {prose} | {ref}\n```"
+def _issues(ledger: GroundingLedger, prose: str, value: str, ref: str, role: str = "observed", subject: str = "AAA.US") -> list[tuple[str, str]]:
+    text = f"{subject} {prose}\n\n```figures\n{value} | {role} | {subject} {prose} | {ref}\n```"
     return [(str(i.get("value")), str(i.get("reason"))) for i in ledger.revalidate(text).issues]
 
 
@@ -172,7 +172,7 @@ HOLDINGS = {
         "holdings_native": {
             "ARS": [
                 {
-                    "symbol": "YPFD",
+                    "symbol": "AAA.US",
                     "market_value_native": 44930050.0,
                     "native_currency": "ARS",
                     "weight": 0.20704092,
@@ -218,7 +218,7 @@ def test_monetary_leaf_under_a_currency_path_still_grounds_money(holdings) -> No
         )
         == []
     )
-    assert _issues(holdings, "portfolio is 217,010,480.5 ARS.", "217010480.5", "portfolio_summary") == []
+    assert _issues(holdings, "portfolio is 217,010,480.5 ARS.", "217010480.5", "portfolio_summary", subject="") == []
 
 
 # --- an explicit per-leaf unit is decisive ----------------------------------
@@ -279,7 +279,7 @@ def test_symbol_keyed_weights_stay_ratios_inside_a_currency_scope(tmp_path: Path
     payload = {
         "status": "ok",
         "currency": "ARS",
-        "risk": {"weights": {"YPFD": 0.21387334, "NOV.PERF.A": 0.03799221}},
+        "risk": {"weights": {"AAA.US": 0.21387334, "BBB.US": 0.03799221}},
     }
     ledger = _ledger(tmp_path, "portfolio_summary", payload, {})
 
