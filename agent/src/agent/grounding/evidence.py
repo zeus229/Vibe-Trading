@@ -894,12 +894,12 @@ def _list_entity_context(items: list[Any], parent: _EntityContext) -> _EntityCon
 
 
 def _record_matches_entity(record: EvidenceRecord, symbol: str | None) -> bool:
-    """Unknown or contradictory generic leaves never authorize a claim."""
-    if record.identity_scope in {"unknown", "conflict"}:
+    """Match entity-scoped claims without blocking legitimate unscoped evidence."""
+    if record.identity_scope == "conflict":
         return False
     if symbol is None:
         return True
-    if record.identity_scope == "aggregate":
+    if record.identity_scope in {"unknown", "aggregate"}:
         return False
     if record.identity_scope == "entity":
         return record.symbol == symbol
@@ -953,10 +953,15 @@ class _EvidenceMixin:
             for record in self._evidence
             if record.status == "observed" and record.symbol and record.identity_scope != "conflict"
         }
-        if len(observed) == 1 and self._session_symbols <= observed:
-            return _EntityContext(next(iter(observed)), "entity", "observed"), symbols
-        if self._session_symbols:
+        if len(observed) == 1:
+            if self._session_symbols <= observed:
+                return _EntityContext(next(iter(observed)), "entity", "observed"), symbols
             return _EntityContext(None, "unknown"), symbols
+        if len(observed) > 1:
+            return _EntityContext(None, "unknown"), symbols
+        # A symbol mentioned in the user's prose is not evidence that a
+        # symbol-less tool result belongs to that entity. With no observed or
+        # argument identity, keep the result unscoped/aggregate.
         return _EntityContext(None, "aggregate"), symbols
 
     def _ingest_analysis_result(
