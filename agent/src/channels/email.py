@@ -314,8 +314,8 @@ class EmailChannel(BaseChannel):
             fallback = "\n".join(failed_attachments)
             content = f"{content.rstrip()}\n\n{fallback}" if content.strip() else fallback
 
-        # A scheduled delivery may choose its presentation without changing the
-        # channel-wide default used by replies and other proactive messages.
+        # A caller may override presentation for this message without changing
+        # the channel-wide default.
         metadata_format = (msg.metadata or {}).get("delivery_format")
         outbound_format = (
             metadata_format
@@ -329,11 +329,9 @@ class EmailChannel(BaseChannel):
         email_msg["Subject"] = subject
 
         if outbound_format == "pdf":
-            # The report itself lives only in the attachment. Keep both the
-            # text and HTML body deliberately free of report contents so a
-            # future encrypted-PDF layer can protect the attachment without
-            # leaking the same values in the message body.
-            attachment_body = "The requested report is attached as a PDF."
+            # Keep the full report in the attachment; the message body is only
+            # a short delivery notice.
+            attachment_body = "Report attached as PDF."
             email_msg.set_content(attachment_body)
             email_msg.add_alternative(render_email_html(attachment_body), subtype="html")
             try:
@@ -351,8 +349,7 @@ class EmailChannel(BaseChannel):
                     filename=pdf_name,
                 )
             except Exception:
-                # PDF-only delivery must fail closed: silently putting the
-                # report into the email body would defeat the selected mode.
+                # Do not silently fall back to putting the report in the body.
                 self.logger.exception("Failed to render required PDF attachment")
                 raise
         else:
@@ -361,9 +358,7 @@ class EmailChannel(BaseChannel):
                 rich_html = render_email_html(content)
                 email_msg.add_alternative(rich_html, subtype="html")
 
-                # Legacy channel-wide html+pdf remains supported for backwards
-                # compatibility. Scheduled Research uses the explicit "pdf"
-                # mode above, whose body is intentionally brief.
+                # Preserve the existing channel-wide html+pdf mode.
                 if outbound_format == "html+pdf":
                     try:
                         from weasyprint import HTML
