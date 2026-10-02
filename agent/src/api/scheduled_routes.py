@@ -694,20 +694,20 @@ def register_scheduled_routes(
                 status_code=422, detail="the next scheduled run occurs after end_at"
             )
 
-        delivery_fields = {
+        destination_fields = {
             "delivery_channel",
             "delivery_target",
             "delivery_target_ref",
-            "delivery_format",
         }
-        delivery_requested = bool(delivery_fields & fields)
+        destination_requested = bool(destination_fields & fields)
+        delivery_requested = destination_requested or "delivery_format" in fields
         delivery_channel = job.delivery_channel
         delivery_target = job.delivery_target
         delivery_target_ref = job.delivery_target_ref
         delivery_target_label = job.delivery_target_label
         delivery_format = job.delivery_format
 
-        if delivery_requested:
+        if destination_requested:
             if request.delivery_target_ref:
                 from src.channels.targets import resolve_delivery_target
 
@@ -742,15 +742,17 @@ def register_scheduled_routes(
                         detail="delivery_target is required when delivery_channel is set",
                     )
 
-            if "delivery_format" in fields:
-                delivery_format = request.delivery_format
-            if delivery_channel != "email":
-                if delivery_format is not None:
-                    raise HTTPException(
-                        status_code=422,
-                        detail="delivery_format is supported only for the email channel",
-                    )
-                delivery_format = None
+        if "delivery_format" in fields:
+            delivery_format = request.delivery_format
+        if delivery_channel != "email":
+            if "delivery_format" in fields and delivery_format is not None:
+                raise HTTPException(
+                    status_code=422,
+                    detail="delivery_format is supported only for the email channel",
+                )
+            # A channel change away from email makes the email-only
+            # presentation irrelevant; clear it automatically.
+            delivery_format = None
 
         delivery_changed = delivery_requested and (
             delivery_channel != job.delivery_channel
