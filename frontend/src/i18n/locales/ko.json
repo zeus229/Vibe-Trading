@@ -599,6 +599,10 @@
             "label": "SMTP 비밀번호",
             "help": "SMTP용 비밀번호 또는 앱 비밀번호입니다. 서버 측에만 저장되며 브라우저로 반환되지 않습니다."
           },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
+          },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",
             "help": "STARTTLS로 SMTP 연결을 암호화합니다(기본 켜짐, 포트 587의 표준). 실제로는 SMTP SSL과 함께 사용하지 않습니다."
