@@ -604,6 +604,10 @@
             "label": "Senha SMTP",
             "help": "Senha ou senha de aplicativo para SMTP. Fica armazenada no servidor e nunca é devolvida ao navegador."
           },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
+          },
           "smtp_use_tls": {
             "label": "STARTTLS do SMTP",
             "help": "Criptografar a conexão SMTP com STARTTLS (ativado por padrão; o usual na porta 587). Na prática, é exclusivo com o SSL do SMTP."
