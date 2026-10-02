@@ -599,6 +599,10 @@
             "label": "كلمة مرور SMTP",
             "help": "كلمة مرور SMTP أو كلمة مرور التطبيق. تُحفظ على الخادم فقط ولا تُعاد إلى المتصفح أبدًا."
           },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
+          },
           "smtp_use_tls": {
             "label": "STARTTLS لـ SMTP",
             "help": "ترقية اتصال SMTP عبر STARTTLS (مفعّل افتراضيًا، وهو المعتاد للمنفذ 587). لا يُستخدم عمليًا مع SMTP SSL في الوقت نفسه."
