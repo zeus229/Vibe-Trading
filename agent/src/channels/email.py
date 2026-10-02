@@ -28,6 +28,7 @@ from src.channels.base import BaseChannel
 from src.channels.utils import get_media_dir
 from pydantic import BaseModel
 from src.channels.utils import email_tls_context, safe_filename, send_imap_id
+from src.channels.rich_text import render_email_html
 
 
 class EmailConfig(BaseModel):
@@ -76,6 +77,10 @@ class EmailConfig(BaseModel):
     allowed_attachment_types: list[str] = Field(default_factory=list)
     max_attachment_size: int = 2_000_000  # 2MB per attachment
     max_attachments_per_email: int = 5
+
+    # Outbound presentation. Plain preserves the historical behavior.
+    outbound_format: Literal["plain", "html", "html+pdf"] = "plain"
+    pdf_filename: str = "vibe-trading-report.pdf"
 
 
 @dataclass
@@ -314,6 +319,28 @@ class EmailChannel(BaseChannel):
         email_msg["To"] = to_addr
         email_msg["Subject"] = subject
         email_msg.set_content(content)
+
+        if self.config.outbound_format in {"html", "html+pdf"}:
+            rich_html = render_email_html(content)
+            email_msg.add_alternative(rich_html, subtype="html")
+
+            if self.config.outbound_format == "html+pdf":
+                try:
+                    from weasyprint import HTML
+
+                    pdf_data = HTML(string=rich_html).write_pdf()
+                    pdf_name = safe_filename(self.config.pdf_filename.strip()) or "vibe-trading-report.pdf"
+                    if not pdf_name.lower().endswith(".pdf"):
+                        pdf_name += ".pdf"
+                    email_msg.add_attachment(
+                        pdf_data,
+                        maintype="application",
+                        subtype="pdf",
+                        filename=pdf_name,
+                    )
+                except Exception:
+                    # Rich HTML remains available; never replace the plain fallback.
+                    self.logger.exception("Failed to render optional PDF attachment")
 
         for data, maintype, subtype, filename in attachments:
             email_msg.add_attachment(
