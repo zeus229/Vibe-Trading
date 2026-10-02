@@ -200,6 +200,7 @@
     "deliveryFormatDefaultHint": "Keeps the email channel's existing default for backward compatibility.",
     "deliveryFormatHtmlHint": "The full report is rendered in the email body.",
     "deliveryFormatPdfHint": "The email body stays brief; the full report is attached as a PDF.",
+    "deliveryProtectPdf": "Protect PDF with password",
     "deliveryChannelPlaceholder": "Choose a configured channel",
     "deliveryInApp": "Keep in Vibe only (do not send)",
     "deliveryNoChannels": "No enabled delivery channels are configured. Configure one in Settings → Channels.",
