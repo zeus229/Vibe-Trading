@@ -290,6 +290,7 @@ _EMAIL_HINT_KEYS = (
     "smtp_port",
     "smtp_username",
     "smtp_password",
+    "pdf_password",
     "smtp_use_tls",
     "smtp_use_ssl",
     "verify_tls",
@@ -337,15 +338,17 @@ def test_email_field_hints_contract() -> None:
     keys = tuple(hint["key"] for hint in hints)
     assert keys == _EMAIL_HINT_KEYS
     assert "enabled" not in keys
-    assert len(hints) == 31
+    assert len(hints) == 32
 
     by_key = {hint["key"]: hint for hint in hints}
     assert {key for key, hint in by_key.items() if hint["secret"]} == {
         "imap_password",
         "smtp_password",
+        "pdf_password",
     }
     assert by_key["imap_password"]["type"] == "password"
     assert by_key["smtp_password"]["type"] == "password"
+    assert by_key["pdf_password"]["type"] == "password"
     # required mirrors EmailChannel._validate_config: the channel refuses to
     # start without all six credential fields.
     assert {key for key, hint in by_key.items() if hint["required"]} == {
@@ -433,10 +436,16 @@ def test_websocket_token_shaped_non_secrets_land_in_values() -> None:
 def test_email_and_dingtalk_masking_unchanged() -> None:
     values, secrets = split_values_secrets(
         "email",
-        {"imap_host": "h", "imap_password": "a", "smtp_password": "b"},
+        {
+            "imap_host": "h",
+            "imap_password": "a",
+            "smtp_password": "b",
+            "pdf_password": "TEST-PDF-PASSWORD-DO-NOT-USE",
+        },
     )
     assert values == {"imap_host": "h"}
-    assert set(secrets) == {"imap_password", "smtp_password"}
+    assert set(secrets) == {"imap_password", "smtp_password", "pdf_password"}
+    assert secrets["pdf_password"] == {"set": True, "masked": "****"}
 
     values, secrets = split_values_secrets(
         "dingtalk", {"client_secret": "dummy-secret-1234"}

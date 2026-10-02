@@ -211,6 +211,8 @@
     "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
     "deliveryFormatHtmlHint": "Sends the full report in the email body.",
     "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection.",
     "delivery_none": "다음 실행이 끝나면 {{channel}}(으)로 전달합니다",
     "delivery_pending": "{{channel}}(으)로 전달 대기 중",
     "delivery_sending": "{{channel}}(으)로 전달하는 중",
@@ -596,6 +598,10 @@
           "smtp_password": {
             "label": "SMTP 비밀번호",
             "help": "SMTP용 비밀번호 또는 앱 비밀번호입니다. 서버 측에만 저장되며 브라우저로 반환되지 않습니다."
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",

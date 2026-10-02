@@ -229,7 +229,9 @@
     "deliveryFormatPdf": "PDF attachment",
     "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
     "deliveryFormatHtmlHint": "Sends the full report in the email body.",
-    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF."
+    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
   },
   "reports": {
     "badge": "Berichte",
@@ -601,6 +603,10 @@
           "smtp_password": {
             "label": "SMTP-Passwort",
             "help": "Passwort oder App-Passwort für SMTP. Wird serverseitig gespeichert und nie an den Browser zurückgegeben."
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           },
           "smtp_use_tls": {
             "label": "SMTP-STARTTLS",

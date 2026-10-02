@@ -113,6 +113,7 @@ export function Scheduled() {
   const [deliveryTarget, setDeliveryTarget] = useState("");
   const [deliveryTargetRef, setDeliveryTargetRef] = useState<string | null>(null);
   const [deliveryFormat, setDeliveryFormat] = useState<EmailDeliveryFormat>("");
+  const [protectPdf, setProtectPdf] = useState(false);
   const [saving, setSaving] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -201,6 +202,7 @@ export function Scheduled() {
     setDeliveryTarget("");
     setDeliveryTargetRef(null);
     setDeliveryFormat("");
+    setProtectPdf(false);
     setComposerError(null);
   }
 
@@ -214,6 +216,7 @@ export function Scheduled() {
     setDeliveryTarget(run.delivery_target ?? "");
     setDeliveryTargetRef(run.delivery_target_ref);
     setDeliveryFormat(run.delivery_format ?? "");
+    setProtectPdf(run.protect_pdf ?? false);
     setComposerError(null);
 
     if (cadence.kind === "daily") {
@@ -261,6 +264,7 @@ export function Scheduled() {
         delivery_target: channel ? target : null,
         delivery_target_ref: channel ? deliveryTargetRef : null,
         delivery_format: channel === "email" ? deliveryFormat || null : null,
+        protect_pdf: channel === "email" && deliveryFormat === "pdf" ? protectPdf : false,
       };
       if (editingId) {
         await api.updateScheduledRun(editingId, payload);
@@ -373,6 +377,7 @@ export function Scheduled() {
     .sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   const selectedChannel = deliveryChannel ? channelStatus[deliveryChannel] : undefined;
+  const emailPdfPasswordConfigured = channelStatus.email?.pdf_password_configured === true;
   const selectedChannelIsAvailable = configuredDeliveryChannels.some(
     (channel) => channel.name === deliveryChannel,
   );
@@ -524,7 +529,10 @@ export function Scheduled() {
                   setDeliveryTarget("");
                   setDeliveryTargetRef(null);
                 }
-                if (nextChannel !== "email") setDeliveryFormat("");
+                if (nextChannel !== "email") {
+                  setDeliveryFormat("");
+                  setProtectPdf(false);
+                }
                 setDeliveryChannel(nextChannel);
               }}
               className={fieldClass}
@@ -609,7 +617,11 @@ export function Scheduled() {
               <select
                 id="scheduled-delivery-format"
                 value={deliveryFormat}
-                onChange={(e) => setDeliveryFormat(e.target.value as EmailDeliveryFormat)}
+                onChange={(e) => {
+                  const value = e.target.value as EmailDeliveryFormat;
+                  setDeliveryFormat(value);
+                  if (value !== "pdf") setProtectPdf(false);
+                }}
                 className={fieldClass}
               >
                 <option value="">{t("scheduled.deliveryFormatDefault")}</option>
@@ -623,6 +635,22 @@ export function Scheduled() {
                     ? t("scheduled.deliveryFormatHtmlHint")
                     : t("scheduled.deliveryFormatDefaultHint")}
               </p>
+              {deliveryFormat === "pdf" && (
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={protectPdf}
+                    disabled={!emailPdfPasswordConfigured && !protectPdf}
+                    onChange={(e) => setProtectPdf(e.target.checked)}
+                  />
+                  <span>{t("scheduled.deliveryProtectPdf")}</span>
+                </label>
+              )}
+              {deliveryFormat === "pdf" && !emailPdfPasswordConfigured && (
+                <p className={hintClass}>
+                  {t("scheduled.deliveryProtectPdfUnavailable")}
+                </p>
+              )}
             </div>
           )}
         </div>

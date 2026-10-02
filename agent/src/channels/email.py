@@ -1,6 +1,7 @@
 """Email channel implementation using IMAP polling + SMTP replies."""
 
 import asyncio
+from io import BytesIO
 import html
 import imaplib
 import mimetypes
@@ -81,6 +82,9 @@ class EmailConfig(BaseModel):
     # Outbound presentation. Plain preserves the historical behavior.
     outbound_format: Literal["plain", "html", "html+pdf"] = "plain"
     pdf_filename: str = "vibe-trading-report.pdf"
+    # Optional operator-managed secret used only when a message explicitly
+    # requests PDF protection. Never persist this value in scheduled jobs.
+    pdf_password: str = ""
 
 
 @dataclass
@@ -236,6 +240,11 @@ class EmailChannel(BaseChannel):
         """
         return await email_probe.test_connection(self.config)
 
+    @property
+    def pdf_password_configured(self) -> bool:
+        """Return whether an operator-managed PDF password is configured."""
+        return bool(self.config.pdf_password)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send email via SMTP."""
         if not self.config.consent_granted:
@@ -328,6 +337,10 @@ class EmailChannel(BaseChannel):
         email_msg["To"] = to_addr
         email_msg["Subject"] = subject
 
+        protect_pdf = bool((msg.metadata or {}).get("protect_pdf"))
+        if protect_pdf and outbound_format != "pdf":
+            raise ValueError("PDF protection requires PDF delivery")
+
         if outbound_format == "pdf":
             # Keep the full report in the attachment; the message body is only
             # a short delivery notice.
@@ -339,6 +352,8 @@ class EmailChannel(BaseChannel):
 
                 report_html = render_email_html(content)
                 pdf_data = HTML(string=report_html).write_pdf()
+                if protect_pdf:
+                    pdf_data = self._encrypt_pdf(pdf_data)
                 pdf_name = safe_filename(self.config.pdf_filename.strip()) or "vibe-trading-report.pdf"
                 if not pdf_name.lower().endswith(".pdf"):
                     pdf_name += ".pdf"
@@ -395,6 +410,22 @@ class EmailChannel(BaseChannel):
         except Exception:
             self.logger.exception("Error sending to %s", to_addr)
             raise
+
+    def _encrypt_pdf(self, pdf_data: bytes) -> bytes:
+        """Encrypt a generated report PDF with the operator-managed password."""
+        password = self.config.pdf_password
+        if not password:
+            raise RuntimeError("PDF protection requested but no PDF password is configured")
+
+        from pypdf import PdfReader, PdfWriter
+
+        reader = PdfReader(BytesIO(pdf_data))
+        writer = PdfWriter()
+        writer.append_pages_from_reader(reader)
+        writer.encrypt(user_password=password, algorithm="AES-256")
+        output = BytesIO()
+        writer.write(output)
+        return output.getvalue()
 
     def _validate_config(self) -> bool:
         missing = []

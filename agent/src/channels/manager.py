@@ -571,20 +571,29 @@ class ChannelManager:
     def get_status(self) -> dict[str, Any]:
         """Get status of all channels."""
         status = {name: dict(item) for name, item in self._status.items()}
+        email_section = self._get_channel_config("email")
+        if isinstance(email_section, dict):
+            status.setdefault("email", {})
+            status["email"]["pdf_password_configured"] = bool(
+                email_section.get("pdf_password")
+            )
         for name, channel in self.channels.items():
             status.setdefault(name, {})
             target_suggestions = getattr(channel, "delivery_target_suggestions", None)
-            status[name].update(
-                {
-                    "enabled": True,
-                    "loaded": True,
-                    "running": channel.is_running,
-                    "display_name": getattr(channel, "display_name", name),
-                    "delivery_target_suggestions": (
-                        target_suggestions() if callable(target_suggestions) else []
-                    ),
-                }
-            )
+            channel_status = {
+                "enabled": True,
+                "loaded": True,
+                "running": channel.is_running,
+                "display_name": getattr(channel, "display_name", name),
+                "delivery_target_suggestions": (
+                    target_suggestions() if callable(target_suggestions) else []
+                ),
+            }
+            if hasattr(channel, "pdf_password_configured"):
+                channel_status["pdf_password_configured"] = bool(
+                    channel.pdf_password_configured
+                )
+            status[name].update(channel_status)
         return status
 
     @property
