@@ -54,9 +54,7 @@ DispatchCallback = Callable[[ScheduledResearchJob], Awaitable[Optional[str]]]
 #: session_id -> (terminal status, briefing text), or None while in flight.
 BriefingReader = Callable[[str], Optional[tuple[str, str]]]
 #: (channel, target, text) -> delivered.
-ChannelSender = Callable[
-    [str, Optional[str], str, Optional[str]], Awaitable[DeliveryReceipt | None]
-]
+ChannelSender = Callable[..., Awaitable[DeliveryReceipt | None]]
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
 # Search by day, not by minute, so an impossible date (e.g. Feb 31) fails fast
