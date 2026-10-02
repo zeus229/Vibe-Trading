@@ -240,6 +240,7 @@ class CreateScheduledRunRequest(BaseModel):
         None,
         description="Email presentation: full HTML body or brief body with PDF attachment.",
     )
+    protect_pdf: bool = Field(False, description="Password-protect a generated email PDF.")
     end_at: Optional[int] = Field(
         None, description="Epoch-ms boundary after which no further run is dispatched"
     )
@@ -278,6 +279,7 @@ class UpdateScheduledRunRequest(BaseModel):
     delivery_format: Optional[Literal["html", "pdf"]] = Field(
         None, description="Replacement email presentation; null uses the channel default"
     )
+    protect_pdf: Optional[bool] = Field(None, description="Replacement PDF protection choice")
     end_at: Optional[int] = Field(
         None, description="Replacement epoch-ms end boundary; null removes it"
     )
@@ -369,6 +371,7 @@ class ScheduledRunResponse(BaseModel):
     delivery_target_ref: Optional[str] = None
     delivery_target_label: Optional[str] = None
     delivery_format: Optional[str] = None
+    protect_pdf: bool = False
     delivery_status: str = "none"
     delivery_error: Optional[str] = None
     delivery_updated_at: Optional[int] = None
@@ -530,6 +533,9 @@ def register_scheduled_routes(
                 detail="delivery_format is supported only for the email channel",
             )
 
+        if request.protect_pdf and request.delivery_format != "pdf":
+            raise HTTPException(status_code=422, detail="protect_pdf requires PDF email delivery")
+
         job = ScheduledResearchJob(
             id=request.id or str(uuid.uuid4()),
             title=request.title or "",
@@ -546,6 +552,7 @@ def register_scheduled_routes(
             delivery_target_ref=request.delivery_target_ref,
             delivery_target_label=delivery_target_label,
             delivery_format=request.delivery_format,
+            protect_pdf=request.protect_pdf,
         )
         _get_scheduled_research_store().upsert(job)
         return _job_to_response(job)
@@ -700,12 +707,13 @@ def register_scheduled_routes(
             "delivery_target_ref",
         }
         destination_requested = bool(destination_fields & fields)
-        delivery_requested = destination_requested or "delivery_format" in fields
+        delivery_requested = destination_requested or bool({"delivery_format", "protect_pdf"} & fields)
         delivery_channel = job.delivery_channel
         delivery_target = job.delivery_target
         delivery_target_ref = job.delivery_target_ref
         delivery_target_label = job.delivery_target_label
         delivery_format = job.delivery_format
+        protect_pdf = job.protect_pdf
 
         if destination_requested:
             if request.delivery_target_ref:
@@ -744,6 +752,8 @@ def register_scheduled_routes(
 
         if "delivery_format" in fields:
             delivery_format = request.delivery_format
+        if "protect_pdf" in fields:
+            protect_pdf = bool(request.protect_pdf)
         if delivery_channel != "email":
             if "delivery_format" in fields and delivery_format is not None:
                 raise HTTPException(
@@ -753,6 +763,9 @@ def register_scheduled_routes(
             # A channel change away from email makes the email-only
             # presentation irrelevant; clear it automatically.
             delivery_format = None
+            protect_pdf = False
+        if protect_pdf and delivery_format != "pdf":
+            raise HTTPException(status_code=422, detail="protect_pdf requires PDF email delivery")
 
         delivery_changed = delivery_requested and (
             delivery_channel != job.delivery_channel
@@ -760,6 +773,7 @@ def register_scheduled_routes(
             or delivery_target_ref != job.delivery_target_ref
             or delivery_target_label != job.delivery_target_label
             or delivery_format != job.delivery_format
+            or protect_pdf != job.protect_pdf
         )
 
         job.prompt = prompt
@@ -775,6 +789,7 @@ def register_scheduled_routes(
             job.delivery_target_ref = delivery_target_ref
             job.delivery_target_label = delivery_target_label
             job.delivery_format = delivery_format
+            job.protect_pdf = protect_pdf
             # The previous outbox receipt describes the old destination. Clear
             # it rather than presenting that receipt as if it belonged to the
             # newly-authored delivery configuration.
