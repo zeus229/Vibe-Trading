@@ -19,6 +19,7 @@ const POLL_MS = 15_000;
 
 type DaysChoice = "every" | "weekdays";
 type ComposerMode = "time" | "advanced";
+type EmailDeliveryFormat = "" | "html" | "pdf";
 
 function isWeekdayCadence(weekdays: number[]): boolean {
   return (
@@ -111,6 +112,7 @@ export function Scheduled() {
   const [deliveryChannel, setDeliveryChannel] = useState("");
   const [deliveryTarget, setDeliveryTarget] = useState("");
   const [deliveryTargetRef, setDeliveryTargetRef] = useState<string | null>(null);
+  const [deliveryFormat, setDeliveryFormat] = useState<EmailDeliveryFormat>("");
   const [saving, setSaving] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -198,6 +200,7 @@ export function Scheduled() {
     setDeliveryChannel("");
     setDeliveryTarget("");
     setDeliveryTargetRef(null);
+    setDeliveryFormat("");
     setComposerError(null);
   }
 
@@ -210,6 +213,7 @@ export function Scheduled() {
     setDeliveryChannel(run.delivery_channel ?? "");
     setDeliveryTarget(run.delivery_target ?? "");
     setDeliveryTargetRef(run.delivery_target_ref);
+    setDeliveryFormat(run.delivery_format ?? "");
     setComposerError(null);
 
     if (cadence.kind === "daily") {
@@ -256,6 +260,7 @@ export function Scheduled() {
         delivery_channel: channel || null,
         delivery_target: channel ? target : null,
         delivery_target_ref: channel ? deliveryTargetRef : null,
+        delivery_format: channel === "email" ? deliveryFormat || null : null,
       };
       if (editingId) {
         await api.updateScheduledRun(editingId, payload);
@@ -519,6 +524,7 @@ export function Scheduled() {
                   setDeliveryTarget("");
                   setDeliveryTargetRef(null);
                 }
+                if (nextChannel !== "email") setDeliveryFormat("");
                 setDeliveryChannel(nextChannel);
               }}
               className={fieldClass}
@@ -595,6 +601,30 @@ export function Scheduled() {
               </select>
             )}
           </div>
+          {deliveryChannel === "email" && (
+            <div className="space-y-1.5">
+              <label htmlFor="scheduled-delivery-format" className={labelClass}>
+                {t("scheduled.deliveryFormatLabel")}
+              </label>
+              <select
+                id="scheduled-delivery-format"
+                value={deliveryFormat}
+                onChange={(e) => setDeliveryFormat(e.target.value as EmailDeliveryFormat)}
+                className={fieldClass}
+              >
+                <option value="">{t("scheduled.deliveryFormatDefault")}</option>
+                <option value="html">{t("scheduled.deliveryFormatHtml")}</option>
+                <option value="pdf">{t("scheduled.deliveryFormatPdf")}</option>
+              </select>
+              <p className={hintClass}>
+                {deliveryFormat === "pdf"
+                  ? t("scheduled.deliveryFormatPdfHint")
+                  : deliveryFormat === "html"
+                    ? t("scheduled.deliveryFormatHtmlHint")
+                    : t("scheduled.deliveryFormatDefaultHint")}
+              </p>
+            </div>
+          )}
         </div>
 
         {composerError && (
