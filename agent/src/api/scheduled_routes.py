@@ -786,6 +786,11 @@ def register_scheduled_routes(
                     status_code=422,
                     detail="delivery_format is supported only for the email channel",
                 )
+            if "protect_pdf" in fields and request.protect_pdf:
+                raise HTTPException(
+                    status_code=422,
+                    detail="protect_pdf is supported only for PDF email delivery",
+                )
             # A channel change away from email makes the email-only
             # presentation irrelevant; clear it automatically.
             delivery_format = None
