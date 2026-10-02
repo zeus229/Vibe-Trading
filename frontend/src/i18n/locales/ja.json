@@ -599,6 +599,10 @@
             "label": "SMTP パスワード",
             "help": "SMTP 用のパスワードまたはアプリパスワード。サーバー側にのみ保存され、ブラウザーには返されません。"
           },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
+          },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",
             "help": "STARTTLS で SMTP 接続を暗号化します（既定オン。ポート 587 の標準）。実際には SMTP SSL と併用しません。"
