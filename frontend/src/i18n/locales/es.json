@@ -201,6 +201,7 @@
     "deliveryFormatHtmlHint": "El informe completo se muestra en el cuerpo del email.",
     "deliveryFormatPdfHint": "El cuerpo del email es breve; el informe completo va adjunto como PDF.",
     "deliveryProtectPdf": "Proteger el PDF con contraseña",
+    "deliveryProtectPdfUnavailable": "No hay una contraseña PDF configurada. Configurala en Configuración > Canales > Email para habilitar la protección.",
     "deliveryChannelPlaceholder": "Elige un canal configurado",
     "deliveryInApp": "Solo en Vibe (no enviar)",
     "deliveryNoChannels": "No hay canales de entrega habilitados configurados. Configura uno en Configuración → Canales.",
@@ -602,6 +603,10 @@
           "smtp_password": {
             "label": "Contraseña SMTP",
             "help": "Contraseña o contraseña de aplicación para SMTP. Se guarda en el servidor y nunca se devuelve al navegador."
+          },
+          "pdf_password": {
+            "label": "Contraseña de informes PDF",
+            "help": "Contraseña opcional para los informes PDF programados que soliciten protección. Se guarda en el servidor y nunca se incluye en los trabajos programados ni se devuelve al navegador."
           },
           "smtp_use_tls": {
             "label": "STARTTLS de SMTP",
