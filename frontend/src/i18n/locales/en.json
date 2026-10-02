@@ -201,6 +201,7 @@
     "deliveryFormatHtmlHint": "The full report is rendered in the email body.",
     "deliveryFormatPdfHint": "The email body stays brief; the full report is attached as a PDF.",
     "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection.",
     "deliveryChannelPlaceholder": "Choose a configured channel",
     "deliveryInApp": "Keep in Vibe only (do not send)",
     "deliveryNoChannels": "No enabled delivery channels are configured. Configure one in Settings → Channels.",
@@ -602,6 +603,10 @@
           "smtp_password": {
             "label": "SMTP password",
             "help": "Password or app password for SMTP. Stored server-side and never sent back to the browser."
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",
