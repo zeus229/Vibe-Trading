@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import pytest
+import asyncio
 
 from src.channels.bus.events import OutboundMessage
 from src.channels.bus.queue import MessageBus
@@ -35,17 +35,18 @@ def test_rich_email_renderer_preserves_markdown_and_sanitizes_html():
     assert "javascript:" not in rendered
 
 
-@pytest.mark.asyncio
-async def test_html_delivery_keeps_plain_fallback_and_adds_html(monkeypatch):
+def test_html_delivery_keeps_plain_fallback_and_adds_html(monkeypatch):
     channel = _channel("html")
     sent = []
     monkeypatch.setattr(channel, "_smtp_send", lambda message: sent.append(message))
 
-    await channel.send(
+    asyncio.run(
+        channel.send(
         OutboundMessage(
             channel="email",
             chat_id="reader@example.test",
             content="# Daily report\n\n**Return:** 1.2%",
+        )
         )
     )
 
@@ -57,17 +58,18 @@ async def test_html_delivery_keeps_plain_fallback_and_adds_html(monkeypatch):
     assert "<h1>Daily report</h1>" in html_part.get_content()
 
 
-@pytest.mark.asyncio
-async def test_plain_delivery_preserves_legacy_single_part(monkeypatch):
+def test_plain_delivery_preserves_legacy_single_part(monkeypatch):
     channel = _channel("plain")
     sent = []
     monkeypatch.setattr(channel, "_smtp_send", lambda message: sent.append(message))
 
-    await channel.send(
+    asyncio.run(
+        channel.send(
         OutboundMessage(
             channel="email",
             chat_id="reader@example.test",
             content="Legacy plain body",
+        )
         )
     )
 
@@ -76,17 +78,18 @@ async def test_plain_delivery_preserves_legacy_single_part(monkeypatch):
     assert sent[0].get_content().strip() == "Legacy plain body"
 
 
-@pytest.mark.asyncio
-async def test_html_pdf_delivery_attaches_generated_pdf(monkeypatch):
+def test_html_pdf_delivery_attaches_generated_pdf(monkeypatch):
     channel = _channel("html+pdf")
     sent = []
     monkeypatch.setattr(channel, "_smtp_send", lambda message: sent.append(message))
 
-    await channel.send(
+    asyncio.run(
+        channel.send(
         OutboundMessage(
             channel="email",
             chat_id="reader@example.test",
             content="# PDF report\n\nA generated report.",
+        )
         )
     )
 
