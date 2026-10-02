@@ -908,6 +908,7 @@ export interface ChannelAdapterStatus {
   delivery_target_placeholder?: string;
   delivery_target_input_type?: string;
   delivery_target_suggestions?: DeliveryTargetSuggestion[];
+  pdf_password_configured?: boolean;
 }
 
 export interface ChannelRuntimeStatus {
