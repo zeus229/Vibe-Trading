@@ -826,6 +826,85 @@ class EvidenceRecord:
     artifact: str | None = None
     scope: str | None = None
     unit: str | None = None
+    # Generic structured evidence distinguishes a bound entity from an
+    # aggregate, an unidentified item, and contradictory identities.
+    identity_scope: str | None = None
+
+
+@dataclass(frozen=True)
+class _EntityContext:
+    symbol: str | None
+    scope: str  # entity, aggregate, unknown, or conflict
+    origin: str = "inferred"
+
+
+_ITEM_IDENTITY_FIELDS = frozenset({"symbol", "ticker", "entity_id"})
+
+
+def _item_symbol(value: Mapping[str, Any], allowed: set[str]) -> tuple[str | None, bool]:
+    """Read explicit per-item identities, excluding unrelated status codes."""
+    symbols: set[str] = set()
+    for key, item in value.items():
+        if not isinstance(item, str) or not item.strip():
+            continue
+        name = str(key).casefold()
+        normalized = _normalize_symbol(item)
+        if name in _ITEM_IDENTITY_FIELDS or (
+            name == "code" and (normalized in allowed or _CANONICAL_SYMBOL_RE.fullmatch(item))
+        ):
+            symbols.add(normalized)
+    return (next(iter(symbols)), False) if len(symbols) == 1 else (None, len(symbols) > 1)
+
+
+def _entity_child(
+    parent: _EntityContext, explicit: str | None, allowed: set[str]
+) -> _EntityContext:
+    if explicit is None:
+        return parent
+    if parent.scope == "conflict" or (parent.scope == "entity" and parent.symbol != explicit):
+        return _EntityContext(explicit, "conflict")
+    if allowed and explicit not in allowed:
+        return _EntityContext(explicit, "conflict")
+    return _EntityContext(explicit, "entity", "explicit")
+
+
+def _entity_for_key(
+    parent: _EntityContext, key: Any, allowed: set[str]
+) -> _EntityContext:
+    label = str(key)
+    if _CANONICAL_SYMBOL_RE.fullmatch(label):
+        return _entity_child(parent, _normalize_symbol(label), allowed)
+    if label.casefold() in {"aggregate", "totals"} and parent.origin != "explicit":
+        return _EntityContext(None, "aggregate", "explicit")
+    return parent
+
+
+def _list_entity_context(items: list[Any], parent: _EntityContext) -> _EntityContext:
+    if len(items) < 2 or parent.origin == "explicit" or parent.scope == "conflict":
+        return parent
+    # Repeated dated observations can inherit one call's entity; otherwise an
+    # anonymous collection could contain several different entities.
+    if all(
+        isinstance(item, dict)
+        and any(item.get(key) is not None for key in _TIMESTAMP_FIELDS)
+        for item in items
+    ):
+        return parent
+    return _EntityContext(None, "unknown")
+
+
+def _record_matches_entity(record: EvidenceRecord, symbol: str | None) -> bool:
+    """Match entity-scoped claims without blocking legitimate unscoped evidence."""
+    if record.identity_scope == "conflict":
+        return False
+    if symbol is None:
+        return True
+    if record.identity_scope in {"unknown", "aggregate"}:
+        return False
+    if record.identity_scope == "entity":
+        return record.symbol == symbol
+    # Legacy non-generic sources retain their established semantics.
+    return not record.symbol or record.symbol == symbol
 
 
 def _is_price_kind(record: EvidenceRecord) -> bool:
@@ -855,6 +934,36 @@ def _is_price_kind(record: EvidenceRecord) -> bool:
 class _EvidenceMixin:
     """Evidence behaviour of :class:`GroundingLedger`."""
 
+    def _numeric_entity_context(
+        self, arguments: Mapping[str, Any]
+    ) -> tuple[_EntityContext, set[str]]:
+        symbols = {
+            self._match_authorized_symbol(symbol, self.authorized_symbols) or symbol
+            for symbol in self._extract_symbol_arguments(arguments)
+        }
+        if len(symbols) == 1:
+            return _EntityContext(next(iter(symbols)), "entity", "argument"), symbols
+        if symbols:
+            return _EntityContext(None, "unknown"), symbols
+        # A later scalar analysis call may omit a symbol argument after this
+        # session has observed exactly one entity. Require that the session has
+        # no other candidate; an explicit aggregate subtree still stays global.
+        observed = {
+            record.symbol
+            for record in self._evidence
+            if record.status == "observed" and record.symbol and record.identity_scope != "conflict"
+        }
+        if len(observed) == 1:
+            if self._session_symbols <= observed:
+                return _EntityContext(next(iter(observed)), "entity", "observed"), symbols
+            return _EntityContext(None, "unknown"), symbols
+        if len(observed) > 1:
+            return _EntityContext(None, "unknown"), symbols
+        # A symbol mentioned in the user's prose is not evidence that a
+        # symbol-less tool result belongs to that entity. With no observed or
+        # argument identity, keep the result unscoped/aggregate.
+        return _EntityContext(None, "aggregate"), symbols
+
     def _ingest_analysis_result(
         self,
         tool_name: str,
@@ -879,7 +988,7 @@ class _EvidenceMixin:
         elif tool_name == "factor_analysis":
             if str(payload.get("status") or "").casefold() != "ok":
                 return
-            recorded = self._record_leaf_metrics(payload, call_id, tool_name, "")
+            recorded = self._record_leaf_metrics(payload, call_id, tool_name, "", arguments)
         elif tool_name == "run_shadow_backtest":
             if str(payload.get("status") or "").casefold() != "ok":
                 return
@@ -887,7 +996,7 @@ class _EvidenceMixin:
             if not isinstance(combined, dict):
                 # A combined dict containing only {"error": ...} is no analysis.
                 return
-            recorded = self._record_leaf_metrics(combined, call_id, tool_name, "combined")
+            recorded = self._record_leaf_metrics(combined, call_id, tool_name, "combined", arguments)
         elif tool_name == "quantlib_call":
             if payload.get("ok") is not True or str(
                 arguments.get("action") or ""
@@ -895,7 +1004,7 @@ class _EvidenceMixin:
                 return
             function = str(arguments.get("function") or "")
             recorded = self._record_leaf_metrics(
-                payload.get("result"), call_id, tool_name, function
+                payload.get("result"), call_id, tool_name, function, arguments
             )
         else:
             return
@@ -910,11 +1019,13 @@ class _EvidenceMixin:
         call_id: str,
         tool_name: str,
         field_prefix: str,
+        arguments: Mapping[str, Any],
     ) -> int:
-        """Record nested numeric leaves whose key names a metric kind."""
+        """Record metric leaves with the identity of their containing item."""
         recorded = 0
+        root, allowed = self._numeric_entity_context(arguments)
 
-        def visit(item: Any, path: str) -> None:
+        def visit(item: Any, path: str, context: _EntityContext) -> None:
             nonlocal recorded
             if _is_number(item):
                 kind = _metric_kind_for_path(path)
@@ -927,18 +1038,28 @@ class _EvidenceMixin:
                         "tool": tool_name,
                         "call_id": call_id,
                         "field": path,
+                        "symbol": context.symbol,
+                        "identity_scope": context.scope,
                     }
                 )
                 recorded += 1
                 return
             if isinstance(item, dict):
+                explicit, contradictory = _item_symbol(item, allowed)
+                local = _entity_child(context, explicit, allowed)
+                if contradictory:
+                    local = _EntityContext(None, "conflict")
                 for key, child in item.items():
-                    visit(child, f"{path}.{key}" if path else str(key))
+                    visit(
+                        child,
+                        f"{path}.{key}" if path else str(key),
+                        _entity_for_key(local, key, allowed),
+                    )
             elif isinstance(item, list):
                 for index, child in enumerate(item):
-                    visit(child, f"{path}[{index}]")
+                    visit(child, f"{path}[{index}]", _list_entity_context(item, context))
 
-        visit(value, field_prefix or "")
+        visit(value, field_prefix or "", root)
         return recorded
 
     def _record_backtest_metrics(
@@ -1318,12 +1439,7 @@ class _EvidenceMixin:
         call_id: str,
     ) -> None:
         """Flatten bounded numeric leaves from other market-sensitive tools."""
-        symbols = self._extract_symbol_arguments(arguments)
-        symbol = symbols[0] if len(symbols) == 1 else None
-        if symbol:
-            symbol = (
-                self._match_authorized_symbol(symbol, self.authorized_symbols) or symbol
-            )
+        root, allowed = self._numeric_entity_context(arguments)
         source = str(payload.get("source") or tool_name)
         remaining = _MAX_GENERIC_EVIDENCE
         timestamp_fields = (*_TIMESTAMP_FIELDS, "latest_date", "as_of")
@@ -1335,6 +1451,7 @@ class _EvidenceMixin:
             timestamp: str | None = None,
             currency: str | None = None,
             unit_hint: Any = None,
+            context: _EntityContext = root,
         ) -> None:
             nonlocal remaining
             if remaining <= 0:
@@ -1343,7 +1460,7 @@ class _EvidenceMixin:
                 evidence_currency = (
                     currency
                     or _currency_from_path(path)
-                    or _infer_currency(symbol or "")
+                    or _infer_currency(context.symbol or "")
                 )
                 # The unit is what the payload declares, never what the venue of
                 # the symbol implies: an explicit per-leaf unit, else a declared
@@ -1355,20 +1472,25 @@ class _EvidenceMixin:
                     EvidenceRecord(
                         call_id=call_id,
                         tool=tool_name,
-                        symbol=symbol,
+                        symbol=context.symbol,
                         source=source,
                         timestamp=timestamp,
                         field=path or "value",
                         value=value,
                         status="observed",
                         currency=evidence_currency,
-                        venue=_infer_venue(symbol or ""),
+                        venue=_infer_venue(context.symbol or ""),
+                        identity_scope=context.scope,
                         unit=unit,
                     )
                 )
                 remaining -= 1
                 return
             if isinstance(value, dict):
+                explicit, contradictory = _item_symbol(value, allowed)
+                local = _entity_child(context, explicit, allowed)
+                if contradictory:
+                    local = _EntityContext(None, "conflict")
                 local_timestamp = next(
                     (
                         str(value[key])
@@ -1393,10 +1515,12 @@ class _EvidenceMixin:
                         local_timestamp,
                         local_currency or _currency_from_path(child_path),
                         units.get(key),
+                        _entity_for_key(local, key, allowed),
                     )
             elif isinstance(value, list):
+                item_context = _list_entity_context(value, context)
                 for index, item in enumerate(value):
-                    visit(item, f"{path}[{index}]", timestamp, currency)
+                    visit(item, f"{path}[{index}]", timestamp, currency, None, item_context)
 
         visit(payload, "")
 
