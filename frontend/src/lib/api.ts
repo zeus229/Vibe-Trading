@@ -703,6 +703,7 @@ export interface ScheduledRun {
   delivery_target: string | null;
   delivery_target_ref: string | null;
   delivery_target_label: string | null;
+  delivery_format: "html" | "pdf" | null;
   delivery_status: string;
   delivery_error: string | null;
   delivery_updated_at: number | null;
@@ -724,6 +725,7 @@ export interface CreateScheduledRunRequest {
   delivery_channel?: string | null;
   delivery_target?: string | null;
   delivery_target_ref?: string | null;
+  delivery_format?: "html" | "pdf" | null;
 }
 
 export interface UpdateScheduledRunRequest {
@@ -736,6 +738,7 @@ export interface UpdateScheduledRunRequest {
   delivery_channel?: string | null;
   delivery_target?: string | null;
   delivery_target_ref?: string | null;
+  delivery_format?: "html" | "pdf" | null;
 }
 
 export interface ScheduledResearchProposalJob {

@@ -55,7 +55,7 @@ DispatchCallback = Callable[[ScheduledResearchJob], Awaitable[Optional[str]]]
 BriefingReader = Callable[[str], Optional[tuple[str, str]]]
 #: (channel, target, text) -> delivered.
 ChannelSender = Callable[
-    [str, Optional[str], str], Awaitable[DeliveryReceipt | None]
+    [str, Optional[str], str, Optional[str]], Awaitable[DeliveryReceipt | None]
 ]
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -649,9 +649,19 @@ class ScheduledResearchExecutor:
             self._store.upsert(current, validate=False)
 
             try:
-                receipt = await self._channel_sender(
-                    job.delivery_channel, job.delivery_target, text
-                )
+                if job.delivery_format is None:
+                    # Preserve compatibility with embedders/tests that inject
+                    # the historical three-argument sender.
+                    receipt = await self._channel_sender(
+                        job.delivery_channel, job.delivery_target, text
+                    )
+                else:
+                    receipt = await self._channel_sender(
+                        job.delivery_channel,
+                        job.delivery_target,
+                        text,
+                        job.delivery_format,
+                    )
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
