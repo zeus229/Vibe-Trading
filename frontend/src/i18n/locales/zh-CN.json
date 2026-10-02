@@ -599,6 +599,10 @@
             "label": "SMTP 密码",
             "help": "SMTP 密码或应用专用密码。仅保存在服务端，不会回传给浏览器。"
           },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
+          },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",
             "help": "使用 STARTTLS 升级 SMTP 连接（默认开启，适用于 587 端口）。实际使用中与 SMTP SSL 互斥。"
