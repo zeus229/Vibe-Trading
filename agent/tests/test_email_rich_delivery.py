@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+from io import BytesIO
+
+import pytest
+from pypdf import PdfReader
 
 from src.channels.bus.events import OutboundMessage
 from src.channels.bus.queue import MessageBus
@@ -8,7 +12,7 @@ from src.channels.email import EmailChannel
 from src.channels.rich_text import render_email_html
 
 
-def _channel(outbound_format: str) -> EmailChannel:
+def _channel(outbound_format: str, *, pdf_password: str = "") -> EmailChannel:
     return EmailChannel(
         {
             "consent_granted": True,
@@ -17,6 +21,7 @@ def _channel(outbound_format: str) -> EmailChannel:
             "smtp_password": "secret",
             "from_address": "bot@example.test",
             "outbound_format": outbound_format,
+            "pdf_password": pdf_password,
         },
         MessageBus(),
     )
@@ -152,3 +157,68 @@ def test_per_message_pdf_keeps_report_out_of_body(monkeypatch):
     ]
     assert len(pdf_parts) == 1
     assert pdf_parts[0].get_payload(decode=True).startswith(b"%PDF")
+
+
+def test_per_message_pdf_can_be_password_protected(monkeypatch):
+    channel = _channel("plain", pdf_password="correct horse battery staple")
+    sent = []
+    monkeypatch.setattr(channel, "_smtp_send", lambda message: sent.append(message))
+
+    asyncio.run(
+        channel.send(
+            OutboundMessage(
+                channel="email",
+                chat_id="reader@example.test",
+                content="# Protected report\n\nPortfolio value: 123456",
+                metadata={"delivery_format": "pdf", "protect_pdf": True},
+            )
+        )
+    )
+
+    pdf_part = next(
+        part for part in sent[0].iter_attachments()
+        if part.get_content_type() == "application/pdf"
+    )
+    encrypted = pdf_part.get_payload(decode=True)
+    reader = PdfReader(BytesIO(encrypted))
+    assert reader.is_encrypted
+    assert reader.decrypt("wrong password") == 0
+    assert reader.decrypt("correct horse battery staple") != 0
+    assert "Portfolio value: 123456" in "".join(page.extract_text() or "" for page in reader.pages)
+
+
+def test_protected_pdf_fails_closed_without_configured_password(monkeypatch):
+    channel = _channel("plain")
+    sent = []
+    monkeypatch.setattr(channel, "_smtp_send", lambda message: sent.append(message))
+
+    with pytest.raises(RuntimeError, match="no PDF password is configured"):
+        asyncio.run(
+            channel.send(
+                OutboundMessage(
+                    channel="email",
+                    chat_id="reader@example.test",
+                    content="# Sensitive report\n\nPortfolio value: 123456",
+                    metadata={"delivery_format": "pdf", "protect_pdf": True},
+                )
+            )
+        )
+
+    assert sent == []
+
+
+def test_pdf_protection_rejects_non_pdf_delivery(monkeypatch):
+    channel = _channel("plain", pdf_password="secret")
+    monkeypatch.setattr(channel, "_smtp_send", lambda message: None)
+
+    with pytest.raises(ValueError, match="requires PDF delivery"):
+        asyncio.run(
+            channel.send(
+                OutboundMessage(
+                    channel="email",
+                    chat_id="reader@example.test",
+                    content="report",
+                    metadata={"delivery_format": "html", "protect_pdf": True},
+                )
+            )
+        )
