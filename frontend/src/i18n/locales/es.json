@@ -200,6 +200,7 @@
     "deliveryFormatDefaultHint": "Mantiene el formato actual del canal por compatibilidad.",
     "deliveryFormatHtmlHint": "El informe completo se muestra en el cuerpo del email.",
     "deliveryFormatPdfHint": "El cuerpo del email es breve; el informe completo va adjunto como PDF.",
+    "deliveryProtectPdf": "Proteger el PDF con contraseña",
     "deliveryChannelPlaceholder": "Elige un canal configurado",
     "deliveryInApp": "Solo en Vibe (no enviar)",
     "deliveryNoChannels": "No hay canales de entrega habilitados configurados. Configura uno en Configuración → Canales.",
