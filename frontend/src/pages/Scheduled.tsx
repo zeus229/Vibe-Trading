@@ -640,7 +640,7 @@ export function Scheduled() {
                   <input
                     type="checkbox"
                     checked={protectPdf}
-                    disabled={!emailPdfPasswordConfigured}
+                    disabled={!emailPdfPasswordConfigured && !protectPdf}
                     onChange={(e) => setProtectPdf(e.target.checked)}
                   />
                   <span>{t("scheduled.deliveryProtectPdf")}</span>
