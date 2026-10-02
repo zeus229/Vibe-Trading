@@ -377,6 +377,7 @@ export function Scheduled() {
     .sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   const selectedChannel = deliveryChannel ? channelStatus[deliveryChannel] : undefined;
+  const emailPdfPasswordConfigured = channelStatus.email?.pdf_password_configured === true;
   const selectedChannelIsAvailable = configuredDeliveryChannels.some(
     (channel) => channel.name === deliveryChannel,
   );
@@ -639,10 +640,16 @@ export function Scheduled() {
                   <input
                     type="checkbox"
                     checked={protectPdf}
+                    disabled={!emailPdfPasswordConfigured}
                     onChange={(e) => setProtectPdf(e.target.checked)}
                   />
                   <span>{t("scheduled.deliveryProtectPdf")}</span>
                 </label>
+              )}
+              {deliveryFormat === "pdf" && !emailPdfPasswordConfigured && (
+                <p className={hintClass}>
+                  {t("scheduled.deliveryProtectPdfUnavailable")}
+                </p>
               )}
             </div>
           )}
