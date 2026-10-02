@@ -604,6 +604,10 @@
             "label": "Kata sandi SMTP",
             "help": "Kata sandi atau kata sandi aplikasi untuk SMTP. Disimpan di sisi server dan tidak pernah dikirim kembali ke browser."
           },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
+          },
           "smtp_use_tls": {
             "label": "STARTTLS SMTP",
             "help": "Enkripsi koneksi SMTP dengan STARTTLS (aktif secara default; lazim untuk port 587). Dalam praktik tidak dipakai bersama SSL SMTP."
