@@ -384,6 +384,9 @@ class ScheduledResearchJob:
     # channel default; "html" sends the full briefing in the body and "pdf"
     # sends a brief body with the full briefing attached.
     delivery_format: Optional[str] = None
+    # Whether a generated PDF must be password-protected. The password itself
+    # belongs to private Email channel configuration and is never persisted here.
+    protect_pdf: bool = False
     delivery: DeliveryRecord = field(default_factory=DeliveryRecord)
     last_verdict: Optional[VerdictRecord] = None
 
@@ -416,6 +419,7 @@ class ScheduledResearchJob:
             "delivery_target_ref": self.delivery_target_ref,
             "delivery_target_label": self.delivery_target_label,
             "delivery_format": self.delivery_format,
+            "protect_pdf": self.protect_pdf,
             "delivery": self.delivery.to_dict(),
             "last_verdict": self.last_verdict.to_dict() if self.last_verdict else None,
         }
@@ -496,6 +500,11 @@ class ScheduledResearchJob:
         delivery_format = data.get("delivery_format")
         if delivery_format not in {None, "html", "pdf"}:
             raise ValueError("'delivery_format' must be 'html', 'pdf', or null")
+        protect_pdf = data.get("protect_pdf", False)
+        if not isinstance(protect_pdf, bool):
+            raise TypeError("'protect_pdf' must be a boolean")
+        if protect_pdf and delivery_format != "pdf":
+            raise ValueError("'protect_pdf' requires delivery_format='pdf'")
         for name, value in (
             ("delivery_channel", delivery_channel),
             ("delivery_target", delivery_target),
@@ -526,6 +535,7 @@ class ScheduledResearchJob:
             delivery_target_ref=delivery_target_ref,
             delivery_target_label=delivery_target_label,
             delivery_format=delivery_format,
+            protect_pdf=protect_pdf,
             delivery=DeliveryRecord.from_dict(data.get("delivery")),
             last_verdict=_verdict_record_or_none(data.get("last_verdict"), job_id),
         )
