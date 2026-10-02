@@ -120,6 +120,7 @@ async def _send_scheduled_briefing(
     target: Optional[str],
     text: str,
     delivery_format: Optional[str] = None,
+    protect_pdf: bool = False,
 ):
     """Deliver one briefing through the configured IM channel.
 
@@ -149,7 +150,10 @@ async def _send_scheduled_briefing(
             channel=channel,
             chat_id=target,
             content=text,
-            metadata={"delivery_format": delivery_format} if delivery_format else {},
+            metadata={
+                **({"delivery_format": delivery_format} if delivery_format else {}),
+                **({"protect_pdf": True} if protect_pdf else {}),
+            },
         )
     )
 
