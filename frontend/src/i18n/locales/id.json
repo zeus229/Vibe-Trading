@@ -231,6 +231,7 @@
     "deliveryFormatHtmlHint": "Sends the full report in the email body.",
     "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF."
     "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection.",
   },
   "reports": {
     "badge": "Laporan",
