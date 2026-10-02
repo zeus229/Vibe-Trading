@@ -143,7 +143,7 @@ def test_per_message_pdf_keeps_report_out_of_body(monkeypatch):
     message = sent[0]
     plain_body = message.get_body(preferencelist=("plain",)).get_content()
     html_body = message.get_body(preferencelist=("html",)).get_content()
-    assert "requested report is attached" in plain_body
+    assert "Report attached as PDF." in plain_body
     assert "123456" not in plain_body
     assert "123456" not in html_body
     pdf_parts = [
