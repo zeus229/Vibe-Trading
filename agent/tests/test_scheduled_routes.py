@@ -636,6 +636,8 @@ def test_patch_can_switch_email_delivery_to_pdf(
     saved = store.get("pdf-email")
     assert saved is not None
     assert saved.delivery_format == "pdf"
+    assert saved.delivery_channel == "email"
+    assert saved.delivery_target == "reader@example.test"
 
 
 def test_delivery_format_is_rejected_for_non_email_channel(
