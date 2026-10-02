@@ -222,7 +222,14 @@
     "verdictRecorded": "per {{when}}",
     "deliveryKnownTargetLabel": "Tujuan dikenal",
     "deliveryKnownTargetPlaceholder": "Pilih tujuan yang dikenal…",
-    "deliverySuggestionKind_private_chat": "Chat pribadi saya"
+    "deliverySuggestionKind_private_chat": "Chat pribadi saya",
+    "deliveryFormatLabel": "Email report format",
+    "deliveryFormatDefault": "Channel default (plain text)",
+    "deliveryFormatHtml": "Email HTML",
+    "deliveryFormatPdf": "PDF attachment",
+    "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
+    "deliveryFormatHtmlHint": "Sends the full report in the email body.",
+    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF."
   },
   "reports": {
     "badge": "Laporan",
