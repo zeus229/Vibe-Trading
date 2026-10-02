@@ -212,6 +212,7 @@
     "deliveryFormatHtmlHint": "Sends the full report in the email body.",
     "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
     "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection.",
     "delivery_none": "다음 실행이 끝나면 {{channel}}(으)로 전달합니다",
     "delivery_pending": "{{channel}}(으)로 전달 대기 중",
     "delivery_sending": "{{channel}}(으)로 전달하는 중",
