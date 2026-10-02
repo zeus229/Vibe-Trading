@@ -72,6 +72,8 @@ dependencies = [
     "jinja2>=3.1.0",
     "matplotlib>=3.7.0",
     "weasyprint>=60.0",
+    "mistune>=3.0.0",
+    "nh3>=0.2.18",
     "prompt_toolkit>=3.0.0",
 ]
 
