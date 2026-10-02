@@ -211,6 +211,7 @@
     "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
     "deliveryFormatHtmlHint": "Sends the full report in the email body.",
     "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
+    "deliveryProtectPdf": "Protect PDF with password",
     "delivery_none": "下次运行结束后推送到 {{channel}}",
     "delivery_pending": "待推送到 {{channel}}",
     "delivery_sending": "正在推送到 {{channel}}",
