@@ -604,6 +604,10 @@
             "label": "SMTP-Passwort",
             "help": "Passwort oder App-Passwort für SMTP. Wird serverseitig gespeichert und nie an den Browser zurückgegeben."
           },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
+          },
           "smtp_use_tls": {
             "label": "SMTP-STARTTLS",
             "help": "SMTP-Verbindung per STARTTLS verschlüsseln (standardmäßig aktiv; üblich für Port 587). In der Praxis nicht mit SMTP-SSL kombinierbar."
