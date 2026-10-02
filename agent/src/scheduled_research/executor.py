@@ -655,6 +655,14 @@ class ScheduledResearchExecutor:
                     receipt = await self._channel_sender(
                         job.delivery_channel, job.delivery_target, text
                     )
+                elif job.protect_pdf:
+                    receipt = await self._channel_sender(
+                        job.delivery_channel,
+                        job.delivery_target,
+                        text,
+                        job.delivery_format,
+                        True,
+                    )
                 else:
                     receipt = await self._channel_sender(
                         job.delivery_channel,
