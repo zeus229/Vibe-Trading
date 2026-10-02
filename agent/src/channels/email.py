@@ -314,33 +314,73 @@ class EmailChannel(BaseChannel):
             fallback = "\n".join(failed_attachments)
             content = f"{content.rstrip()}\n\n{fallback}" if content.strip() else fallback
 
+        # A scheduled delivery may choose its presentation without changing the
+        # channel-wide default used by replies and other proactive messages.
+        metadata_format = (msg.metadata or {}).get("delivery_format")
+        outbound_format = (
+            metadata_format
+            if metadata_format in {"plain", "html", "pdf"}
+            else self.config.outbound_format
+        )
+
         email_msg = EmailMessage()
         email_msg["From"] = self.config.from_address or self.config.smtp_username or self.config.imap_username
         email_msg["To"] = to_addr
         email_msg["Subject"] = subject
-        email_msg.set_content(content)
 
-        if self.config.outbound_format in {"html", "html+pdf"}:
-            rich_html = render_email_html(content)
-            email_msg.add_alternative(rich_html, subtype="html")
+        if outbound_format == "pdf":
+            # The report itself lives only in the attachment. Keep both the
+            # text and HTML body deliberately free of report contents so a
+            # future encrypted-PDF layer can protect the attachment without
+            # leaking the same values in the message body.
+            attachment_body = "The requested report is attached as a PDF."
+            email_msg.set_content(attachment_body)
+            email_msg.add_alternative(render_email_html(attachment_body), subtype="html")
+            try:
+                from weasyprint import HTML
 
-            if self.config.outbound_format == "html+pdf":
-                try:
-                    from weasyprint import HTML
+                report_html = render_email_html(content)
+                pdf_data = HTML(string=report_html).write_pdf()
+                pdf_name = safe_filename(self.config.pdf_filename.strip()) or "vibe-trading-report.pdf"
+                if not pdf_name.lower().endswith(".pdf"):
+                    pdf_name += ".pdf"
+                email_msg.add_attachment(
+                    pdf_data,
+                    maintype="application",
+                    subtype="pdf",
+                    filename=pdf_name,
+                )
+            except Exception:
+                # PDF-only delivery must fail closed: silently putting the
+                # report into the email body would defeat the selected mode.
+                self.logger.exception("Failed to render required PDF attachment")
+                raise
+        else:
+            email_msg.set_content(content)
+            if outbound_format in {"html", "html+pdf"}:
+                rich_html = render_email_html(content)
+                email_msg.add_alternative(rich_html, subtype="html")
 
-                    pdf_data = HTML(string=rich_html).write_pdf()
-                    pdf_name = safe_filename(self.config.pdf_filename.strip()) or "vibe-trading-report.pdf"
-                    if not pdf_name.lower().endswith(".pdf"):
-                        pdf_name += ".pdf"
-                    email_msg.add_attachment(
-                        pdf_data,
-                        maintype="application",
-                        subtype="pdf",
-                        filename=pdf_name,
-                    )
-                except Exception:
-                    # Rich HTML remains available; never replace the plain fallback.
-                    self.logger.exception("Failed to render optional PDF attachment")
+                # Legacy channel-wide html+pdf remains supported for backwards
+                # compatibility. Scheduled Research uses the explicit "pdf"
+                # mode above, whose body is intentionally brief.
+                if outbound_format == "html+pdf":
+                    try:
+                        from weasyprint import HTML
+
+                        pdf_data = HTML(string=rich_html).write_pdf()
+                        pdf_name = safe_filename(self.config.pdf_filename.strip()) or "vibe-trading-report.pdf"
+                        if not pdf_name.lower().endswith(".pdf"):
+                            pdf_name += ".pdf"
+                        email_msg.add_attachment(
+                            pdf_data,
+                            maintype="application",
+                            subtype="pdf",
+                            filename=pdf_name,
+                        )
+                    except Exception:
+                        # Rich HTML remains available; never replace the plain fallback.
+                        self.logger.exception("Failed to render optional PDF attachment")
 
         for data, maintype, subtype, filename in attachments:
             email_msg.add_attachment(
