@@ -240,6 +240,11 @@ class EmailChannel(BaseChannel):
         """
         return await email_probe.test_connection(self.config)
 
+    @property
+    def pdf_password_configured(self) -> bool:
+        """Return whether an operator-managed PDF password is configured."""
+        return bool(self.config.pdf_password)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send email via SMTP."""
         if not self.config.consent_granted:
