@@ -158,6 +158,26 @@ async def _send_scheduled_briefing(
     )
 
 
+def _email_pdf_password_configured() -> bool:
+    """Return whether private Email channel config contains a PDF password."""
+    from src.channels.config import load_channels_config
+
+    email = load_channels_config().get("email")
+    return bool(email.get("pdf_password")) if isinstance(email, dict) else False
+
+
+def _require_pdf_password_configured() -> None:
+    """Reject protected scheduling unless the Email channel has a password."""
+    if not _email_pdf_password_configured():
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                "No PDF password is configured. Configure one in "
+                "Settings > Channels > Email before protecting PDF reports."
+            ),
+        )
+
+
 def _get_scheduled_research_executor():
     """Return the singleton scheduled research executor."""
     global _scheduled_research_executor
@@ -539,6 +559,8 @@ def register_scheduled_routes(
 
         if request.protect_pdf and request.delivery_format != "pdf":
             raise HTTPException(status_code=422, detail="protect_pdf requires PDF email delivery")
+        if request.protect_pdf:
+            _require_pdf_password_configured()
 
         job = ScheduledResearchJob(
             id=request.id or str(uuid.uuid4()),
@@ -770,6 +792,8 @@ def register_scheduled_routes(
             protect_pdf = False
         if protect_pdf and delivery_format != "pdf":
             raise HTTPException(status_code=422, detail="protect_pdf requires PDF email delivery")
+        if protect_pdf:
+            _require_pdf_password_configured()
 
         delivery_changed = delivery_requested and (
             delivery_channel != job.delivery_channel
