@@ -571,6 +571,12 @@ class ChannelManager:
     def get_status(self) -> dict[str, Any]:
         """Get status of all channels."""
         status = {name: dict(item) for name, item in self._status.items()}
+        email_section = self._get_channel_config("email")
+        if isinstance(email_section, dict):
+            status.setdefault("email", {})
+            status["email"]["pdf_password_configured"] = bool(
+                email_section.get("pdf_password")
+            )
         for name, channel in self.channels.items():
             status.setdefault(name, {})
             target_suggestions = getattr(channel, "delivery_target_suggestions", None)
