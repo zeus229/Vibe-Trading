@@ -2503,7 +2503,7 @@ class AgentLoop:
                 )
                 self._readonly_replay_visibility_pending.add(tc.id)
                 self._successful_call_keys[tc.id] = dedup_key
-                self._observed_tool_calls[tc.id] = {"call_id": str(tc.id), "tool": str(tc.name), "status": "ok"}
+                self._observed_tool_call_ledger()[tc.id] = {"call_id": str(tc.id), "tool": str(tc.name), "status": "ok"}
                 self._called_ok.add(dedup_key)
                 self._readonly_replay_ready.discard(dedup_key)
                 self._readonly_replay_recoveries += 1
@@ -2576,7 +2576,7 @@ class AgentLoop:
                     cached = self._called_identical[cache_key]
                     messages.append(context.format_tool_result(tc.id, tc.name, cached))
                     self._successful_call_keys[tc.id] = cache_key
-                    self._observed_tool_calls[tc.id] = {"call_id": str(tc.id), "tool": str(tc.name), "status": "ok"}
+                    self._observed_tool_call_ledger()[tc.id] = {"call_id": str(tc.id), "tool": str(tc.name), "status": "ok"}
                     self._called_ok.add(cache_key)
                     trace.write({
                         "type": "tool_result_cached",
@@ -2884,7 +2884,7 @@ class AgentLoop:
             args = dict(args)
             args["_runtime_observed_tool_calls"] = [
                 dict(item)
-                for item in self._observed_tool_calls.values()
+                for item in self._observed_tool_call_ledger().values()
                 if item["tool"]
                 not in {
                     "start_research_goal",
@@ -3344,6 +3344,20 @@ class AgentLoop:
         )
         return sorted({key[0] for key in reopened})
 
+    def _observed_tool_call_ledger(self) -> dict[str, dict[str, str]]:
+        """Return the run-scoped provenance ledger, creating it lazily if needed.
+
+        Some focused harnesses construct AgentLoop via object.__new__ to
+        exercise replay/compaction internals without running __init__. Keep
+        this new provenance state backward-compatible with those paths instead
+        of requiring every internal fixture/caller to know about the attribute.
+        """
+        ledger = getattr(self, "_observed_tool_calls", None)
+        if not isinstance(ledger, dict):
+            ledger = {}
+            self._observed_tool_calls = ledger
+        return ledger
+
     def _identical_call_key(self, tool_name: str, arguments: Mapping[str, Any]) -> tuple[str, str] | None:
         """Build a stable key identifying a deterministic tool invocation.
 
@@ -3396,7 +3410,7 @@ class AgentLoop:
 
         success = _is_tool_success(result)
         if update_memory:
-            self._observed_tool_calls[tc.id] = {
+            self._observed_tool_call_ledger()[tc.id] = {
                 "call_id": str(tc.id),
                 "tool": str(tc.name),
                 "status": "ok" if success else "error",
