@@ -1374,6 +1374,61 @@ class _PolicyMixin:
             return _is_price_kind(record)
         return True
 
+    def _field_ref_repair_candidates(
+        self, field: str, symbol: str | None, figure: Figure
+    ) -> list[str]:
+        """Find exact refs for a field path that may carry a model-added alias prefix."""
+        parts = [part for part in _index_normalized(field).split(".") if part]
+        variants = [".".join(parts[index:]) for index in range(len(parts))]
+        found: dict[str, list[float]] = {}
+        for candidate_field in variants:
+            records, entries = self._field_sources(candidate_field, symbol)
+            for record in records:
+                if record.call_id and record.field:
+                    label = self._ref_source(record.call_id, record.field, record.scope)[1]
+                    found.setdefault(label, []).append(float(record.value))
+            for entry in entries:
+                if entry.get("call_id") and entry.get("field"):
+                    label = self._ref_source(str(entry["call_id"]), str(entry["field"]), None)[1]
+                    found.setdefault(label, []).append(float(entry["value"]))
+            if found:
+                break
+        money = bool(figure.currency and not figure.percent)
+        compatible = {
+            label
+            for label, values in found.items()
+            if self._matches_evidence(figure, values, [] if money else values)
+        }
+        ranked = sorted(found, key=lambda label: (label not in compatible, label))
+        return ranked[:_MAX_FIELD_REF_CANDIDATES]
+
+    def _session_scope_field_ref_candidates(
+        self, ref: str, symbol: str | None, figure: Figure
+    ) -> list[str]:
+        """Repair ``run_or_artifact_scope::alias.path`` to exact call refs.
+
+        A run/artifact scope is a real session source, but it is not an exact
+        call identity for ordinary tool-returned values.  When the model also
+        prepends a presentation alias to the field path, keep the declaration
+        invalid and offer exact ``call_id::full.path`` candidates instead.
+        """
+        key = (ref or "").strip()
+        if "::" not in key:
+            return []
+        scope, field = (part.strip() for part in key.split("::", 1))
+        if not scope or not field:
+            return []
+        call_or_tool = (
+            any(scope in (record.call_id, record.tool) for record in self._evidence)
+            or any(
+                scope in (entry.get("call_id"), entry.get("tool"))
+                for entry in self._analysis_metrics
+            )
+        )
+        if call_or_tool or not self._artifact_scope(scope):
+            return []
+        return self._field_ref_repair_candidates(field, symbol, figure)
+
     def _unknown_call_field_ref_candidates(
         self, ref: str, symbol: str | None, figure: Figure
     ) -> list[str]:
@@ -1393,24 +1448,7 @@ class _PolicyMixin:
         scope, field = (part.strip() for part in key.split("::", 1))
         if not scope or not field or self._names_session_source(scope):
             return []
-        records, entries = self._field_sources(field, symbol)
-        found: dict[str, list[float]] = {}
-        for record in records:
-            if record.call_id and record.field:
-                label = self._ref_source(record.call_id, record.field, record.scope)[1]
-                found.setdefault(label, []).append(float(record.value))
-        for entry in entries:
-            if entry.get("call_id") and entry.get("field"):
-                label = self._ref_source(str(entry["call_id"]), str(entry["field"]), None)[1]
-                found.setdefault(label, []).append(float(entry["value"]))
-        money = bool(figure.currency and not figure.percent)
-        compatible = {
-            label
-            for label, values in found.items()
-            if self._matches_evidence(figure, values, [] if money else values)
-        }
-        ranked = sorted(found, key=lambda label: (label not in compatible, label))
-        return ranked[:_MAX_FIELD_REF_CANDIDATES]
+        return self._field_ref_repair_candidates(field, symbol, figure)
 
     def _names_session_source(self, name: str) -> bool:
         """Whether ``name`` is a call id, tool name or backtest run of this session."""
@@ -1721,6 +1759,24 @@ class _PolicyMixin:
                             source_tool_call_ids=[declaration.ref],
                             ambiguous_sources=call_field_candidates,
                             field_ref_candidates=call_field_candidates,
+                        )
+                    ]
+                session_scope_candidates = self._session_scope_field_ref_candidates(
+                    declaration.ref, symbol, figure
+                )
+                if session_scope_candidates:
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "session_scope_needs_call_id",
+                            f"is declared observed from {declaration.ref}, whose left side names "
+                            "a session run/artifact rather than the exact tool call that returned "
+                            "this scalar",
+                            source_tool_call_ids=[declaration.ref],
+                            field_ref_candidates=session_scope_candidates,
                         )
                     ]
                 unknown_scope_candidates = self._unknown_call_field_ref_candidates(
