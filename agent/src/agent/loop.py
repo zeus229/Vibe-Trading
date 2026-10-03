@@ -2868,6 +2868,25 @@ class AgentLoop:
         Returns:
             Tuple of (result_str, elapsed_ms).
         """
+        # Goal evidence provenance is validated against identities the runtime
+        # actually observed in this run.  This context is host-injected: it is
+        # deliberately absent from the model-facing schema and never guesses a
+        # source from tool name, recency, or evidence text.
+        if tool_name == "add_goal_evidence":
+            args = dict(args)
+            args["_runtime_successful_tool_calls"] = [
+                {"call_id": call_id, "tool": key[0]}
+                for call_id, key in self._successful_call_keys.items()
+                if key[0]
+                not in {
+                    "start_research_goal",
+                    "get_research_goal",
+                    "add_goal_evidence",
+                    "update_research_goal_status",
+                    "compact",
+                }
+            ]
+
         readonly = self._is_tool_readonly(tool_name)
         timed_out = threading.Event()
 
