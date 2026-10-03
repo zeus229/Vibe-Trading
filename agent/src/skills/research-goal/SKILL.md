@@ -44,7 +44,7 @@ Use this shape when the user did not provide criteria:
 - Prefer artifact-backed evidence when a tool produced a run or file.
 - Include `run_id`, `artifact_path`, `source_provider`, `source_type`, `symbol_universe`, `benchmark`, and `data_as_of` when known.
 - Every `add_goal_evidence` call must declare `provenance_kind`:
-  - `single_tool`: the note is backed by exactly one concrete tool result. Copy that result's exact `tool_call_id`. If the runtime rejects it, choose only from the returned observed candidates; never guess from recency.
+  - `single_tool`: the note is backed by exactly one concrete tool result, including a structured error when that error is itself the finding. Copy that result's exact `tool_call_id`. If the runtime rejects it, choose only from the returned observed candidates; never guess from recency.
   - `synthesis`: the note combines multiple sources or has no single source tool call. Omit `tool_call_id`.
   - `manual`: reasoning or a note not sourced from a tool result. Omit `tool_call_id`.
 - Never use a tool name, shortened alias, invented id, or "last tool call" as provenance.
