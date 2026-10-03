@@ -406,6 +406,8 @@ def test_research_goal_skill_is_bundled() -> None:
     assert "add_goal_evidence" in content
     assert "exact `tool_call_id`" in content
     assert "`ev_...::field`" in content
+    assert "separate `single_tool` evidence row" in content
+    assert "does not replace their `single_tool` provenance" in content
 
 
 def test_goal_tools_expose_canonical_completion_contract(tmp_path: Path) -> None:
