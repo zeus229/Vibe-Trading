@@ -46,10 +46,88 @@ _SUPPORTED_ASSET_TYPES = {"ACCIONES", "CEDEARS"}
 _SUPPORTED_HORIZONS = {"1y", "ytd", "since_inception"}
 _TIMEOUT_SECONDS = 30.0
 _NUMERIC_FORMAT = "json_number"
+_MIN_RISK_OBSERVATIONS = 30
+_MIN_PARTIAL_WEIGHT_COVERAGE = 0.90
 
 
 class ConnectorError(RuntimeError):
     """Raised when Asistente Casa cannot return a trustworthy payload."""
+
+
+def _select_risk_panel(
+    closes_raw: pd.DataFrame,
+    weights: Mapping[str, float],
+    *,
+    min_observations: int = _MIN_RISK_OBSERVATIONS,
+    min_weight_coverage: float = _MIN_PARTIAL_WEIGHT_COVERAGE,
+) -> tuple[pd.DataFrame, dict[str, float], dict[str, Any]]:
+    """Select a strict full-basket panel, or an explicit high-coverage fallback.
+
+    Full-basket strict intersection remains the primary path. If a newly added
+    holding has too little canonical history, symbols are removed deterministically
+    from shortest individual history to longest until the common panel reaches the
+    minimum observation floor. The fallback is accepted only while at least 90% of
+    original sleeve value remains represented. Nothing is forward-filled or
+    synthesized, and excluded holdings stay explicit in metadata.
+    """
+    if closes_raw.empty:
+        raise ValueError("historical close panel is empty")
+    original_symbols = list(closes_raw.columns)
+    strict = closes_raw.dropna(axis=0, how="any")
+    if len(strict) >= min_observations:
+        return strict, dict(weights), {
+            "coverage_mode": "strict_full_basket",
+            "included_symbols": original_symbols,
+            "excluded_symbols": [],
+            "included_weight_pct": 100.0,
+            "excluded_weight_pct": 0.0,
+            "min_observations": min_observations,
+            "min_weight_coverage_pct": round(min_weight_coverage * 100.0, 4),
+        }
+
+    ordered = sorted(
+        original_symbols,
+        key=lambda symbol: (
+            int(closes_raw[symbol].notna().sum()),
+            float(weights.get(symbol, 0.0)),
+            symbol,
+        ),
+    )
+    included = list(original_symbols)
+    excluded: list[str] = []
+    panel = strict
+    for symbol in ordered:
+        if len(included) <= 2:
+            break
+        included.remove(symbol)
+        excluded.append(symbol)
+        coverage = sum(float(weights.get(item, 0.0)) for item in included)
+        if coverage < min_weight_coverage:
+            break
+        panel = closes_raw[included].dropna(axis=0, how="any")
+        if len(panel) >= min_observations:
+            normalized = {
+                item: float(weights[item]) / coverage
+                for item in included
+            }
+            return panel, normalized, {
+                "coverage_mode": "partial_high_coverage",
+                "included_symbols": included,
+                "excluded_symbols": excluded,
+                "included_weight_pct": round(coverage * 100.0, 4),
+                "excluded_weight_pct": round((1.0 - coverage) * 100.0, 4),
+                "min_observations": min_observations,
+                "min_weight_coverage_pct": round(min_weight_coverage * 100.0, 4),
+            }
+
+    coverage = sum(float(weights.get(item, 0.0)) for item in included)
+    raise ValueError(
+        "insufficient common historical coverage for Risk X-Ray: "
+        f"full_basket_common={len(strict)}, best_common={len(panel)}, "
+        f"included_weight_pct={coverage * 100.0:.4f}, "
+        f"required_observations={min_observations}, "
+        f"required_weight_coverage_pct={min_weight_coverage * 100.0:.2f}"
+    )
 
 
 def _env_credentials() -> tuple[str, str]:
@@ -294,20 +372,19 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         if closes_raw.empty:
             raise ValueError("historical close panel is empty")
 
-        # strict_intersection_no_fill: one common observation date for every
-        # symbol, never forward-filled or synthesized.
+        # strict_intersection_no_fill remains the primary path. If the full
+        # basket has too few common dates, allow only an explicit high-value
+        # partial fallback; never forward-fill or synthesize history.
         missing_by_symbol = {
             symbol: int(count) for symbol, count in closes_raw.isna().sum().items() if count
         }
-        closes = closes_raw.dropna(axis=0, how="any")
-        if closes.empty:
-            raise ValueError("historical close panel has no common dates across symbols")
+        closes, risk_weights, coverage_meta = _select_risk_panel(closes_raw, weights)
         dropped_non_common_dates = len(closes_raw) - len(closes)
 
         # ------------------------------------------------------------
         # Vibe deterministic Risk X-Ray
         # ------------------------------------------------------------
-        report = compute_risk_xray(closes, weights, periods_per_year=252)
+        report = compute_risk_xray(closes, risk_weights, periods_per_year=252)
 
         result = {
             "status": "ok",
@@ -329,16 +406,23 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "end_date": end_date,
                 "symbols": symbols,
                 "position_count": len(symbols),
+                "risk_position_count": len(coverage_meta["included_symbols"]),
+                **coverage_meta,
                 "total_value_ars": portfolio_block.get("total_value_ars"),
                 "scope_value_ars": portfolio_block.get("scope_value_ars"),
                 "weight_sum": weight_sum,
-                "history_complete": True,
+                "risk_weight_sum": sum(risk_weights.values()),
+                "history_complete": coverage_meta["coverage_mode"] == "strict_full_basket",
                 "raw_close_observations": len(closes_raw),
                 "close_observations": len(closes),
                 "common_date_count": len(closes),
                 "dropped_non_common_dates": dropped_non_common_dates,
                 "missing_dates_by_symbol": missing_by_symbol,
-                "alignment_policy": "strict_intersection_no_fill",
+                "alignment_policy": "strict_intersection_no_fill_with_explicit_high_coverage_fallback",
+                "coverage_disclaimer": (
+                    None if coverage_meta["coverage_mode"] == "strict_full_basket"
+                    else "Risk metrics cover only the included high-history positions; excluded holdings remain part of the real portfolio and these metrics must not be described as 100% sleeve risk."
+                ),
             },
         }
         return json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
