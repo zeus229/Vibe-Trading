@@ -204,7 +204,11 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         "portfolio snapshot and date range. Call this tool at most ONCE per "
         "scope for a given analysis unless the user explicitly requests a "
         "different date range or refreshed data. Do NOT call it repeatedly to "
-        "verify metrics it already returned. Do NOT use ACCIONES or CEDEARS "
+        "verify metrics it already returned. Full-basket strict intersection is "
+        "preferred; when a recent holding has too little persisted history, the "
+        "tool may return an explicitly labeled partial_high_coverage result only "
+        "if at least 90% of sleeve value and 30 common observations remain. Do NOT "
+        "use ACCIONES or CEDEARS "
         "metrics as if either scope represented the complete portfolio. Do NOT "
         "combine or extrapolate these results to BONOS or FCI."
     )
@@ -378,6 +382,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         missing_by_symbol = {
             symbol: int(count) for symbol, count in closes_raw.isna().sum().items() if count
         }
+        full_basket_common_date_count = len(closes_raw.dropna(axis=0, how="any"))
         closes, risk_weights, coverage_meta = _select_risk_panel(closes_raw, weights)
         dropped_non_common_dates = len(closes_raw) - len(closes)
 
@@ -412,8 +417,11 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "scope_value_ars": portfolio_block.get("scope_value_ars"),
                 "weight_sum": weight_sum,
                 "risk_weight_sum": sum(risk_weights.values()),
-                "history_complete": coverage_meta["coverage_mode"] == "strict_full_basket",
+                "history_complete": True,
+                "risk_scope_complete": coverage_meta["coverage_mode"] == "strict_full_basket",
                 "raw_close_observations": len(closes_raw),
+                "full_basket_common_date_count": full_basket_common_date_count,
+                "full_basket_dropped_non_common_dates": len(closes_raw) - full_basket_common_date_count,
                 "close_observations": len(closes),
                 "common_date_count": len(closes),
                 "dropped_non_common_dates": dropped_non_common_dates,
