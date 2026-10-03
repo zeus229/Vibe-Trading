@@ -262,3 +262,13 @@ def test_goal_evidence_runtime_includes_executed_error_calls(tmp_path: Path) -> 
     assert add.calls[0]["_runtime_observed_tool_calls"] == [
         {"call_id": "call_risk_error", "tool": "risk_xray", "status": "error"}
     ]
+
+
+def test_observed_tool_call_ledger_lazy_initializes_for_internal_harnesses() -> None:
+    """Replay/compaction harnesses that bypass __init__ still get provenance state."""
+    agent = object.__new__(AgentLoop)
+
+    ledger = agent._observed_tool_call_ledger()
+
+    assert ledger == {}
+    assert agent._observed_tool_calls is ledger
