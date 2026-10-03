@@ -189,7 +189,7 @@ def test_goal_evidence_preserves_exact_tool_call_provenance(tmp_path: Path) -> N
             tool_call_id=call_id,
             source_provider="pytest",
             source_type="market_data",
-            _runtime_successful_tool_calls=[{"call_id": call_id, "tool": "market_data"}],
+            _runtime_observed_tool_calls=[{"call_id": call_id, "tool": "market_data", "status": "ok"}],
         )
     )
 
@@ -214,9 +214,9 @@ def test_goal_evidence_rejects_missing_single_tool_call_id_with_candidates(tmp_p
             provenance_kind="single_tool",
             criterion_index=1,
             text="Metric from one tool result.",
-            _runtime_successful_tool_calls=[
-                {"call_id": "call_real_1", "tool": "market_data"},
-                {"call_id": "call_real_2", "tool": "risk_xray"},
+            _runtime_observed_tool_calls=[
+                {"call_id": "call_real_1", "tool": "market_data", "status": "ok"},
+                {"call_id": "call_real_2", "tool": "risk_xray", "status": "error"},
             ],
         )
     )
@@ -228,6 +228,29 @@ def test_goal_evidence_rejects_missing_single_tool_call_id_with_candidates(tmp_p
         "call_real_2",
     ]
 
+
+
+def test_goal_evidence_accepts_observed_error_call_as_single_tool(tmp_path: Path) -> None:
+    """A tool error can itself be the exact source of a negative finding."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+    start.execute(objective="Audit unavailable risk metric.", criteria=["Record evidence"])
+
+    result = json.loads(
+        add.execute(
+            provenance_kind="single_tool",
+            criterion_index=1,
+            text="Risk X-Ray reported insufficient history.",
+            tool_call_id="call_risk_error",
+            _runtime_observed_tool_calls=[
+                {"call_id": "call_risk_error", "tool": "risk_xray", "status": "error"}
+            ],
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert result["evidence"]["tool_call_id"] == "call_risk_error"
 
 def test_goal_evidence_rejects_unknown_single_tool_call_id(tmp_path: Path) -> None:
     """A model cannot bind goal evidence to an invented or stale call id."""
@@ -242,13 +265,13 @@ def test_goal_evidence_rejects_unknown_single_tool_call_id(tmp_path: Path) -> No
             criterion_index=1,
             text="Metric from one tool result.",
             tool_call_id="call_invented",
-            _runtime_successful_tool_calls=[{"call_id": "call_real", "tool": "market_data"}],
+            _runtime_observed_tool_calls=[{"call_id": "call_real", "tool": "market_data", "status": "ok"}],
         )
     )
 
     assert result["status"] == "error"
     assert result["error_type"] == "provenance"
-    assert result["tool_call_candidates"] == [{"call_id": "call_real", "tool": "market_data"}]
+    assert result["tool_call_candidates"] == [{"call_id": "call_real", "tool": "market_data", "status": "ok"}]
 
 
 def test_goal_evidence_synthesis_stays_unbound_to_single_call(tmp_path: Path) -> None:
@@ -263,9 +286,9 @@ def test_goal_evidence_synthesis_stays_unbound_to_single_call(tmp_path: Path) ->
             provenance_kind="synthesis",
             criterion_index=1,
             text="Comparison across performance and risk sources.",
-            _runtime_successful_tool_calls=[
-                {"call_id": "call_perf", "tool": "performance"},
-                {"call_id": "call_risk", "tool": "risk_xray"},
+            _runtime_observed_tool_calls=[
+                {"call_id": "call_perf", "tool": "performance", "status": "ok"},
+                {"call_id": "call_risk", "tool": "risk_xray", "status": "error"},
             ],
         )
     )
@@ -287,7 +310,7 @@ def test_goal_evidence_synthesis_rejects_single_call_binding(tmp_path: Path) -> 
             criterion_index=1,
             text="Comparison across sources.",
             tool_call_id="call_perf",
-            _runtime_successful_tool_calls=[{"call_id": "call_perf", "tool": "performance"}],
+            _runtime_observed_tool_calls=[{"call_id": "call_perf", "tool": "performance", "status": "ok"}],
         )
     )
 
