@@ -456,11 +456,11 @@ class AddGoalEvidenceTool(_GoalToolBase):
 
     name = "add_goal_evidence"
     description = (
-        "Attach a concise evidence note, artifact reference, or tool result to the current "
-        "research goal. Prefer linking evidence to a criterion by criterion_id or criterion_index. "
-        "When the evidence comes from one specific tool result, preserve that result's exact "
-        "tool_call_id; the returned evidence_id (ev_...) identifies the goal-ledger row and is "
-        "not a grounding source reference."
+        "Attach evidence to the current research goal with an explicit provenance shape. "
+        "Use provenance_kind=single_tool only for evidence from one concrete tool result and "
+        "copy its exact tool_call_id. Use synthesis for combined evidence and manual for notes "
+        "not attributable to one tool call. The runtime validates single-tool ids against calls "
+        "actually observed in this run; evidence_id (ev_...) is never a grounding source ref."
     )
     is_readonly = False
     parameters = {
@@ -487,12 +487,21 @@ class AddGoalEvidenceTool(_GoalToolBase):
                 "type": "string",
                 "description": "Optional host-injected current run directory. Omit unless provided by the runtime.",
             },
+            "provenance_kind": {
+                "type": "string",
+                "enum": ["single_tool", "synthesis", "manual"],
+                "description": (
+                    "Required provenance shape. single_tool means exactly one concrete tool result; "
+                    "synthesis combines multiple/no single tool result; manual is reasoning or a note "
+                    "not sourced from a tool result."
+                ),
+            },
             "tool_call_id": {
                 "type": "string",
                 "description": (
-                    "Optional provenance id of the specific tool result behind this evidence. "
-                    "When known, copy its tool_call_id verbatim. Never substitute an evidence_id "
-                    "(ev_...), tool name, shortened alias, or invented id."
+                    "For provenance_kind=single_tool, copy the exact observed tool call id verbatim. "
+                    "Never use an evidence_id (ev_...), tool name, alias, or invented id. Omit for "
+                    "synthesis/manual evidence."
                 ),
             },
             "source_provider": {"type": "string", "description": "Data or tool provider."},
@@ -516,7 +525,7 @@ class AddGoalEvidenceTool(_GoalToolBase):
             "confidence": {"type": "string", "description": "Optional confidence label."},
             "caveat": {"type": "string", "description": "Optional caveat."},
         },
-        "required": ["text"],
+        "required": ["text", "provenance_kind"],
     }
 
     def execute(self, **kwargs: Any) -> str:
@@ -547,6 +556,50 @@ class AddGoalEvidenceTool(_GoalToolBase):
                 criterion_id = str(criteria[index - 1]["criterion_id"])
             run_id, artifact_path, artifact_hash = _trace_fields_from_runtime(kwargs)
 
+            provenance_kind = str(kwargs.get("provenance_kind") or "").strip()
+            if provenance_kind not in {"single_tool", "synthesis", "manual"}:
+                return _json_error(
+                    "provenance_kind must be one of: single_tool, synthesis, manual"
+                )
+            tool_call_id = str(kwargs.get("tool_call_id") or "").strip() or None
+            runtime_calls_raw = kwargs.get("_runtime_successful_tool_calls") or []
+            runtime_calls = [
+                item
+                for item in runtime_calls_raw
+                if isinstance(item, dict)
+                and str(item.get("call_id") or "").strip()
+                and str(item.get("tool") or "").strip()
+            ]
+            observed_call_ids = {str(item["call_id"]).strip() for item in runtime_calls}
+            repair = {
+                "provenance_kind": provenance_kind,
+                "tool_call_candidates": runtime_calls,
+                "instructions": (
+                    "Choose the exact call_id of the single tool result that supports this evidence. "
+                    "Do not guess from recency or substitute a tool name/evidence_id. If the note "
+                    "combines multiple sources, retry with provenance_kind=synthesis and no tool_call_id."
+                ),
+            }
+            if provenance_kind == "single_tool":
+                if tool_call_id is None:
+                    return _json_error(
+                        "single_tool evidence requires tool_call_id",
+                        error_type="provenance",
+                        extra=repair,
+                    )
+                if tool_call_id not in observed_call_ids:
+                    return _json_error(
+                        "tool_call_id was not observed as a successful tool call in this run",
+                        error_type="provenance",
+                        extra=repair,
+                    )
+            elif tool_call_id is not None:
+                return _json_error(
+                    f"{provenance_kind} evidence must not declare a single tool_call_id",
+                    error_type="provenance",
+                    extra=repair,
+                )
+
             record = self._store.append_evidence(
                 session_id=session_id,
                 goal_id=goal_id,
@@ -556,7 +609,7 @@ class AddGoalEvidenceTool(_GoalToolBase):
                     claim_id=str(kwargs.get("claim_id") or "").strip() or None,
                     text=str(kwargs.get("text", "")),
                     run_id=run_id,
-                    tool_call_id=str(kwargs.get("tool_call_id") or "").strip() or None,
+                    tool_call_id=tool_call_id,
                     source_provider=str(kwargs.get("source_provider") or "agent_tool"),
                     source_type=str(kwargs.get("source_type") or "tool_note"),
                     source_uri=str(kwargs.get("source_uri") or "").strip() or None,
