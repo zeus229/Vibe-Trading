@@ -562,9 +562,13 @@ class AddGoalEvidenceTool(_GoalToolBase):
                     "provenance_kind must be one of: single_tool, synthesis, manual"
                 )
             tool_call_id = str(kwargs.get("tool_call_id") or "").strip() or None
-            runtime_calls_raw = kwargs.get("_runtime_successful_tool_calls") or []
+            runtime_calls_raw = kwargs.get("_runtime_observed_tool_calls") or []
             runtime_calls = [
-                item
+                {
+                    "call_id": str(item.get("call_id") or "").strip(),
+                    "tool": str(item.get("tool") or "").strip(),
+                    "status": str(item.get("status") or "").strip() or "unknown",
+                }
                 for item in runtime_calls_raw
                 if isinstance(item, dict)
                 and str(item.get("call_id") or "").strip()
@@ -575,7 +579,8 @@ class AddGoalEvidenceTool(_GoalToolBase):
                 "provenance_kind": provenance_kind,
                 "tool_call_candidates": runtime_calls,
                 "instructions": (
-                    "Choose the exact call_id of the single tool result that supports this evidence. "
+                    "Choose the exact call_id of the single executed tool result that supports this evidence, "
+                    "including an error result when the error itself is the finding. "
                     "Do not guess from recency or substitute a tool name/evidence_id. If the note "
                     "combines multiple sources, retry with provenance_kind=synthesis and no tool_call_id."
                 ),
