@@ -14,6 +14,7 @@ import src.agent.trace as trace_mod
 from src.agent.context import ContextBuilder
 from src.agent.loop import AgentLoop
 from src.agent.trace import TraceWriter
+from src.agent.tools import BaseTool, ToolRegistry
 
 
 class _Tool:
@@ -148,3 +149,72 @@ def test_session_trace_uses_session_dir_and_round_trips_long_answer(
     start = next(entry for entry in resolved if entry["type"] == "start")
     assert answer["content"] == result["content"]
     assert start["prompt"] == "hello from session"
+
+
+class _CaptureTool(BaseTool):
+    """Test tool that records the exact kwargs received by ToolRegistry.execute."""
+
+    description = "capture tool"
+    parameters: dict = {"type": "object", "properties": {}}
+    is_readonly = False
+    repeatable = True
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+        self.calls: list[dict[str, Any]] = []
+
+    def execute(self, **kwargs: Any) -> str:
+        self.calls.append(dict(kwargs))
+        return json.dumps({"status": "ok", "tool": self.name})
+
+
+def test_goal_evidence_runtime_injects_observed_calls_without_trace_pollution(tmp_path: Path) -> None:
+    """AgentLoop injects host-only provenance candidates into add_goal_evidence."""
+    market = _CaptureTool("market_data")
+    goal_start = _CaptureTool("start_research_goal")
+    add = _CaptureTool("add_goal_evidence")
+    registry = ToolRegistry()
+    registry.register(market)
+    registry.register(goal_start)
+    registry.register(add)
+    agent = AgentLoop(registry=registry, llm=SimpleNamespace(), max_iterations=3)
+
+    run_dir = tmp_path / "run-provenance"
+    run_dir.mkdir()
+    agent.memory.run_dir = str(run_dir)
+    trace = TraceWriter(run_dir)
+    messages: list[dict[str, Any]] = []
+    react_trace: list[dict[str, Any]] = []
+
+    market_tc = SimpleNamespace(id="call_market", name="market_data", arguments={"period": "mtd"})
+    goal_tc = SimpleNamespace(id="call_goal", name="start_research_goal", arguments={"objective": "x"})
+    add_args = {"text": "metric", "provenance_kind": "single_tool", "tool_call_id": "call_market"}
+    add_tc = SimpleNamespace(id="call_add", name="add_goal_evidence", arguments=dict(add_args))
+
+    agent._execute_single(market_tc, ContextBuilder, messages, trace, react_trace, 1)
+    agent._execute_single(goal_tc, ContextBuilder, messages, trace, react_trace, 2)
+    before_key = agent._identical_call_key("add_goal_evidence", add_tc.arguments)
+    agent._execute_single(add_tc, ContextBuilder, messages, trace, react_trace, 3)
+    after_key = agent._identical_call_key("add_goal_evidence", add_tc.arguments)
+    trace.close()
+
+    assert add.calls == [
+        {
+            **add_args,
+            "run_dir": str(run_dir),
+            "_runtime_successful_tool_calls": [
+                {"call_id": "call_market", "tool": "market_data"}
+            ],
+        }
+    ]
+    assert add_tc.arguments == add_args
+    assert before_key == after_key
+
+    entries = TraceWriter.read(run_dir, resolve_offloads=True)
+    add_trace = next(
+        entry
+        for entry in entries
+        if entry.get("type") == "tool_call" and entry.get("call_id") == "call_add"
+    )
+    assert "_runtime_successful_tool_calls" not in add_trace["args"]
+    assert add_trace["args"]["tool_call_id"] == "call_market"
