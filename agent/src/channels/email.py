@@ -1,6 +1,7 @@
 """Email channel implementation using IMAP polling + SMTP replies."""
 
 import asyncio
+from io import BytesIO
 import html
 import imaplib
 import mimetypes
@@ -28,6 +29,7 @@ from src.channels.base import BaseChannel
 from src.channels.utils import get_media_dir
 from pydantic import BaseModel
 from src.channels.utils import email_tls_context, safe_filename, send_imap_id
+from src.channels.rich_text import render_email_html
 
 
 class EmailConfig(BaseModel):
@@ -76,6 +78,13 @@ class EmailConfig(BaseModel):
     allowed_attachment_types: list[str] = Field(default_factory=list)
     max_attachment_size: int = 2_000_000  # 2MB per attachment
     max_attachments_per_email: int = 5
+
+    # Outbound presentation. Plain preserves the historical behavior.
+    outbound_format: Literal["plain", "html", "html+pdf"] = "plain"
+    pdf_filename: str = "vibe-trading-report.pdf"
+    # Optional operator-managed secret used only when a message explicitly
+    # requests PDF protection. Never persist this value in scheduled jobs.
+    pdf_password: str = ""
 
 
 @dataclass
@@ -231,6 +240,11 @@ class EmailChannel(BaseChannel):
         """
         return await email_probe.test_connection(self.config)
 
+    @property
+    def pdf_password_configured(self) -> bool:
+        """Return whether an operator-managed PDF password is configured."""
+        return bool(self.config.pdf_password)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send email via SMTP."""
         if not self.config.consent_granted:
@@ -309,11 +323,74 @@ class EmailChannel(BaseChannel):
             fallback = "\n".join(failed_attachments)
             content = f"{content.rstrip()}\n\n{fallback}" if content.strip() else fallback
 
+        # A caller may override presentation for this message without changing
+        # the channel-wide default.
+        metadata_format = (msg.metadata or {}).get("delivery_format")
+        outbound_format = (
+            metadata_format
+            if metadata_format in {"plain", "html", "pdf"}
+            else self.config.outbound_format
+        )
+
         email_msg = EmailMessage()
         email_msg["From"] = self.config.from_address or self.config.smtp_username or self.config.imap_username
         email_msg["To"] = to_addr
         email_msg["Subject"] = subject
-        email_msg.set_content(content)
+
+        protect_pdf = bool((msg.metadata or {}).get("protect_pdf"))
+        if protect_pdf and outbound_format != "pdf":
+            raise ValueError("PDF protection requires PDF delivery")
+
+        if outbound_format == "pdf":
+            # Keep the full report in the attachment; the message body is only
+            # a short delivery notice.
+            attachment_body = "Report attached as PDF."
+            email_msg.set_content(attachment_body)
+            email_msg.add_alternative(render_email_html(attachment_body), subtype="html")
+            try:
+                from weasyprint import HTML
+
+                report_html = render_email_html(content)
+                pdf_data = HTML(string=report_html).write_pdf()
+                if protect_pdf:
+                    pdf_data = self._encrypt_pdf(pdf_data)
+                pdf_name = safe_filename(self.config.pdf_filename.strip()) or "vibe-trading-report.pdf"
+                if not pdf_name.lower().endswith(".pdf"):
+                    pdf_name += ".pdf"
+                email_msg.add_attachment(
+                    pdf_data,
+                    maintype="application",
+                    subtype="pdf",
+                    filename=pdf_name,
+                )
+            except Exception:
+                # Do not silently fall back to putting the report in the body.
+                self.logger.exception("Failed to render required PDF attachment")
+                raise
+        else:
+            email_msg.set_content(content)
+            if outbound_format in {"html", "html+pdf"}:
+                rich_html = render_email_html(content)
+                email_msg.add_alternative(rich_html, subtype="html")
+
+                # Preserve the existing channel-wide html+pdf mode.
+                if outbound_format == "html+pdf":
+                    try:
+                        from weasyprint import HTML
+
+                        pdf_data = HTML(string=rich_html).write_pdf()
+                        pdf_name = safe_filename(self.config.pdf_filename.strip()) or "vibe-trading-report.pdf"
+                        if not pdf_name.lower().endswith(".pdf"):
+                            pdf_name += ".pdf"
+                        email_msg.add_attachment(
+                            pdf_data,
+                            maintype="application",
+                            subtype="pdf",
+                            filename=pdf_name,
+                        )
+                    except Exception:
+                        # Rich HTML remains available; never replace the plain fallback.
+                        self.logger.exception("Failed to render optional PDF attachment")
 
         for data, maintype, subtype, filename in attachments:
             email_msg.add_attachment(
@@ -333,6 +410,22 @@ class EmailChannel(BaseChannel):
         except Exception:
             self.logger.exception("Error sending to %s", to_addr)
             raise
+
+    def _encrypt_pdf(self, pdf_data: bytes) -> bytes:
+        """Encrypt a generated report PDF with the operator-managed password."""
+        password = self.config.pdf_password
+        if not password:
+            raise RuntimeError("PDF protection requested but no PDF password is configured")
+
+        from pypdf import PdfReader, PdfWriter
+
+        reader = PdfReader(BytesIO(pdf_data))
+        writer = PdfWriter()
+        writer.append_pages_from_reader(reader)
+        writer.encrypt(user_password=password, algorithm="AES-256")
+        output = BytesIO()
+        writer.write(output)
+        return output.getvalue()
 
     def _validate_config(self) -> bool:
         missing = []

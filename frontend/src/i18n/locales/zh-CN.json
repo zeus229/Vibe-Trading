@@ -204,6 +204,15 @@
     "deliveryTargetPlaceholder": "会话 / 群 / 用户 id",
     "deliveryHint": "默认关闭。简报在运行**结束后**推送，而不是在排定时推送。",
     "deliveryTargetRequired": "请为该频道填写目标，或清空频道。",
+    "deliveryFormatLabel": "Email report format",
+    "deliveryFormatDefault": "Channel default (plain text)",
+    "deliveryFormatHtml": "Email HTML",
+    "deliveryFormatPdf": "PDF attachment",
+    "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
+    "deliveryFormatHtmlHint": "Sends the full report in the email body.",
+    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection.",
     "delivery_none": "下次运行结束后推送到 {{channel}}",
     "delivery_pending": "待推送到 {{channel}}",
     "delivery_sending": "正在推送到 {{channel}}",
@@ -589,6 +598,10 @@
           "smtp_password": {
             "label": "SMTP 密码",
             "help": "SMTP 密码或应用专用密码。仅保存在服务端，不会回传给浏览器。"
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",

@@ -32,6 +32,7 @@ _INTERNAL = frozenset(
         "manager",
         "pairing",
         "qq_probe",
+        "rich_text",
         "registry",
         "runtime",
         "targets",
