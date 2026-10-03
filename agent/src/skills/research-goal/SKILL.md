@@ -43,7 +43,15 @@ Use this shape when the user did not provide criteria:
 - Keep evidence short and concrete.
 - Prefer artifact-backed evidence when a tool produced a run or file.
 - Include `run_id`, `artifact_path`, `source_provider`, `source_type`, `symbol_universe`, `benchmark`, and `data_as_of` when known.
-- `tool_call_id` is traceability only. Completion needs verified evidence from an existing `run_id` or an allowed `artifact_path` with a matching sha256 hash.
+- Record direct tool evidence immediately after the tool result you intend to use, before moving on to unrelated research. If one exact number, date, status, or error comes from one call, create a separate `single_tool` evidence row for that call; do not postpone it and fold several direct results into one `synthesis` row.
+- A later `synthesis` row may compare or summarize several already-recorded direct evidence rows, but it does not replace their `single_tool` provenance.
+- Every `add_goal_evidence` call must declare `provenance_kind`:
+  - `single_tool`: the note is backed by exactly one concrete tool result, including a structured error when that error is itself the finding. Copy that result's exact `tool_call_id`. If the runtime rejects it, choose only from the returned observed candidates; never guess from recency.
+  - `synthesis`: the note combines multiple sources or has no single source tool call. Omit `tool_call_id`.
+  - `manual`: reasoning or a note not sourced from a tool result. Omit `tool_call_id`.
+- Never use a tool name, shortened alias, invented id, or "last tool call" as provenance.
+- `evidence_id` values such as `ev_...` identify rows in the research-goal ledger. They are used by goal audits and are never grounding source refs; do not write `ev_...::field` in a figures declaration.
+- `tool_call_id` preserves provenance but does not verify goal completion by itself. Completion still needs verified evidence from an existing `run_id` or an allowed `artifact_path` with a matching sha256 hash.
 - Do not mark live trading instructions as evidence. Refuse or reframe them as research-only analysis.
 
 ## Completion Rules
