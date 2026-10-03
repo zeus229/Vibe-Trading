@@ -330,7 +330,7 @@ def test_goal_evidence_tool_schema_distinguishes_call_and_evidence_ids() -> None
     assert AddGoalEvidenceTool.parameters["required"] == ["text", "provenance_kind"]
     assert "evidence_id (ev_...)" in description
     assert "exact observed tool call id" in call_description
-    assert "Never substitute an evidence_id" in call_description
+    assert "Never use an evidence_id" in call_description
 
 
 def test_goal_status_tool_can_cancel_current_goal(tmp_path: Path) -> None:
