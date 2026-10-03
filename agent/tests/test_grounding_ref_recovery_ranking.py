@@ -167,3 +167,67 @@ def test_feedback_deduplicates_candidate_already_rendered_as_source(tmp_path: Pa
     prompt = ledger.correction_prompt(result)
     candidate = f"{CALL_B}::data.portfolio_return_pct"
     assert prompt.count(candidate) == 1
+
+
+def test_session_run_alias_ref_hints_exact_call_id(tmp_path: Path) -> None:
+    """A real run scope plus presentation alias stays invalid but gets exact repair refs."""
+    ledger = _ledger(
+        tmp_path,
+        (CALL_A, _returns(0.47)),
+        (CALL_B, _returns(9.15)),
+    )
+    run_id = "20261003_030352_59_a78245"
+    original_artifact_scope = ledger._artifact_scope
+
+    def artifact_scope(key: str):
+        if key == run_id:
+            return [object()]
+        return original_artifact_scope(key)
+
+    ledger._artifact_scope = artifact_scope  # type: ignore[method-assign]
+
+    result = ledger.validate_final_answer(
+        _answer(
+            "0.47%",
+            f"{run_id}::performance_mtd.data.portfolio_return_pct",
+        )
+    )
+
+    assert result.valid is False
+    issue = result.issues[0]
+    assert issue["reason"] == "session_scope_needs_call_id"
+    assert issue["field_ref_candidates"][0] == f"{CALL_A}::data.portfolio_return_pct"
+
+    prompt = ledger.correction_prompt(result)
+    assert f"{CALL_A}::data.portfolio_return_pct" in prompt
+
+    corrected = ledger.validate_final_answer(
+        _answer("0.47%", f"{CALL_A}::data.portfolio_return_pct")
+    )
+    assert corrected.valid is True, corrected.issues
+
+
+def test_session_run_alias_repair_ranks_matching_call_first(tmp_path: Path) -> None:
+    """Multiple calls sharing a field are ranked by the rejected figure's value."""
+    ledger = _ledger(
+        tmp_path,
+        (CALL_A, _returns(0.47)),
+        (CALL_B, _returns(9.15)),
+    )
+    run_id = "20261003_030352_59_a78245"
+    original_artifact_scope = ledger._artifact_scope
+    ledger._artifact_scope = (  # type: ignore[method-assign]
+        lambda key: [object()] if key == run_id else original_artifact_scope(key)
+    )
+
+    result = ledger.validate_final_answer(
+        _answer(
+            "9.15%",
+            f"{run_id}::performance_ytd.data.portfolio_return_pct",
+        )
+    )
+
+    assert result.valid is False
+    candidates = result.issues[0]["field_ref_candidates"]
+    assert candidates[0] == f"{CALL_B}::data.portfolio_return_pct"
+    assert f"{CALL_A}::data.portfolio_return_pct" in candidates
