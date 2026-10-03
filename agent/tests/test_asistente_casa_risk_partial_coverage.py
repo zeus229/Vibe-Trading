@@ -54,3 +54,27 @@ def test_strict_full_basket_remains_primary_path():
     assert meta["coverage_mode"] == "strict_full_basket"
     assert meta["excluded_symbols"] == []
     assert weights == {"AAA": 0.6, "BBB": 0.4}
+
+
+def test_partial_fallback_can_exclude_zero_history_symbol_when_weight_is_small():
+    dates = pd.date_range("2026-01-01", periods=40, freq="B")
+    panel = pd.DataFrame(
+        {
+            "AAA": range(40),
+            "BBB": range(100, 140),
+            "NEW": [None] * 40,
+        },
+        index=dates,
+        dtype=float,
+    )
+
+    closes, weights, meta = _select_risk_panel(
+        panel,
+        {"AAA": 0.55, "BBB": 0.40, "NEW": 0.05},
+    )
+
+    assert len(closes) == 40
+    assert meta["coverage_mode"] == "partial_high_coverage"
+    assert meta["excluded_symbols"] == ["NEW"]
+    assert meta["included_weight_pct"] == pytest.approx(95.0)
+    assert sum(weights.values()) == pytest.approx(1.0)
