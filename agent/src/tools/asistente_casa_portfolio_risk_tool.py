@@ -353,19 +353,18 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             raise ValueError("Asistente Casa market-history policy is not persisted_only")
         if str(history_payload.get("interval") or "").upper() != "1D":
             raise ValueError("Asistente Casa market-history interval is not 1D")
-        if not history_payload.get("complete"):
+        unresolved = list(history_payload.get("unresolved_symbols") or [])
+        unsafe = list(history_payload.get("unsafe_symbols") or [])
+        if unresolved or unsafe:
             raise ValueError(
-                "Asistente Casa historical coverage incomplete: "
-                f"unresolved={history_payload.get('unresolved_symbols')}, "
-                f"unsafe={history_payload.get('unsafe_symbols')}, "
-                f"without_history={history_payload.get('symbols_without_history')}"
+                "Asistente Casa historical coverage has unresolved/unsafe identities: "
+                f"unresolved={unresolved}, unsafe={unsafe}"
             )
+        history_response_complete = bool(history_payload.get("complete"))
 
         series: dict[str, pd.Series] = {}
         for symbol in symbols:
             observations = history_payload.get("series", {}).get(symbol, {}).get("observations", [])
-            if not observations:
-                raise ValueError(f"no historical observations for {symbol}")
             series[symbol] = pd.Series(
                 {pd.Timestamp(row["date"]): float(row["close"]) for row in observations},
                 name=symbol,
@@ -417,7 +416,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "scope_value_ars": portfolio_block.get("scope_value_ars"),
                 "weight_sum": weight_sum,
                 "risk_weight_sum": sum(risk_weights.values()),
-                "history_complete": True,
+                "history_complete": history_response_complete,
                 "risk_scope_complete": coverage_meta["coverage_mode"] == "strict_full_basket",
                 "raw_close_observations": len(closes_raw),
                 "full_basket_common_date_count": full_basket_common_date_count,
