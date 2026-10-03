@@ -966,6 +966,11 @@ class AgentLoop:
         # Capture successful identities before context collapse can stub args.
         # Skipped/error call IDs never enter this ledger.
         self._successful_call_keys: dict[str, tuple[str, str]] = {}
+        # Every call that actually reached a tool implementation is a valid
+        # provenance candidate, even when the tool returned a structured error
+        # (for example, "insufficient history"). Synthetic blocked/skipped
+        # calls are intentionally excluded.
+        self._observed_tool_calls: dict[str, dict[str, str]] = {}
         self._cancel_event = threading.Event()
         self._previous_summary: str = ""
         self._persistent_memory = persistent_memory
@@ -1107,6 +1112,7 @@ class AgentLoop:
             self._has_run = True
         self._called_ok = set()
         self._successful_call_keys = {}
+        self._observed_tool_calls = {}
         self._previous_summary = ""
         self._released_fallback = False
         self._released_fallback_reason = None
@@ -2497,6 +2503,7 @@ class AgentLoop:
                 )
                 self._readonly_replay_visibility_pending.add(tc.id)
                 self._successful_call_keys[tc.id] = dedup_key
+                self._observed_tool_calls[tc.id] = {"call_id": str(tc.id), "tool": str(tc.name), "status": "ok"}
                 self._called_ok.add(dedup_key)
                 self._readonly_replay_ready.discard(dedup_key)
                 self._readonly_replay_recoveries += 1
@@ -2569,6 +2576,7 @@ class AgentLoop:
                     cached = self._called_identical[cache_key]
                     messages.append(context.format_tool_result(tc.id, tc.name, cached))
                     self._successful_call_keys[tc.id] = cache_key
+                    self._observed_tool_calls[tc.id] = {"call_id": str(tc.id), "tool": str(tc.name), "status": "ok"}
                     self._called_ok.add(cache_key)
                     trace.write({
                         "type": "tool_result_cached",
@@ -2874,10 +2882,10 @@ class AgentLoop:
         # source from tool name, recency, or evidence text.
         if tool_name == "add_goal_evidence":
             args = dict(args)
-            args["_runtime_successful_tool_calls"] = [
-                {"call_id": call_id, "tool": key[0]}
-                for call_id, key in self._successful_call_keys.items()
-                if key[0]
+            args["_runtime_observed_tool_calls"] = [
+                dict(item)
+                for item in self._observed_tool_calls.values()
+                if item["tool"]
                 not in {
                     "start_research_goal",
                     "get_research_goal",
@@ -3388,6 +3396,11 @@ class AgentLoop:
 
         success = _is_tool_success(result)
         if update_memory:
+            self._observed_tool_calls[tc.id] = {
+                "call_id": str(tc.id),
+                "tool": str(tc.name),
+                "status": "ok" if success else "error",
+            }
             self._tool_progress.record(
                 tc.name,
                 self._identical_call_key(tc.name, tc.arguments),
