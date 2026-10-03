@@ -202,8 +202,8 @@ def test_goal_evidence_runtime_injects_observed_calls_without_trace_pollution(tm
         {
             **add_args,
             "run_dir": str(run_dir),
-            "_runtime_successful_tool_calls": [
-                {"call_id": "call_market", "tool": "market_data"}
+            "_runtime_observed_tool_calls": [
+                {"call_id": "call_market", "tool": "market_data", "status": "ok"}
             ],
         }
     ]
@@ -216,5 +216,49 @@ def test_goal_evidence_runtime_injects_observed_calls_without_trace_pollution(tm
         for entry in entries
         if entry.get("type") == "tool_call" and entry.get("call_id") == "call_add"
     )
-    assert "_runtime_successful_tool_calls" not in add_trace["args"]
+    assert "_runtime_observed_tool_calls" not in add_trace["args"]
     assert add_trace["args"]["tool_call_id"] == "call_market"
+
+
+class _ErrorCaptureTool(_CaptureTool):
+    """Capture tool that returns a structured error result."""
+
+    def execute(self, **kwargs: Any) -> str:
+        self.calls.append(dict(kwargs))
+        return json.dumps({"status": "error", "error": "insufficient history"})
+
+
+def test_goal_evidence_runtime_includes_executed_error_calls(tmp_path: Path) -> None:
+    """Negative findings keep provenance to the tool call that returned the error."""
+    risk = _ErrorCaptureTool("risk_xray")
+    add = _CaptureTool("add_goal_evidence")
+    registry = ToolRegistry()
+    registry.register(risk)
+    registry.register(add)
+    agent = AgentLoop(registry=registry, llm=SimpleNamespace(), max_iterations=2)
+
+    run_dir = tmp_path / "run-error-provenance"
+    run_dir.mkdir()
+    agent.memory.run_dir = str(run_dir)
+    trace = TraceWriter(run_dir)
+    messages: list[dict[str, Any]] = []
+    react_trace: list[dict[str, Any]] = []
+
+    risk_tc = SimpleNamespace(id="call_risk_error", name="risk_xray", arguments={"scope": "CEDEARS"})
+    add_tc = SimpleNamespace(
+        id="call_add_error",
+        name="add_goal_evidence",
+        arguments={
+            "text": "Risk X-Ray unavailable because history is insufficient.",
+            "provenance_kind": "single_tool",
+            "tool_call_id": "call_risk_error",
+        },
+    )
+
+    agent._execute_single(risk_tc, ContextBuilder, messages, trace, react_trace, 1)
+    agent._execute_single(add_tc, ContextBuilder, messages, trace, react_trace, 2)
+    trace.close()
+
+    assert add.calls[0]["_runtime_observed_tool_calls"] == [
+        {"call_id": "call_risk_error", "tool": "risk_xray", "status": "error"}
+    ]
