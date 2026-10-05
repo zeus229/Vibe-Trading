@@ -1751,9 +1751,68 @@ class AgentLoop:
                                     final_content = repaired
                                     validation = recheck
                         if validation.valid:
-                            # The figures block is the model's declaration to
-                            # the gate, not answer text.
-                            final_content = validation.released_text
+                            # A validated answer can still be a stub that declines
+                            # the explicit recovery tool call and silently drops
+                            # the rejected research. Preserve the production
+                            # fail-closed behavior for that case.
+                            stub = self._grounding.pending_recovery_stub(final_content)
+                            if stub is not None:
+                                rejected_draft, rejected_validation = stub
+                                released = self._grounding.redacted_release(
+                                    rejected_draft, rejected_validation
+                                )
+                                if released is not None:
+                                    trace.write(
+                                        {
+                                            "type": "answer_released_redacted",
+                                            "iter": current_iter,
+                                            "issues": rejected_validation.issues,
+                                            "reason": "recovery_declined_stub",
+                                        }
+                                    )
+                                    react_trace.append(
+                                        {
+                                            "type": "answer_released_redacted",
+                                            "issues": rejected_validation.issues,
+                                        }
+                                    )
+                                    final_content = released
+                                    self._emit(
+                                        "grounding_status",
+                                        {
+                                            "stage": "released_redacted",
+                                            "removed": self._grounding.figures_removed,
+                                        },
+                                    )
+                                    self._released_fallback_reason = (
+                                        "the model declined the requested recovery tool "
+                                        "call and replied with a short operational message "
+                                        "instead of a revised draft; released the original "
+                                        "research with its unverified figures redacted"
+                                    )
+                                else:
+                                    final_content = self._grounding.safe_fallback()
+                                    self._released_fallback_reason = (
+                                        "the model declined the requested recovery tool "
+                                        "call and the original research could not be "
+                                        "released safely"
+                                    )
+                                self._released_fallback = True
+                                trace.write(
+                                    {
+                                        "type": "recovery_stub_discarded",
+                                        "iter": current_iter,
+                                    }
+                                )
+                                react_trace.append({"type": "recovery_stub_discarded"})
+                                self._emit(
+                                    "text_delta",
+                                    {"delta": final_content, "iter": current_iter},
+                                )
+                            else:
+                                # The figures block is the model's declaration
+                                # to the gate, not answer text.
+                                final_content = validation.released_text
                         if not validation.valid:
                             if not forced_grounding_release:
                                 trace.write_text_entry(
@@ -1787,7 +1846,9 @@ class AgentLoop:
                                 # Explicit bounded recovery is the one case where
                                 # the next turn is allowed to research again.
                                 grounding_correction_text_only = False
-                                self._grounding.record_recovery(recovery)
+                                self._grounding.record_recovery(
+                                    recovery, draft=final_content, validation=validation
+                                )
                                 trace.write(
                                     {
                                         "type": "grounding_recovery",
