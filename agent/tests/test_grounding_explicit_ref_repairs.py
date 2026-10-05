@@ -178,3 +178,60 @@ def test_aggregate_scope_feedback_preserves_fail_closed_and_explains_rewrite(tmp
     assert not ledger._aggregate_exact_ref_match(
         "portfolio_summary::data.concentration.top1_pct", figure
     )
+
+
+def test_compact_queue_surfaces_rejected_issues_beyond_detailed_cap(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
+    issues = [
+        {
+            "code": "numeric_claim_conflict",
+            "value": f"{index}.00%",
+            "role": "observed",
+            "reason": "field_ref_needs_call_id",
+            "source_tool_call_ids": ["tool::data.metric"],
+            "field_ref_candidates": [f"call_{index}::data.metric"],
+            **(
+                {"aggregate_ref_candidate": f"call_{index}::data.metric"}
+                if index == 29
+                else {}
+            ),
+        }
+        for index in range(30)
+    ]
+    from src.agent.grounding.policies import ValidationResult
+
+    prompt = ledger.correction_prompt(
+        ValidationResult(valid=False, issues=issues, released_text="", passed_figures=())
+    )
+
+    assert "There are 30 rejected issue(s) total" in prompt
+    assert "call_29::data.metric" in prompt
+    assert "aggregate=keep value/ref but rewrite as portfolio-level" in prompt
+    assert "EVERY remaining issue below is also rejected" in prompt
+
+
+def test_prompt_never_says_unlisted_rejected_figures_checked_clean(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
+    from src.agent.grounding.policies import ValidationResult
+
+    issues = [
+        {
+            "code": "numeric_claim_conflict",
+            "value": f"{index}.00%",
+            "role": "observed",
+            "reason": "not_in_referenced_call",
+            "source_tool_call_ids": ["wrong::field"],
+        }
+        for index in range(25)
+    ]
+    result = ValidationResult(
+        valid=False,
+        issues=issues,
+        released_text="",
+        passed_figures=("1.23%",),
+    )
+    prompt = ledger.correction_prompt(result)
+
+    assert "Every other measured figure in the draft checked clean" not in prompt
+    assert "only the figures listed above need work" not in prompt
+    assert "Do not infer that an unlisted figure passed" in prompt
