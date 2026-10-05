@@ -1827,6 +1827,13 @@ class _PolicyMixin:
                         )
                     ]
                 if call_field_candidates:
+                    aggregate_candidate = (
+                        symbol is not None
+                        and len(call_field_candidates) == 1
+                        and self._aggregate_exact_ref_match(
+                            call_field_candidates[0], figure
+                        )
+                    )
                     return [
                         self._figure_issue(
                             "numeric_claim_conflict",
@@ -1839,6 +1846,11 @@ class _PolicyMixin:
                             source_tool_call_ids=[declaration.ref],
                             ambiguous_sources=call_field_candidates,
                             field_ref_candidates=call_field_candidates,
+                            **(
+                                {"aggregate_ref_candidate": call_field_candidates[0]}
+                                if aggregate_candidate
+                                else {}
+                            ),
                         )
                     ]
                 session_scope_candidates = self._session_scope_field_ref_candidates(
