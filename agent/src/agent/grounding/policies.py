@@ -20,10 +20,9 @@ from src.agent.grounding.identity import (
     _normalize_symbol,
     _scan_symbols,
 )
-from src.agent.grounding import identity_checks  # noqa: F401  (registers declared checks)
-from src.agent.grounding.registry import GROUNDING_CHECKS
 from src.agent.grounding.evidence import (
     EvidenceRecord,
+    _record_matches_entity,
     _is_metadata_count_leaf,
     _is_number,
     _is_price_kind,
@@ -43,20 +42,36 @@ from src.agent.grounding.figures import (
 
 import re
 
-# ``a.0.b`` and ``a[0].b`` name the same list element; evidence paths are
-# emitted with brackets, so refs are compared in that spelling.
-_DOTTED_INDEX_RE = re.compile(r"(?<=\w)\.(\d+)(?=\.|\[|$)")
-_INDEX_RE = re.compile(r"\[\d+\]")
-_MAX_INDEXED_REF_CANDIDATES = 12
-#: A container ref is answered only with leaves that hold the figure's value, so
-#: a handful is enough; calls returning one field are capped the same way.
-_MAX_CONTAINER_REF_CANDIDATES = 5
-_MAX_CALL_REF_CANDIDATES = 5
+#: An answer that relabels a locked listed identity as private contradicts the
+#: resolver, which is an identity finding rather than a figure finding.
+_PRIVATE_ASSERTION_RE = re.compile(
+    r"(?:\b(?:is|remains|still)\s+(?:an?\s+)?(?:private company|privately held)\b|"
+    r"\bnot publicly traded\b|\bunlisted company\b|"
+    r"(?:是|仍是|属于)(?:一家)?(?:私人|私营|非上市)公司|未上市|没有上市)",
+    re.IGNORECASE,
+)
 
-
-def _index_normalized(path: str) -> str:
-    """Spell dotted collection indices with brackets (``a.0.b`` -> ``a[0].b``)."""
-    return _DOTTED_INDEX_RE.sub(r"[\1]", path)
+# Positive wording for a market quote. Currency alone is not sufficient: EPS,
+# revenue, net income, and other financial amounts are also currency-marked.
+_MARKET_PRICE_CONTEXT_RE = re.compile(
+    r"(?:"
+    r"\bprice\s+target\b|\btarget\s+price\b|"
+    r"\bentry\s+price\b|\bbuy(?:ing)?\s+price\b|\bpurchase\s+price\b|"
+    r"\bclosing\s+price\b|\bopening\s+price\b|"
+    r"\bclos(?:e|ed)\s+at\b|\bopen(?:ed)?\s+at\b|"
+    r"\bintraday\s+high\b|\bintraday\s+low\b|"
+    r"\bprice\s+support\b|\bprice\s+resistance\b|"
+    r"precio\s+de\s+cierre|precio\s+de\s+apertura|precio\s+objetivo|"
+    r"precio\s+de\s+entrada|precio\s+de\s+compra|"
+    r"cerr[oó]\s+en|abri[oó]\s+en|"
+    r"cotizaci[oó]n|cotiz[oó]\b|"
+    r"m[aá]ximo\s+intradiario|m[ií]nimo\s+intradiario|"
+    r"soporte\s+de\s+precio|resistencia\s+de\s+precio|"
+    r"nivel\s+de\s+soporte|nivel\s+de\s+resistencia|"
+    r"开盘价|收盘价|最高价|最低价|现价|目标价|止损价|买入价|入场价|支撑位|阻力位|报价"
+    r")",
+    re.IGNORECASE,
+)
 
 # Loader ids are ASCII but the answer follows the user's language, so a source
 # is surfaced by any alias ("数据来源：腾讯财经" for ``tencent``).
@@ -98,6 +113,22 @@ _OTHER_CURRENCY_PREFIXES = "港美日欧韩台新加澳"
 
 #: Relative band a value must fall in to count as matching evidence.
 _TOLERANCE = 0.005
+
+#: Most exact refs a correction lists for a ref whose call id names nothing.
+_MAX_FIELD_REF_CANDIDATES = 5
+
+# a.0.b and a[0].b name the same list element; evidence paths are
+# emitted with brackets, so refs are compared in that spelling.
+_DOTTED_INDEX_RE = re.compile(r"(?<=\w)\.(\d+)(?=\.|\[|$)")
+_INDEX_RE = re.compile(r"\[\d+\]")
+_MAX_INDEXED_REF_CANDIDATES = 12
+_MAX_CONTAINER_REF_CANDIDATES = 5
+_MAX_CALL_REF_CANDIDATES = 5
+
+
+def _index_normalized(path: str) -> str:
+    """Spell dotted collection indices with brackets."""
+    return _DOTTED_INDEX_RE.sub(r"[\1]", path)
 
 #: A plain integer is read as a price only for an instrument quoted in the
 #: thousands (600519.SH, an index, BTC). Below that, a prose integer is a window,
@@ -442,7 +473,6 @@ def _formula_in_note(note: str) -> tuple[float, list[float], ast.Expression] | N
     return None
 
 
-
 def _has_explicit_percent_scale(note: str) -> bool:
     """Whether a percentage formula explicitly converts a fraction by 100."""
     return bool(re.search(r"(?:×|✕|\*)\s*100(?:\.0+)?\b", note))
@@ -479,7 +509,29 @@ class _PolicyMixin:
                     ),
                 }
             )
-        issues.extend(GROUNDING_CHECKS.run("listed-identity-relabelled-private", self, content))
+        listed = [
+            record
+            for record in self._identities.values()
+            if record.status == "locked"
+            and record.instrument_type in {"listed_security", "fund"}
+        ]
+        if listed and _PRIVATE_ASSERTION_RE.search(content):
+            symbols = sorted(record.symbol for record in listed if record.symbol)
+            issues.append(
+                {
+                    "code": "listed_identity_relabelled_private",
+                    "symbols": symbols,
+                    "value": None,
+                    "role": None,
+                    "span": None,
+                    "symbol": None,
+                    "reason": "listed_relabelled_private",
+                    "message": (
+                        f"Locked listed identity {', '.join(symbols)} was relabelled as "
+                        "private/unlisted without a conflicting resolver result."
+                    ),
+                }
+            )
         return issues
 
     def _validate_figures(
@@ -683,6 +735,26 @@ class _PolicyMixin:
         market_records = self._price_records()
         if checked_price and market_records:
             issues.extend(self._validate_price_provenance(content, market_records))
+
+        # Keep upstream issue codes/reasons intact while restoring additive semantic
+        # metadata needed by bounded recovery and selective redaction. Attach it only
+        # to numeric figure issues; other issue classes remain explicitly unclassified.
+        figures_by_span = {(figure.start, figure.end): figure for figure in figures}
+        for issue in issues:
+            if issue.get("code") not in {"numeric_claim_unavailable", "numeric_claim_conflict"}:
+                continue
+            span = issue.get("span")
+            if not isinstance(span, (list, tuple)) or len(span) != 2:
+                continue
+            figure = figures_by_span.get((span[0], span[1]))
+            if figure is None:
+                continue
+            declaration = block.match(figure.value, figure.percent, figure.digits)
+            issue.update(
+                percent=figure.percent,
+                currency=figure.currency,
+                market_price=self._figure_is_market_price(content, figure, declaration),
+            )
         return issues
 
     @staticmethod
@@ -733,6 +805,21 @@ class _PolicyMixin:
                 return declared
         return self._written_symbol(content, figure, line_symbols, records) or document_symbol
 
+    @staticmethod
+    def _figure_is_market_price(
+        content: str, figure: Figure, declaration: Declaration | None
+    ) -> bool:
+        """Classify quote context positively; currency by itself is not a price."""
+        if figure.percent:
+            return False
+        if figure.column:
+            return _price_field_for_path(figure.column) is not None
+        left, right = segment_bounds(content, figure.start, figure.end)
+        return bool(
+            _MARKET_PRICE_CONTEXT_RE.search(content[left:right])
+            or (declaration is not None and _MARKET_PRICE_CONTEXT_RE.search(declaration.note))
+        )
+
     def _written_symbol(
         self,
         content: str,
@@ -773,7 +860,6 @@ class _PolicyMixin:
             for entry in self._analysis_metrics
         )
 
-
     def _referenced(
         self,
         ref: str,
@@ -810,7 +896,6 @@ class _PolicyMixin:
             [record for result in resolved for record in result[0]],
             [value for result in resolved for value in result[1]],
         )
-
 
     def _referenced_one(
         self,
@@ -898,7 +983,7 @@ class _PolicyMixin:
                     return None
         if symbol:
             records = [
-                record for record in records if not record.symbol or record.symbol == symbol
+                record for record in records if _record_matches_entity(record, symbol)
             ]
         if figure is not None and figure.column:
             # A table cell quotes its own column, not whatever else the call returned.
@@ -908,7 +993,9 @@ class _PolicyMixin:
             records = [
                 record
                 for record in records
-                if not _is_price_kind(record) and not _is_metadata_count_leaf(record.field)
+                if not _is_price_kind(record)
+                and not _is_metadata_count_leaf(record.field)
+                and record.unit != "count"
             ]
         elif figure is not None and figure.currency:
             records = [record for record in records if _is_price_kind(record)]
@@ -916,23 +1003,26 @@ class _PolicyMixin:
         return records, metrics
 
     def _analysis_entries(self, symbol: str | None) -> list[dict[str, Any]]:
-        """Scope metrics by explicit observed symbols recorded on their call.
-
-        Symbol-less aggregate calls remain eligible. A multi-symbol call cannot
-        attribute its otherwise unlabelled metric to one particular instrument.
-        Symbol-labelled EvidenceRecords remain available through their own path.
-        """
-        if not symbol:
-            return list(self._analysis_metrics)
+        """Scope analysis metrics to their own item, retaining legacy aggregates."""
         call_symbols: dict[str, set[str]] = {}
         for record in self._evidence:
             if record.symbol and record.status == "observed":
                 call_symbols.setdefault(record.call_id, set()).add(record.symbol)
-        return [
-            entry for entry in self._analysis_metrics
-            if not call_symbols.get(entry.get("call_id"))
-            or call_symbols[entry.get("call_id")] == {symbol}
-        ]
+        selected = []
+        for entry in self._analysis_metrics:
+            scope = entry.get("identity_scope")
+            if scope in {"unknown", "conflict"}:
+                continue
+            if not symbol:
+                selected.append(entry)
+            elif scope == "entity":
+                if entry.get("symbol") == symbol:
+                    selected.append(entry)
+            elif scope == "aggregate":
+                continue
+            elif not call_symbols.get(entry.get("call_id")) or call_symbols[entry["call_id"]] == {symbol}:
+                selected.append(entry)
+        return selected
 
     def _field_sources(
         self, field: str, symbol: str | None
@@ -1307,6 +1397,61 @@ class _PolicyMixin:
             return _is_price_kind(record)
         return True
 
+    def _field_ref_repair_candidates(
+        self, field: str, symbol: str | None, figure: Figure
+    ) -> list[str]:
+        """Find exact refs for a field path that may carry a model-added alias prefix."""
+        parts = [part for part in _index_normalized(field).split(".") if part]
+        variants = [".".join(parts[index:]) for index in range(len(parts))]
+        found: dict[str, list[float]] = {}
+        for candidate_field in variants:
+            records, entries = self._field_sources(candidate_field, symbol)
+            for record in records:
+                if record.call_id and record.field:
+                    label = self._ref_source(record.call_id, record.field, record.scope)[1]
+                    found.setdefault(label, []).append(float(record.value))
+            for entry in entries:
+                if entry.get("call_id") and entry.get("field"):
+                    label = self._ref_source(str(entry["call_id"]), str(entry["field"]), None)[1]
+                    found.setdefault(label, []).append(float(entry["value"]))
+            if found:
+                break
+        money = bool(figure.currency and not figure.percent)
+        compatible = {
+            label
+            for label, values in found.items()
+            if self._matches_evidence(figure, values, [] if money else values)
+        }
+        ranked = sorted(found, key=lambda label: (label not in compatible, label))
+        return ranked[:_MAX_FIELD_REF_CANDIDATES]
+
+    def _session_scope_field_ref_candidates(
+        self, ref: str, symbol: str | None, figure: Figure
+    ) -> list[str]:
+        """Repair ``run_or_artifact_scope::alias.path`` to exact call refs.
+
+        A run/artifact scope is a real session source, but it is not an exact
+        call identity for ordinary tool-returned values.  When the model also
+        prepends a presentation alias to the field path, keep the declaration
+        invalid and offer exact ``call_id::full.path`` candidates instead.
+        """
+        key = (ref or "").strip()
+        if "::" not in key:
+            return []
+        scope, field = (part.strip() for part in key.split("::", 1))
+        if not scope or not field:
+            return []
+        call_or_tool = (
+            any(scope in (record.call_id, record.tool) for record in self._evidence)
+            or any(
+                scope in (entry.get("call_id"), entry.get("tool"))
+                for entry in self._analysis_metrics
+            )
+        )
+        if call_or_tool or not self._artifact_scope(scope):
+            return []
+        return self._field_ref_repair_candidates(field, symbol, figure)
+
     def _unknown_call_field_ref_candidates(
         self, ref: str, symbol: str | None, figure: Figure
     ) -> list[str]:
@@ -1545,7 +1690,7 @@ class _PolicyMixin:
             if record.status == "observed"
             and record.value is not None
             and _metric_kind_for_path(record.field) is not None
-            and (not symbol or not record.symbol or record.symbol == symbol)
+            and _record_matches_entity(record, symbol)
         )
         return values
 
@@ -1657,6 +1802,24 @@ class _PolicyMixin:
                             field_ref_candidates=call_field_candidates,
                         )
                     ]
+                session_scope_candidates = self._session_scope_field_ref_candidates(
+                    declaration.ref, symbol, figure
+                )
+                if session_scope_candidates:
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "session_scope_needs_call_id",
+                            f"is declared observed from {declaration.ref}, whose left side names "
+                            "a session run/artifact rather than the exact tool call that returned "
+                            "this scalar",
+                            source_tool_call_ids=[declaration.ref],
+                            field_ref_candidates=session_scope_candidates,
+                        )
+                    ]
                 unknown_scope_candidates = self._unknown_call_field_ref_candidates(
                     declaration.ref, symbol, figure
                 )
@@ -1672,6 +1835,18 @@ class _PolicyMixin:
                             "is not a call id, tool or run of this session",
                             source_tool_call_ids=[declaration.ref],
                             field_ref_candidates=unknown_scope_candidates,
+                        )
+                    ]
+                if self._has_asistente_casa_evidence():
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "not_in_referenced_call",
+                            f"is declared observed from {declaration.ref}, which does not identify an exact session source",
+                            source_tool_call_ids=[declaration.ref],
                         )
                     ]
             values = [float(record.value) for record in scoped_records] + metric_values
@@ -1745,7 +1920,7 @@ class _PolicyMixin:
                     field_ref_candidates=list(
                         dict.fromkeys(
                             [
-                                *self._indexed_field_ref_candidates(declaration.ref, figure, symbol),
+                                *self._indexed_field_ref_candidates(declaration.ref, figure),
                                 *self._other_call_field_ref_candidates(declaration.ref, symbol, figure),
                             ]
                         )
@@ -1773,7 +1948,7 @@ class _PolicyMixin:
         session_records = [
             record
             for record in self._evidence
-            if not symbol or not record.symbol or record.symbol == symbol
+            if _record_matches_entity(record, symbol)
         ]
         tail_risk = self._tail_risk_ref_required(
             figure, session_records, self._analysis_entries(symbol)
@@ -2153,6 +2328,14 @@ class _PolicyMixin:
                 for figure in carried
             ):
                 continue
+            line_percent = all(figure.percent for figure in carried)
+            line_currency = any(figure.currency for figure in carried)
+            line_market_price = any(
+                self._figure_is_market_price(
+                    content, figure, block.match(figure.value, figure.percent, figure.digits)
+                )
+                for figure in carried
+            )
             for symbol in unknown:
                 reported.add(symbol)
                 issues.append(
@@ -2164,6 +2347,9 @@ class _PolicyMixin:
                         "reason": "symbol_never_handled",
                         "claim": line.strip()[:200],
                         "span": [offset, offset + len(line)],
+                        "percent": line_percent,
+                        "currency": line_currency,
+                        "market_price": line_market_price,
                         "message": (
                             f"No tool call in this session passed in or returned {symbol}, "
                             "yet the answer attaches figures to it. Retrieve it, or report "
@@ -2173,18 +2359,28 @@ class _PolicyMixin:
                 )
         return issues
 
-    @staticmethod
     def _symbol_for_claim(
+        self,
         content: str,
         records: Sequence[EvidenceRecord],
     ) -> str | None:
-        """Return one canonical evidence symbol explicitly named in a claim."""
-        known = {record.symbol for record in records if record.symbol}
+        """Return one canonical symbol named in a claim or this session."""
+        known = {record.symbol for record in records if record.symbol} | self._session_symbols
         matches = {
             _normalize_symbol(match.group(0))
             for match in _CANONICAL_SYMBOL_RE.finditer(content)
             if _normalize_symbol(match.group(0)) in known
         }
+        # Explicit entity_id values need not use a market-symbol spelling.
+        # Match only identities already carried by evidence/session, and never
+        # let a bare identifier match the prefix of a venue-qualified one.
+        for identity in known:
+            if identity and not _CANONICAL_SYMBOL_RE.fullmatch(identity) and re.search(
+                r"(?<![A-Za-z0-9_])" + re.escape(identity) + r"(?![A-Za-z0-9_.\/-])",
+                content,
+                re.IGNORECASE,
+            ):
+                matches.add(identity)
         return next(iter(matches)) if len(matches) == 1 else None
 
     def _validate_price_provenance(
