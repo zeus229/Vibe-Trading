@@ -2699,7 +2699,7 @@ def test_the_correction_prompt_names_the_figures_to_keep(tmp_path: Path) -> None
     assert "1.171, 1.137, 1.150, 1.090, 1.136" in keep
     for rejected in ("2.50", "9.99", "0.97"):
         assert rejected not in keep
-    assert "only the figures listed above need work" in prompt
+    assert "Do not infer that an unlisted figure passed" in prompt
 
 
 def test_the_keep_list_is_absent_when_nothing_passed(tmp_path: Path) -> None:
