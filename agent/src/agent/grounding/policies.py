@@ -152,6 +152,7 @@ class ValidationResult:
     valid: bool
     issues: list[dict[str, Any]] = field(default_factory=list)
     released_text: str = ""
+    passed_figures: tuple[str, ...] = ()
 
 
 def _close(value: float, target: float) -> bool:
