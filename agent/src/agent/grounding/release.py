@@ -92,7 +92,7 @@ _CORRECTION_REASONS = {
     "role_in_price_column": "it sits in a price column, which holds only observed prints",
     "proposed_not_a_price": "a proposed level is a price, not a percentage; state the price it implies",
     "symbol_mismatch": "it is declared for one instrument but the sentence writes it about another",
-    "aggregate_ref_needs_unscoped_claim": "the exact ref is portfolio-level aggregate evidence; keep the value and ref, but rewrite the claim so the metric is not attributed to the nearby instrument",
+    "aggregate_ref_needs_unscoped_claim": "the exact ref is aggregate/unscoped evidence; keep the value and ref, but rewrite the claim so the metric is not attributed to an instrument",
     "citation_not_visible": "its source is not named on the figure's own line, and the note is stripped before the user reads the answer",
 }
 
@@ -173,11 +173,11 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
     aggregate_candidate = issue.get("aggregate_ref_candidate")
     if aggregate_candidate:
         parts.append(
-            "aggregate=keep value/ref but rewrite as portfolio-level; do not attach to symbol"
+            "aggregate=keep value/ref but rewrite as aggregate/unscoped; do not attach to an instrument"
         )
     elif reason == "aggregate_ref_needs_unscoped_claim":
         parts.append(
-            "aggregate=keep value/ref but rewrite as portfolio-level; do not attach to symbol"
+            "aggregate=keep value/ref but rewrite as aggregate/unscoped; do not attach to an instrument"
         )
     return " | ".join(parts)
 
