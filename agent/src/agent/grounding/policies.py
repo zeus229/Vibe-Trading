@@ -969,8 +969,19 @@ class _PolicyMixin:
                     # refs return earlier as an explicit empty scope instead.
                     return None
         if symbol:
+            # An exact call_id::field ref can deliberately name an aggregate
+            # portfolio metric even when nearby prose made the figure inherit
+            # an instrument symbol. Preserve only aggregate records in that
+            # case; entity-scoped records must still match the instrument.
+            exact_field_ref = "::" in key
             records = [
-                record for record in records if _record_matches_entity(record, symbol)
+                record
+                for record in records
+                if (
+                    exact_field_ref
+                    and record.identity_scope == "aggregate"
+                )
+                or _record_matches_entity(record, symbol)
             ]
         if figure is not None and figure.column:
             # A table cell quotes its own column, not whatever else the call returned.
