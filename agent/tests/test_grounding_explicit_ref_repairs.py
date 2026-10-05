@@ -3,7 +3,7 @@
 from pathlib import Path
 
 from src.agent.grounding.evidence import EvidenceRecord
-from src.agent.grounding.figures import Figure
+from src.agent.grounding.figures import Declaration, Figure
 from src.agent.grounding.ledger import GroundingLedger
 from src.agent.grounding.release import _correction_line
 
@@ -235,3 +235,29 @@ def test_prompt_never_says_unlisted_rejected_figures_checked_clean(tmp_path: Pat
     assert "Every other measured figure in the draft checked clean" not in prompt
     assert "only the figures listed above need work" not in prompt
     assert "Do not infer that an unlisted figure passed" in prompt
+
+
+def test_unscoped_aggregate_candidate_is_flagged_for_first_pass_correction(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
+    ledger._evidence = [_record()]
+    figure = _percent_figure()
+    declaration = Declaration(
+        index=0,
+        value_text=figure.text,
+        value=figure.value,
+        percent=True,
+        role="observed",
+        note="Top 1",
+        ref="portfolio_summary::data.concentration.top1_pct",
+    )
+
+    issues = ledger._check_observed(figure, declaration, None, ledger._evidence)
+
+    assert len(issues) == 1
+    assert issues[0]["reason"] == "field_ref_needs_call_id"
+    assert issues[0]["field_ref_candidates"] == [
+        "call_portfolio::data.concentration.top1_pct"
+    ]
+    assert issues[0]["aggregate_ref_candidate"] == (
+        "call_portfolio::data.concentration.top1_pct"
+    )
