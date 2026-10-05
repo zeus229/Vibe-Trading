@@ -395,7 +395,7 @@ def _name_tokens(name: str) -> list[str]:
     """Lower-case Unicode words of a camelCase / snake_case field name."""
     spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
     spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
-    return [token for token in re.split(r"[^\w]+", spaced.casefold(), flags=re.UNICODE) if token]
+    return [token for token in re.split(r"[\W_]+", spaced.casefold(), flags=re.UNICODE) if token]
 
 
 def _field_dimension(name: str) -> str | None:
