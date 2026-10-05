@@ -1419,7 +1419,8 @@ class _PolicyMixin:
             if self._matches_evidence(figure, values, [] if money else values)
         }
         ranked = sorted(found, key=lambda label: (label not in compatible, label))
-        return ranked[:_MAX_FIELD_REF_CANDIDATES]
+        matching = [label for label in ranked if label in compatible]
+        return (matching or ranked)[:_MAX_FIELD_REF_CANDIDATES]
 
     def _session_scope_field_ref_candidates(
         self, ref: str, symbol: str | None, figure: Figure
@@ -1485,7 +1486,19 @@ class _PolicyMixin:
             if self._matches_evidence(figure, values, [] if money else values)
         }
         ranked = sorted(found, key=lambda label: (label not in compatible, label))
-        return ranked[:_MAX_CALL_REF_CANDIDATES]
+        matching = [label for label in ranked if label in compatible]
+        return (matching or ranked)[:_MAX_CALL_REF_CANDIDATES]
+
+    def _aggregate_repair_metadata(
+        self, candidates: Sequence[str], figure: Figure
+    ) -> dict[str, str]:
+        """Correction-only metadata for one exact aggregate repair candidate."""
+        if len(candidates) != 1:
+            return {}
+        candidate = candidates[0]
+        if not self._aggregate_exact_ref_match(candidate, figure):
+            return {}
+        return {"aggregate_ref_candidate": candidate}
 
     def _names_session_source(self, name: str) -> bool:
         """Whether ``name`` is a call id, tool name or backtest run of this session."""
@@ -1827,12 +1840,6 @@ class _PolicyMixin:
                         )
                     ]
                 if call_field_candidates:
-                    aggregate_candidate = (
-                        len(call_field_candidates) == 1
-                        and self._aggregate_exact_ref_match(
-                            call_field_candidates[0], figure
-                        )
-                    )
                     return [
                         self._figure_issue(
                             "numeric_claim_conflict",
@@ -1845,11 +1852,7 @@ class _PolicyMixin:
                             source_tool_call_ids=[declaration.ref],
                             ambiguous_sources=call_field_candidates,
                             field_ref_candidates=call_field_candidates,
-                            **(
-                                {"aggregate_ref_candidate": call_field_candidates[0]}
-                                if aggregate_candidate
-                                else {}
-                            ),
+                            **self._aggregate_repair_metadata(call_field_candidates, figure),
                         )
                     ]
                 session_scope_candidates = self._session_scope_field_ref_candidates(
@@ -1868,6 +1871,9 @@ class _PolicyMixin:
                             "this scalar",
                             source_tool_call_ids=[declaration.ref],
                             field_ref_candidates=session_scope_candidates,
+                            **self._aggregate_repair_metadata(
+                                session_scope_candidates, figure
+                            ),
                         )
                     ]
                 unknown_scope_candidates = self._unknown_call_field_ref_candidates(
@@ -1885,6 +1891,9 @@ class _PolicyMixin:
                             "is not a call id, tool or run of this session",
                             source_tool_call_ids=[declaration.ref],
                             field_ref_candidates=unknown_scope_candidates,
+                            **self._aggregate_repair_metadata(
+                                unknown_scope_candidates, figure
+                            ),
                         )
                     ]
                 if self._has_asistente_casa_evidence():
