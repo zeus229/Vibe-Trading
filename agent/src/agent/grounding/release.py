@@ -139,14 +139,14 @@ def _correction_line(issue: dict[str, Any]) -> str:
         )
     candidates = list(dict.fromkeys(str(item) for item in issue.get("field_ref_candidates") or []))
     sources = list(dict.fromkeys(str(item) for item in issue.get("ambiguous_sources") or []))
-    if candidates and not ("{sources}" in template and candidates == sources):
-        if reason == "not_in_referenced_call" and len(candidates) == 1:
+    if candidates:
+        if reason in {"field_ref_needs_call_id", "not_in_referenced_call"} and len(candidates) == 1:
             evidence += (
                 "; the written value matches this exact session ref: "
                 + candidates[0]
                 + "; keep the value and replace only the incorrect ref with this exact ref"
             )
-        else:
+        elif not ("{sources}" in template and candidates == sources):
             evidence += "; valid field refs: " + ", ".join(candidates)
     nearest = issue.get("observed_nearest") or []
     if nearest:
