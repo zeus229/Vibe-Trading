@@ -39,6 +39,7 @@ def test_local_goal_tools_use_injected_session(tmp_path: Path) -> None:
 
     evidence = json.loads(
         add.execute(
+            provenance_kind="manual",
             criterion_index=2,
             text="NVDA outperformed QQQ over the last 5 sessions.",
             source_provider="pytest",
@@ -106,6 +107,7 @@ def test_goal_tools_emit_mutation_events(tmp_path: Path) -> None:
     )
     evidence = json.loads(
         add.execute(
+            provenance_kind="manual",
             goal_id=created["snapshot"]["goal"]["goal_id"],
             criterion_index=1,
             text="Evidence from a local tool call.",
@@ -144,6 +146,7 @@ def test_goal_evidence_tool_binds_runtime_artifact(
 
     result = json.loads(
         add.execute(
+            provenance_kind="manual",
             goal_id=created["snapshot"]["goal"]["goal_id"],
             criterion_index=1,
             text="Generated metrics artifact for NVDA momentum.",
@@ -163,6 +166,7 @@ def test_goal_evidence_tool_binds_runtime_artifact(
     assert evidence["verification_status"] == "verified"
 
 
+
 def test_goal_evidence_preserves_exact_tool_call_provenance(tmp_path: Path) -> None:
     """Tool-backed goal evidence keeps the exact source call id beside its own evidence id."""
     store = GoalStore(tmp_path / "goals.db")
@@ -178,12 +182,14 @@ def test_goal_evidence_preserves_exact_tool_call_provenance(tmp_path: Path) -> N
 
     result = json.loads(
         add.execute(
+            provenance_kind="single_tool",
             goal_id=created["snapshot"]["goal"]["goal_id"],
             criterion_index=1,
             text="The source tool returned the audited metric.",
             tool_call_id=call_id,
             source_provider="pytest",
             source_type="market_data",
+            _runtime_observed_tool_calls=[{"call_id": call_id, "tool": "market_data", "status": "ok"}],
         )
     )
 
@@ -194,6 +200,122 @@ def test_goal_evidence_preserves_exact_tool_call_provenance(tmp_path: Path) -> N
     assert evidence["evidence_id"] != evidence["tool_call_id"]
     assert result["snapshot"]["evidence"][0]["tool_call_id"] == call_id
 
+
+
+def test_goal_evidence_rejects_missing_single_tool_call_id_with_candidates(tmp_path: Path) -> None:
+    """Single-tool evidence fails closed and returns observed runtime candidates."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+    start.execute(objective="Audit provenance.", criteria=["Record evidence"])
+
+    result = json.loads(
+        add.execute(
+            provenance_kind="single_tool",
+            criterion_index=1,
+            text="Metric from one tool result.",
+            _runtime_observed_tool_calls=[
+                {"call_id": "call_real_1", "tool": "market_data", "status": "ok"},
+                {"call_id": "call_real_2", "tool": "risk_xray", "status": "error"},
+            ],
+        )
+    )
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "provenance"
+    assert [item["call_id"] for item in result["tool_call_candidates"]] == [
+        "call_real_1",
+        "call_real_2",
+    ]
+
+
+
+def test_goal_evidence_accepts_observed_error_call_as_single_tool(tmp_path: Path) -> None:
+    """A tool error can itself be the exact source of a negative finding."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+    start.execute(objective="Audit unavailable risk metric.", criteria=["Record evidence"])
+
+    result = json.loads(
+        add.execute(
+            provenance_kind="single_tool",
+            criterion_index=1,
+            text="Risk X-Ray reported insufficient history.",
+            tool_call_id="call_risk_error",
+            _runtime_observed_tool_calls=[
+                {"call_id": "call_risk_error", "tool": "risk_xray", "status": "error"}
+            ],
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert result["evidence"]["tool_call_id"] == "call_risk_error"
+
+def test_goal_evidence_rejects_unknown_single_tool_call_id(tmp_path: Path) -> None:
+    """A model cannot bind goal evidence to an invented or stale call id."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+    start.execute(objective="Audit provenance.", criteria=["Record evidence"])
+
+    result = json.loads(
+        add.execute(
+            provenance_kind="single_tool",
+            criterion_index=1,
+            text="Metric from one tool result.",
+            tool_call_id="call_invented",
+            _runtime_observed_tool_calls=[{"call_id": "call_real", "tool": "market_data", "status": "ok"}],
+        )
+    )
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "provenance"
+    assert result["tool_call_candidates"] == [{"call_id": "call_real", "tool": "market_data", "status": "ok"}]
+
+
+def test_goal_evidence_synthesis_stays_unbound_to_single_call(tmp_path: Path) -> None:
+    """Multi-source synthesis is valid without fabricating one source call id."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+    start.execute(objective="Compare evidence.", criteria=["Synthesize sources"])
+
+    result = json.loads(
+        add.execute(
+            provenance_kind="synthesis",
+            criterion_index=1,
+            text="Comparison across performance and risk sources.",
+            _runtime_observed_tool_calls=[
+                {"call_id": "call_perf", "tool": "performance", "status": "ok"},
+                {"call_id": "call_risk", "tool": "risk_xray", "status": "error"},
+            ],
+        )
+    )
+
+    assert result["status"] == "ok"
+    assert result["evidence"]["tool_call_id"] is None
+
+
+def test_goal_evidence_synthesis_rejects_single_call_binding(tmp_path: Path) -> None:
+    """Synthesis cannot masquerade as evidence from one selected tool call."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+    start.execute(objective="Compare evidence.", criteria=["Synthesize sources"])
+
+    result = json.loads(
+        add.execute(
+            provenance_kind="synthesis",
+            criterion_index=1,
+            text="Comparison across sources.",
+            tool_call_id="call_perf",
+            _runtime_observed_tool_calls=[{"call_id": "call_perf", "tool": "performance", "status": "ok"}],
+        )
+    )
+
+    assert result["status"] == "error"
+    assert result["error_type"] == "provenance"
 
 def test_goal_evidence_can_remain_manual_without_tool_call_id(tmp_path: Path) -> None:
     """Manual evidence does not acquire an invented tool provenance id."""
@@ -209,6 +331,7 @@ def test_goal_evidence_can_remain_manual_without_tool_call_id(tmp_path: Path) ->
 
     result = json.loads(
         add.execute(
+            provenance_kind="manual",
             goal_id=created["snapshot"]["goal"]["goal_id"],
             criterion_index=1,
             text="Manual reasoning note.",
@@ -227,9 +350,10 @@ def test_goal_evidence_tool_schema_distinguishes_call_and_evidence_ids() -> None
     call_description = AddGoalEvidenceTool.parameters["properties"]["tool_call_id"]["description"]
 
     assert "exact tool_call_id" in description
+    assert AddGoalEvidenceTool.parameters["required"] == ["text", "provenance_kind"]
     assert "evidence_id (ev_...)" in description
-    assert "copy its tool_call_id verbatim" in call_description
-    assert "Never substitute an evidence_id" in call_description
+    assert "exact observed tool call id" in call_description
+    assert "Never use an evidence_id" in call_description
 
 
 def test_goal_status_tool_can_cancel_current_goal(tmp_path: Path) -> None:
@@ -282,3 +406,120 @@ def test_research_goal_skill_is_bundled() -> None:
     assert "add_goal_evidence" in content
     assert "exact `tool_call_id`" in content
     assert "`ev_...::field`" in content
+    assert "separate `single_tool` evidence row" in content
+    assert "does not replace their `single_tool` provenance" in content
+
+
+def test_goal_tools_expose_canonical_completion_contract(tmp_path: Path) -> None:
+    """All goal reads expose canonical criterion ids and criterion-local evidence ids."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    get = GetResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+
+    created = json.loads(
+        start.execute(
+            objective="Evaluate NVDA momentum as a research-only thesis.",
+            criteria=["Define thesis", "Check price action"],
+        )
+    )
+    contract = created["completion_contract"]
+    assert [row["criterion_index"] for row in contract["criteria"]] == [1, 2]
+    assert [row["criterion_id"] for row in contract["criteria"]] == [
+        item["criterion_id"] for item in created["snapshot"]["criteria"]
+    ]
+
+    evidence = json.loads(
+        add.execute(
+            provenance_kind="manual",
+            criterion_index=2,
+            text="Concrete price-action evidence.",
+        )
+    )
+    evidence_id = evidence["evidence"]["evidence_id"]
+    row = evidence["completion_contract"]["criteria"][1]
+    assert row["criterion_id"] == created["snapshot"]["criteria"][1]["criterion_id"]
+    assert row["evidence_ids"] == [evidence_id]
+
+    fetched = json.loads(get.execute())
+    assert fetched["completion_contract"] == evidence["completion_contract"]
+
+
+def test_completion_error_returns_repair_contract(tmp_path: Path) -> None:
+    """A rejected completion points the model at canonical ids instead of more research."""
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    update = UpdateResearchGoalStatusTool(default_session_id="session-1", store=store)
+
+    created = json.loads(
+        start.execute(
+            objective="Evaluate NVDA momentum as a research-only thesis.",
+            criteria=["Define thesis", "Check price action"],
+        )
+    )
+    result = json.loads(
+        update.execute(
+            status="complete",
+            audit=[
+                {
+                    "criterion_index": 1,
+                    "result": "satisfied",
+                    "evidence_ids": [],
+                }
+            ],
+        )
+    )
+
+    assert result["status"] == "error"
+    assert "completion_contract" in result
+    assert result["completion_contract"]["goal_id"] == created["snapshot"]["goal"]["goal_id"]
+    assert len(result["completion_contract"]["criteria"]) == 2
+    assert "criterion" in result["error"].lower() or "verified evidence" in result["error"].lower()
+
+
+def test_completion_audit_accepts_canonical_criterion_index(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    """criterion_index resolves to the current canonical criterion id for completion."""
+    run_root = tmp_path / "runs"
+    run_dir = run_root / "goal-tool-run"
+    run_dir.mkdir(parents=True)
+    monkeypatch.setenv("VIBE_TRADING_ALLOWED_RUN_ROOTS", str(run_root))
+
+    store = GoalStore(tmp_path / "goals.db")
+    start = StartResearchGoalTool(default_session_id="session-1", store=store)
+    add = AddGoalEvidenceTool(default_session_id="session-1", store=store)
+    update = UpdateResearchGoalStatusTool(default_session_id="session-1", store=store)
+
+    created = json.loads(
+        start.execute(
+            objective="Evaluate NVDA momentum as a research-only thesis.",
+            criteria=["Check price action"],
+        )
+    )
+    evidence = json.loads(
+        add.execute(
+            provenance_kind="manual",
+            criterion_index=1,
+            text="Verified evidence from the current run.",
+            run_dir=str(run_dir),
+        )
+    )
+    evidence_id = evidence["evidence"]["evidence_id"]
+
+    completed = json.loads(
+        update.execute(
+            status="complete",
+            audit=[
+                {
+                    "criterion_index": 1,
+                    "result": "satisfied",
+                    "evidence_ids": [evidence_id],
+                }
+            ],
+        )
+    )
+
+    assert completed["status"] == "ok"
+    assert completed["snapshot"]["goal"]["status"] == "complete"
