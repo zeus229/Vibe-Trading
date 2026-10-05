@@ -363,6 +363,18 @@ class APIConfig(_EnvBase):
     vibe_trading_api_url: str = Field(
         alias="VIBE_TRADING_API_URL", default="http://127.0.0.1:8000",
     )
+    # Peer IP(s)/CIDR(s) trusted to set X-Forwarded-Proto / X-Forwarded-For,
+    # passed straight through to ``uvicorn.run(forwarded_allow_ips=...)``.
+    # Needed when a reverse proxy (Cloudflare Tunnel, nginx, ...) terminates
+    # TLS on a host other than 127.0.0.1 and forwards plain HTTP to Vibe;
+    # without the proxy's IP listed here, Uvicorn ignores its forwarded
+    # headers, ``request.url.scheme`` stays "http", and same-origin HTTPS
+    # POSTs get rejected as cross-site. Comma-separated for multiple proxies.
+    # Defaults to Uvicorn's own default (loopback-only) so a deployment that
+    # doesn't set this stays exactly as strict as before.
+    vibe_trading_forwarded_allow_ips: str = Field(
+        alias="VIBE_TRADING_FORWARDED_ALLOW_IPS", default="127.0.0.1",
+    )
     futu_trade_pwd_md5: str = Field(alias="FUTU_TRADE_PWD_MD5", default="")
 
 

@@ -30,9 +30,17 @@ export function Layout() {
     { to: "/settings", icon: Settings, label: t('layout.settings') },
     { to: "/correlation", icon: BarChart3, label: t('layout.correlation') },
   ];
+  const argentinaDashboardBaseUrl =
+    import.meta.env.VITE_ASISTENTE_CASA_UI_URL ||
+    "https://inversiones.cupaiolo.com.ar/investments-web/";
   const { pathname } = useLocation();
   const [searchParams] = useSearchParams();
   const { dark, toggle } = useDarkMode();
+  const argentinaDashboardUrl = (() => {
+    const url = new URL(argentinaDashboardBaseUrl, window.location.href);
+    url.searchParams.set("theme", dark ? "dark" : "light");
+    return url.toString();
+  })();
   const [sessions, setSessions] = useState<SessionItem[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(true);
   const sseStatus = useAgentStore(s => s.sseStatus);
@@ -152,6 +160,18 @@ export function Layout() {
               </Link>
             );
           })}
+          <a
+            href={argentinaDashboardUrl}
+            aria-label="Argentina"
+            className={cn(
+              "flex items-center rounded-md text-[13px] transition-colors text-muted-foreground hover:bg-muted/60 hover:text-foreground",
+              collapsed ? "justify-center px-2 py-1.5" : "gap-3 px-3 py-1.5 max-md:justify-center max-md:px-2"
+            )}
+            title={collapsed ? "Argentina" : undefined}
+          >
+            <span className="h-4 w-4 shrink-0 flex items-center justify-center text-[11px] font-semibold" aria-hidden="true">AR</span>
+            {!collapsed && <span className="max-md:hidden">Argentina</span>}
+          </a>
         </nav>
 
         {/* Sessions — hidden when collapsed */}

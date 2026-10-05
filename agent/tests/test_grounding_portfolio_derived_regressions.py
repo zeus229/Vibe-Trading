@@ -1,0 +1,567 @@
+"""Regression coverage for generic portfolio derivations."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from src.agent.grounding import GroundingLedger
+from src.agent.grounding.evidence import _currency_code, _is_structured_money_field
+from src.portfolio.iso4217 import is_iso_currency
+
+pytestmark = pytest.mark.unit
+
+
+def _ledger(tmp_path: Path, *calls: tuple[str, Any, str]) -> GroundingLedger:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze the portfolio risk")
+    for tool, payload, call_id in calls:
+        ledger.ingest_tool_result(
+            tool_name=tool,
+            arguments={},
+            result=json.dumps(payload),
+            call_id=call_id,
+            success=True,
+        )
+    return ledger
+
+
+def _figures(*rows: str) -> str:
+    return "\n\n```figures\n" + "\n".join(rows) + "\n```"
+
+
+def test_derived_percent_already_scaled_by_100_is_not_scaled_twice(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_risk",
+            {"data": {"volatility": {"annualized_vol": 0.24}}},
+            "risk-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Annualized volatility is 24%."
+        + _figures(
+            "24% | derived | 0.24 × 100 | portfolio_risk"
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_negative_derived_operand_keeps_its_sign_for_grounding(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_risk",
+            {"data": {"drawdown": {"max_drawdown": -0.093}}},
+            "risk-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Maximum drawdown is -9.3%."
+        + _figures(
+            "-9.3% | derived | -0.093 × 100 | portfolio_risk"
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_derived_formula_can_scope_operands_to_multiple_refs(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        ("portfolio_scope", {"totals": {"value": 350.0}}, "scope-call"),
+        ("portfolio_summary", {"totals": {"value": 1000.0}}, "summary-call"),
+    )
+
+    result = ledger.validate_final_answer(
+        "The scoped portfolio is 35%."
+        + _figures(
+            "35% | derived | 350.0 / 1000.0 × 100 | "
+            "portfolio_scope; portfolio_summary"
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_generic_structured_money_uses_currency_context_for_observed_claims(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_summary",
+            {"currency": "EUR", "totals": {"value": 1234.5}},
+            "summary-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "The portfolio value is EUR 1234.5."
+        + _figures("1234.5 | observed | totals.value | portfolio_summary")
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_structured_income_money_fields_ground_currency_claims(tmp_path: Path) -> None:
+    tool = "portfolio_attribution"
+    ledger = _ledger(
+        tmp_path,
+        (
+            tool,
+            {
+                "data": {
+                    "currency": "ARS",
+                    "positions": [
+                        {
+                            "symbol": "GD30",
+                            "bond_coupon_ars": 187.73,
+                            "bond_amortization_ars": 6007.3,
+                            "income_capital_return_ars": 6178.83,
+                            "associated_income_cost_ars": -16.2,
+                            "portfolio_return_pct": -5.83,
+                        }
+                    ],
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "GD30 paid ARS 187.73 in coupons, ARS 6007.3 in amortization, "
+        "and ARS 6178.83 net attributable income."
+        + _figures(
+            "187.73 | observed | data.positions[0].bond_coupon_ars | portfolio_attribution",
+            "6007.3 | observed | data.positions[0].bond_amortization_ars | portfolio_attribution",
+            "6178.83 | observed | data.positions[0].income_capital_return_ars | portfolio_attribution",
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_structured_income_money_fields_still_reject_wrong_amount(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_attribution",
+            {
+                "data": {
+                    "currency": "ARS",
+                    "positions": [{"symbol": "GD30", "bond_coupon_ars": 187.73}],
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "GD30 paid ARS 999.99 in coupons."
+        + _figures(
+            "999.99 | observed | data.positions[0].bond_coupon_ars | portfolio_attribution"
+        )
+    )
+
+    assert result.valid is False
+    assert "numeric_claim_conflict" in {
+        issue["code"] for issue in result.issues
+    }
+
+
+def test_derived_cost_magnitude_preserves_negative_observed_operand(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_attribution",
+            {
+                "data": {
+                    "currency": "ARS",
+                    "coverage": {
+                        "income_by_type_ars": {
+                            "ASSOCIATED_INCOME_COST": -698.64,
+                            "BOND_AMORTIZATION": 0.0,
+                        }
+                    },
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Costs subtracted ARS 698.64."
+        + _figures(
+            "698.64 | derived | 0 - -698.64 | portfolio_attribution"
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_derived_cost_magnitude_rejects_unobserved_negative_operand(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_attribution",
+            {
+                "data": {
+                    "currency": "ARS",
+                    "coverage": {
+                        "income_by_type_ars": {
+                            "ASSOCIATED_INCOME_COST": 698.64,
+                            "BOND_AMORTIZATION": 0.0,
+                        }
+                    },
+                }
+            },
+            "attribution-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Costs subtracted ARS 698.64."
+        + _figures(
+            "698.64 | derived | 0 - -698.64 | portfolio_attribution"
+        )
+    )
+
+    assert result.valid is False
+    assert any(
+        issue.get("reason") == "additive_operand_not_observed"
+        for issue in result.issues
+    )
+
+
+def test_return_pct_is_not_reclassified_as_money() -> None:
+    assert _is_structured_money_field("data.positions[0].portfolio_return_pct") is False
+    assert _is_structured_money_field("data.positions[0].income_capital_return_ars") is True
+
+
+@pytest.mark.parametrize("code", ["ARS", "EUR", "USD", "KRW"])
+def test_iso_currency_contract_accepts_supported_codes(code: str) -> None:
+    assert is_iso_currency(code) is True
+    assert _currency_code(code.lower()) == code
+
+
+@pytest.mark.parametrize("code", ["NAV", "PNL", "AVG", "ABC"])
+def test_iso_currency_contract_rejects_non_currency_identifiers(code: str) -> None:
+    assert is_iso_currency(code) is False
+    assert _currency_code(code) is None
+
+
+def test_currency_keyed_totals_ground_an_ars_amount(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "portfolio_summary",
+            {"totals": {"native_by_currency": {"ARS": 1234.5}}},
+            "summary-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "The portfolio value is ARS 1234.5."
+        + _figures(
+            "1234.5 | observed | totals.native_by_currency.ARS | "
+            "portfolio_summary"
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_nav_path_does_not_infer_nav_as_a_currency(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        ("portfolio_summary", {"data": {"nav": {"total": 1234.5}}}, "summary-call"),
+    )
+
+    assert [record.currency for record in ledger._evidence] == [None]
+
+    result = ledger.validate_final_answer(
+        "The NAV total is 1234.5."
+        + _figures("1234.5 | observed | data.nav.total | portfolio_summary")
+    )
+
+    assert result.valid is True, result.issues
+
+@pytest.mark.parametrize(
+    ("claim", "formula", "scope_payload", "calc_value"),
+    [
+        (
+            "37.5%",
+            "375.0 / 1000.0 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 375.0,
+                    "total_value_ars": 1000.0,
+                }
+            },
+            37.5,
+        ),
+        (
+            "15%",
+            "600.0 × 0.25 / 1000.0 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 600.0,
+                    "total_value_ars": 1000.0,
+                },
+                "portfolio_positions": [
+                    {"ticker": "YPFD", "weight_scope": 0.30},
+                    {"ticker": "PAMP", "weight_scope": 0.25},
+                ],
+            },
+            15.0,
+        ),
+        (
+            "7.5%",
+            "600.0 × 0.125 / 1000.0 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 600.0,
+                    "total_value_ars": 1000.0,
+                },
+                "portfolio_positions": [
+                    {"ticker": "GGAL", "weight_scope": 0.125},
+                ],
+            },
+            7.5,
+        ),
+        (
+            "6%",
+            "600.0 × 0.10 / 1000.0 × 100",
+            {
+                "meta": {
+                    "scope_value_ars": 600.0,
+                    "total_value_ars": 1000.0,
+                },
+                "portfolio_positions": [
+                    {"ticker": "TGSU2", "weight_scope": 0.10},
+                ],
+            },
+            6.0,
+        ),
+    ],
+)
+def test_real_xray_derivations_require_refs_for_all_operand_sources(
+    tmp_path: Path,
+    claim: str,
+    formula: str,
+    scope_payload: dict[str, Any],
+    calc_value: float,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        ("asistente_casa_portfolio_risk_xray", scope_payload, "xray-call"),
+        ("financial_rigor", {"result": calc_value}, "calc-call"),
+    )
+
+    incomplete = ledger.validate_final_answer(
+        f"Derived figure: {claim}."
+        + _figures(f"{claim} | derived | {formula} | financial_rigor")
+    )
+    assert incomplete.valid is False
+    assert any(
+        issue.get("reason") == "formula_not_anchored"
+        or issue.get("code") == "formula_not_anchored"
+        for issue in incomplete.issues
+    ), incomplete.issues
+
+    complete = ledger.validate_final_answer(
+        f"Derived figure: {claim}."
+        + _figures(
+            f"{claim} | derived | {formula} | "
+            "financial_rigor; asistente_casa_portfolio_risk_xray"
+        )
+    )
+    assert complete.valid is True, complete.issues
+
+def test_observed_ref_must_match_exact_session_tool_or_call_id(tmp_path: Path) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {"meta": {"total_value_ars": 123456789.125}},
+            "xray-call",
+        ),
+    )
+
+    valid_tool = ledger.validate_final_answer(
+        "Portfolio value is ARS 123456789.125."
+        + _figures(
+            "123456789.125 | observed | meta.total_value_ars | "
+            "asistente_casa_portfolio_risk_xray"
+        )
+    )
+    valid_call = ledger.validate_final_answer(
+        "Portfolio value is ARS 123456789.125."
+        + _figures("123456789.125 | observed | meta.total_value_ars | xray-call")
+    )
+    missing = ledger.validate_final_answer(
+        "Portfolio value is ARS 123456789.125."
+        + _figures("123456789.125 | observed | meta.total_value_ars | missing-call")
+    )
+    decorated = ledger.validate_final_answer(
+        "Portfolio value is ARS 123456789.125."
+        + _figures(
+            "123456789.125 | observed | meta.total_value_ars | "
+            "asistente_casa_portfolio_risk_xray (ACCIONES)"
+        )
+    )
+
+    assert valid_tool.valid is True, valid_tool.issues
+    assert valid_call.valid is True, valid_call.issues
+    for rejected in (missing, decorated):
+        assert rejected.valid is False
+        assert any(
+            issue.get("reason") == "not_in_referenced_call"
+            for issue in rejected.issues
+        ), rejected.issues
+
+
+def test_derived_ref_rejects_unknown_or_decorated_sources_even_when_value_exists_globally(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {
+                "meta": {
+                    "scope_value_ars": 375.0,
+                    "total_value_ars": 1000.0,
+                }
+            },
+            "xray-call",
+        ),
+        ("financial_rigor", {"result": 37.5}, "calc-call"),
+    )
+    formula = "375.0 / 1000.0 × 100"
+
+    valid = ledger.validate_final_answer(
+        "CEDEAR weight is 37.5%."
+        + _figures(
+            "37.5% | derived | "
+            + formula
+            + " | financial_rigor; asistente_casa_portfolio_risk_xray"
+        )
+    )
+    missing = ledger.validate_final_answer(
+        "CEDEAR weight is 37.5%."
+        + _figures(
+            "37.5% | derived | "
+            + formula
+            + " | financial_rigor; missing-call"
+        )
+    )
+    decorated = ledger.validate_final_answer(
+        "CEDEAR weight is 37.5%."
+        + _figures(
+            "37.5% | derived | "
+            + formula
+            + " | financial_rigor; asistente_casa_portfolio_risk_xray (CEDEARS)"
+        )
+    )
+
+    assert valid.valid is True, valid.issues
+    for rejected in (missing, decorated):
+        assert rejected.valid is False
+        assert any(
+            issue.get("reason") == "no_evidence"
+            for issue in rejected.issues
+        ), rejected.issues
+
+
+def test_observed_report_scalars_accept_exact_call_id_paths_and_display_rounding(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {
+                "meta": {"total_value_ars": 215541733.628},
+                "data": {
+                    "concentration": {
+                        "effective_n": 4.365122655282235,
+                        "top1_weight": 0.37989309196356547,
+                    },
+                    "volatility": {"annualized_vol": 0.3566521561834192},
+                    "drawdown": {"max_drawdown": -0.15741318223114723},
+                    "tail_risk": {
+                        "var_95": 0.029498672702435575,
+                        "expected_shortfall_95": 0.03709882179428407,
+                    },
+                },
+            },
+            "xray-call",
+        ),
+        (
+            "asistente_casa_consultar_performance_cartera_scope",
+            {"portfolio": {"return_pct": 0.123456}},
+            "performance-call",
+        ),
+    )
+
+    result = ledger.validate_final_answer(
+        "Valor total ARS 215.541.733,63; effective N 4,37; volatilidad 35,67%; "
+        "drawdown -15,74%; VaR (nivel 95) 2,95%; expected shortfall (nivel 95) 3,71%; "
+        "mayor posición 37,99%; rendimiento 12,35%."
+        + _figures(
+            "215541733.63 | observed | meta.total_value_ars | xray-call::meta.total_value_ars",
+            "4.37 | observed | effective_n | xray-call::data.concentration.effective_n",
+            "35.6652% | observed | annualized_vol | xray-call::data.volatility.annualized_vol",
+            "-15.7413% | observed | max_drawdown | xray-call::data.drawdown.max_drawdown",
+            "2.9499% | observed | VaR 95% | xray-call::data.tail_risk.var_95",
+            "3.7099% | observed | expected shortfall 95% | xray-call::data.tail_risk.expected_shortfall_95",
+            "37.9893% | observed | top1_weight | xray-call::data.concentration.top1_weight",
+            "12.3456% | observed | return_pct | performance-call::portfolio.return_pct",
+        )
+    )
+
+    assert result.valid is True, result.issues
+
+
+def test_observed_field_ref_cannot_borrow_another_call_or_tool_args_ref(
+    tmp_path: Path,
+) -> None:
+    ledger = _ledger(
+        tmp_path,
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {"data": {"concentration": {"effective_n": 4.36}}},
+            "acciones-call",
+        ),
+        (
+            "asistente_casa_portfolio_risk_xray",
+            {"data": {"concentration": {"effective_n": 11.04}}},
+            "cedears-call",
+        ),
+    )
+
+    wrong_call = ledger.validate_final_answer(
+        "Effective N is 4.36."
+        + _figures(
+            "4.36 | observed | effective_n | cedears-call::data.concentration.effective_n"
+        )
+    )
+    decorated = ledger.validate_final_answer(
+        "Effective N is 4.36."
+        + _figures(
+            "4.36 | observed | effective_n | "
+            "asistente_casa_portfolio_risk_xray(scope=ACCIONES)::data.concentration.effective_n"
+        )
+    )
+
+    assert wrong_call.valid is False
+    assert decorated.valid is False
+    assert any(issue.get("reason") == "not_in_referenced_call" for issue in wrong_call.issues), wrong_call.issues

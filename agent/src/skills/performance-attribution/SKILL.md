@@ -10,6 +10,25 @@ category: analysis
 
 Decompose portfolio excess returns into explainable sources: sector allocation, stock selection, factor exposure, timing contribution, and more. This helps explain **why** a strategy made or lost money, rather than only **how much** it made or lost.
 
+## Signed contribution reporting
+
+When an observed attribution value is signed, preserve that numeric sign **every time the value is repeated**, including narrative summaries after a table.
+
+- If the evidence/declaration is `-3.502` percentage points, write the repeated observation with the same explicit sign: **`-3.502 pp`**, **`-3.502 percentage points`**, or **`-3.502 puntos porcentuales`**.
+- Do **not** rewrite that observation as “lost 3.502 percentage points”, “detracted 3.502 points”, “restó 3.502 puntos porcentuales”, or equivalent prose with a positive numeric figure. Grounding validates the number that is written; a verb does not negate a positive number.
+- Apply the same rule to positive observed contributions when the sign matters: keep the explicit `+` when repeating them.
+- If the user specifically wants the positive magnitude of a negative observed value, make it an explicit derived figure (for example `0 - (-3.502)`) and ground that derivation separately instead of borrowing the negative observation.
+
+Example:
+
+```markdown
+| Bono | Contribución |
+|---|---:|
+| GD38 | -3.502 pp |
+
+GD38 fue el principal detractor, con una contribución de **-3.502 puntos porcentuales**.
+```
+
 ## Brinson Attribution Model
 
 **Do not retype these formulas into throwaway Python.** They are implemented and

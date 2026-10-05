@@ -44,8 +44,10 @@ BLOCK_LANGUAGE = "figures"
 # an identifier's digits ("SMA20") out. The lookahead fences only digits, so
 # "3.6pp" reads as 3.6 rather than backtracking to a bare "3".
 _NUMBER_RE = re.compile(
-    r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?!\d)"
+    r"(?<![A-Za-z0-9_])[-+]?(?:\d{1,3}(?:,\d{3})+|\d{1,3}(?:\.\d{3}){2,}|\d+)(?:\.\d+)?(?!\d)"
 )
+
+_PERIOD_THOUSANDS_RE = re.compile(r"^\d{1,3}(?:\.\d{3}){2,}$")
 
 # SHAPE 2 — dates, times and years: structure, never a measurement (spec §3).
 # A year-less "08-10" is two bare integers and needs no mask.
@@ -63,9 +65,23 @@ _DATE_RE = re.compile(
     r"|(?P<soft>(?<![\d.])(?:19|20)\d{2}(?:(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01]))?(?!\d|\.\d))"
 )
 
+# Day-month-year structural dates used by es-AR/es-ES prose.
+_DMY_DATE_RE = re.compile(
+    r"(?<![\d.])(?:0[1-9]|[12]\d|3[01])[-/](?:0[1-9]|1[0-2])[-/](?:19|20)\d{2}(?!\d)"
+)
+
 # SHAPE 3 — a line-leading list marker or numbered heading. The punctuation is
 # required, so a line opening with a figure ("1.171 元是收盘价") is untouched.
 _ORDINAL_RE = re.compile(r"(?m)^[^\S\n]*(?:#{1,6}[^\S\n]*)?\d{1,3}[.)、][^\S\n]+")
+
+_QUARTER_LABEL_RE = re.compile(
+    r"(?<![A-Za-z0-9_])(?:[1-4][Qq](?:19|20)\d{2}|(?:19|20)\d{2}[Qq][1-4])(?![A-Za-z0-9_])"
+)
+
+_SEC_FORM_RE = re.compile(
+    r"(?<![A-Za-z0-9_])20[-‐‑‒–−]F(?![A-Za-z0-9_])",
+    re.IGNORECASE,
+)
 
 # SHAPE 5 — a table cell that only numbers its row ("1", "2.", "3)"), and a word
 # inside a cell: two or more letters of any script ("12m mean return", "12个月").
@@ -84,7 +100,7 @@ _CURRENCY_CHARS = frozenset("$¥￥€£₩₹元币圆镑円원")
 _CURRENCY_CODES = frozenset(
     {
         "USD", "CNY", "CNH", "RMB", "HKD", "JPY", "EUR", "GBP", "KRW", "INR",
-        "CAD", "AUD", "SGD", "TWD", "THB", "IRR", "IRT", "USDT", "USDC",
+        "CAD", "AUD", "SGD", "TWD", "THB", "IRR", "IRT", "USDT", "USDC", "ARS",
     }
 )
 
@@ -476,6 +492,15 @@ def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
                 )
             ):
                 body, end = f"{body}.{fraction}", stop
+        if _PERIOD_THOUSANDS_RE.fullmatch(body):
+            fraction = ""
+            if text[end : end + 1] == ",":
+                fraction = _digit_run(text, end + 1)
+                if fraction:
+                    end += 1 + len(fraction)
+            body = body.replace(".", "")
+            if fraction:
+                body = f"{body}.{fraction}"
         tokens.append(_Token(match.start(), end, sign, body.replace(",", "")))
         cursor = end
     return sorted(tokens + protected, key=lambda token: token.start)
@@ -693,7 +718,15 @@ def parse_figures_block(content: str) -> FiguresBlock:
         parts = [part.strip() for part in stripped.split("|", 3)]
         if _is_header_or_rule(parts):
             continue
-        parsed = _parse_value(parts[0], document_reading) if parts else None
+        value_text = parts[0] if parts else ""
+        # Figures declarations are specified as normalized raw numbers. If a
+        # declaration already uses a dot decimal and no comma, do not let the
+        # surrounding prose's decimal-comma locale reinterpret three decimals
+        # as a thousands group (for example -1.776 -> -1776).
+        declaration_reading = (
+            False if "." in value_text and "," not in value_text else document_reading
+        )
+        parsed = _parse_value(value_text, declaration_reading) if parts else None
         role = parts[1].casefold() if len(parts) > 1 else ""
         if parsed is None or role not in ROLES:
             malformed.append((number, line.strip()[:120]))
@@ -881,6 +914,14 @@ def _currency_prefix_start(text: str, start: int) -> int:
     return len(head) - len(code) if code else start
 
 
+def _currency_prefix_sign(text: str, start: int) -> str:
+    """A unary sign glued to a currency prefix before the figure ("-ARS 1", "-$1")."""
+    prefix = _currency_prefix_start(text, start)
+    if prefix < start and prefix > 0 and text[prefix - 1 : prefix] in {"+", "-"}:
+        return text[prefix - 1]
+    return ""
+
+
 def _currency_suffix_end(text: str, end: int) -> int:
     """Where a currency unit attached to the right of a figure ("0.95 元") ends.
 
@@ -1046,7 +1087,13 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
             continue
         span = (view.start(match.start()), view.end(match.end()))
         (soft if match.group("soft") else hard).append(span)
-    for pattern in (_CANONICAL_SYMBOL_RE, _ORDINAL_RE):
+    for pattern in (
+        _CANONICAL_SYMBOL_RE,
+        _ORDINAL_RE,
+        _DMY_DATE_RE,
+        _QUARTER_LABEL_RE,
+        _SEC_FORM_RE,
+    ):
         hard.extend(
             (view.start(match.start()), view.end(match.end()))
             for match in pattern.finditer(text)
@@ -1062,7 +1109,9 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
     figures: list[Figure] = []
     for token in _numbers(text):
         unit, unit_end = _percent_mark(text, token.end)
-        reading = _reading(token.sign, token.digits, unit)
+        prefix_sign = "" if token.sign else _currency_prefix_sign(text, token.start)
+        effective_sign = token.sign or prefix_sign
+        reading = _reading(effective_sign, token.digits, unit)
         if reading is None:
             continue
         percent = unit > 0
@@ -1111,8 +1160,13 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 scale=1.0 if percent else magnitude_suffix(text, token.end)[0],
                 currency=currency,
                 digits=token.digits,
-                sign=token.sign,
-                extent=(view.start(_currency_prefix_start(text, token.start)), view.end(mark_end)),
+                sign=effective_sign,
+                extent=(
+                    view.start(
+                        _currency_prefix_start(text, token.start) - (1 if prefix_sign else 0)
+                    ),
+                    view.end(mark_end),
+                ),
                 fence=next(
                     (info for low, high, info, _ in fences if low <= start and digits_end <= high),
                     None,
