@@ -392,23 +392,32 @@ _SYMBOL_LIKE_RE = re.compile(r"[A-Z0-9]{1,8}")
 
 
 def _name_tokens(name: str) -> list[str]:
-    """Lower-case words of a camelCase / snake_case field name."""
+    """Lower-case Unicode words of a camelCase / snake_case field name."""
     spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
     spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
-    return [token for token in re.split(r"[^0-9A-Za-z\u3400-\u9fff]+", spaced.lower()) if token]
+    return [token for token in re.split(r"[\W_]+", spaced.casefold(), flags=re.UNICODE) if token]
+
+
+def _field_dimension(name: str) -> str | None:
+    """Dimension declared by one descriptive field name, or None."""
+    tokens = _name_tokens(name)
+    if not tokens or tokens[-1] in _AMOUNT_TOKENS or (
+        len(tokens) > 1 and _currency_code(tokens[-1])
+    ):
+        return None
+    if any(token in _RATIO_TOKENS for token in tokens) or _metric_kind_for_path(name):
+        return "ratio"
+    if any(token in _COUNT_TOKENS for token in tokens) or _is_metadata_count_leaf(name):
+        return "count"
+    return None
 
 
 def _leaf_dimension(path: str) -> str | None:
-    """The dimensionless unit a field name implies, or None.
+    """Infer a dimension from a leaf, then its nearest descriptive ancestor.
 
-    A leaf keyed by a symbol or a currency code (``weights.YPFD``) is named by its
-    container, so the nearest descriptive ancestor is read instead.
-
-    Args:
-        path: Recorded evidence field, e.g. ``"data.sections.financials.revenueGrowth"``.
-
-    Returns:
-        ``"ratio"`` for a ratio, percent or metric, ``"count"`` for a count, else None.
+    A leaf's own explicit amount, currency, ratio, metric or count semantics win.
+    Opaque mapping labels may inherit a dimension from their nearest descriptive
+    container.
     """
     parts = [re.sub(r"\[\d+\]$", "", part) for part in str(path or "").split(".")]
     parts = [part for part in parts if part]
@@ -420,19 +429,23 @@ def _leaf_dimension(path: str) -> str | None:
         parts.pop()
     if not parts:
         return None
-    tokens = _name_tokens(parts[-1])
-    # A trailing amount noun or currency code (``bond_coupon_ars``) is the leaf's
-    # own unit declaration and outweighs any ratio word before it.
+
+    leaf = parts[-1]
+    tokens = _name_tokens(leaf)
     if not tokens or tokens[-1] in _AMOUNT_TOKENS or (
         len(tokens) > 1 and _currency_code(tokens[-1])
     ):
         return None
-    if any(token in _RATIO_TOKENS for token in tokens) or _metric_kind_for_path(parts[-1]):
-        return "ratio"
-    if any(token in _COUNT_TOKENS for token in tokens) or _is_metadata_count_leaf(parts[-1]):
-        return "count"
-    return None
 
+    own_dimension = _field_dimension(leaf)
+    if own_dimension is not None:
+        return own_dimension
+
+    for ancestor in reversed(parts[:-1]):
+        dimension = _field_dimension(ancestor)
+        if dimension is not None:
+            return dimension
+    return None
 
 def _declared_unit(hint: Any) -> str | None:
     """The unit an explicit per-leaf declaration (``_units``) names, or None."""
