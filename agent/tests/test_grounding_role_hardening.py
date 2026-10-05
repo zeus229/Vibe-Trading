@@ -698,13 +698,14 @@ def test_tool_name_before_field_ref_lists_exact_call_refs(tmp_path: Path) -> Non
 
     assert result.valid is False
     assert _reasons(result) == ["field_ref_needs_call_id"]
+    # The written 1.57% identifies x1 by value, so correction should not
+    # dilute the repair hint with the same field from x2.
     assert result.issues[0]["field_ref_candidates"] == [
         "x1::data.tail_risk.var_95",
-        "x2::data.tail_risk.var_95",
     ]
     correction = ledger.correction_prompt(result)
-    assert "x1::data.tail_risk.var_95" in correction
-    assert "x2::data.tail_risk.var_95" in correction
+    assert correction.count("x1::data.tail_risk.var_95") == 1
+    assert "x2::data.tail_risk.var_95" not in correction
 
 
 def test_tail_risk_correction_lists_exact_payload_fields(tmp_path: Path) -> None:
