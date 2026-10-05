@@ -261,3 +261,90 @@ def test_unscoped_aggregate_candidate_is_flagged_for_first_pass_correction(tmp_p
     assert issues[0]["aggregate_ref_candidate"] == (
         "call_portfolio::data.concentration.top1_pct"
     )
+
+
+def test_unknown_alias_candidates_keep_only_matching_call(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
+    ledger._evidence = [
+        _record(value=20.18),
+        EvidenceRecord(
+            call_id="call_other",
+            tool="portfolio_summary",
+            symbol=None,
+            source="asistente_casa",
+            timestamp=None,
+            field="data.concentration.top1_pct",
+            value=19.75,
+            status="observed",
+            unit="ratio",
+            identity_scope="aggregate",
+        ),
+    ]
+
+    candidates = ledger._unknown_call_field_ref_candidates(
+        "ac_perf_1r::data.concentration.top1_pct",
+        None,
+        _percent_figure(20.18),
+    )
+
+    assert candidates == ["call_portfolio::data.concentration.top1_pct"]
+
+
+def test_unknown_alias_propagates_aggregate_repair_metadata(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
+    ledger._evidence = [_record(value=20.18)]
+    figure = _percent_figure(20.18)
+    declaration = Declaration(
+        index=0,
+        value_text=figure.text,
+        value=figure.value,
+        percent=True,
+        role="observed",
+        note="Top 1",
+        ref="ac_perf_1r::data.concentration.top1_pct",
+    )
+
+    issues = ledger._check_observed(figure, declaration, "YPFD", ledger._evidence)
+
+    assert len(issues) == 1
+    assert issues[0]["reason"] == "unknown_call_id"
+    assert issues[0]["field_ref_candidates"] == [
+        "call_portfolio::data.concentration.top1_pct"
+    ]
+    assert issues[0]["aggregate_ref_candidate"] == (
+        "call_portfolio::data.concentration.top1_pct"
+    )
+
+
+def test_session_scope_propagates_aggregate_repair_metadata(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
+    ledger._evidence = [_record(value=20.18)]
+    figure = _percent_figure(20.18)
+    declaration = Declaration(
+        index=0,
+        value_text=figure.text,
+        value=figure.value,
+        percent=True,
+        role="observed",
+        note="Top 1",
+        ref="run_scope::alias.data.concentration.top1_pct",
+    )
+    original_artifact_scope = ledger._artifact_scope
+
+    def artifact_scope(key: str):
+        if key == "run_scope":
+            return [object()]
+        return original_artifact_scope(key)
+
+    ledger._artifact_scope = artifact_scope  # type: ignore[method-assign]
+
+    issues = ledger._check_observed(figure, declaration, "YPFD", ledger._evidence)
+
+    assert len(issues) == 1
+    assert issues[0]["reason"] == "session_scope_needs_call_id"
+    assert issues[0]["field_ref_candidates"] == [
+        "call_portfolio::data.concentration.top1_pct"
+    ]
+    assert issues[0]["aggregate_ref_candidate"] == (
+        "call_portfolio::data.concentration.top1_pct"
+    )
