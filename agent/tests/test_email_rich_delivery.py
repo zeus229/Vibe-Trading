@@ -196,9 +196,6 @@ def test_per_message_pdf_can_be_password_protected(monkeypatch):
     sent = []
     monkeypatch.setattr(channel, "_smtp_send", lambda message: sent.append(message))
 
-    import src.channels.rich_text as rich_text
-    real_render = rich_text.render_email_pdf
-
     asyncio.run(
         channel.send(
             OutboundMessage(
