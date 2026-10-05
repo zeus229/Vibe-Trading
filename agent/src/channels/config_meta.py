@@ -167,7 +167,6 @@ def _email_hints() -> list[FieldHint]:
         ("smtp_port", "text", False, False),
         ("smtp_username", "text", False, True),
         ("smtp_password", "password", True, True),
-        ("pdf_password", "password", True, False),
         ("smtp_use_tls", "bool", False, False),
         ("smtp_use_ssl", "bool", False, False),
         ("verify_tls", "bool", False, False),
@@ -184,6 +183,7 @@ def _email_hints() -> list[FieldHint]:
         ("allow_from", "list", False, False),
         ("verify_dkim", "bool", False, False),
         ("verify_spf", "bool", False, False),
+        ("trusted_authserv_id", "text", False, False),
         ("allowed_attachment_types", "list", False, False),
         ("max_attachment_size", "text", False, False),
         ("max_attachments_per_email", "text", False, False),
@@ -383,11 +383,7 @@ def split_values_secrets(
     secrets: dict[str, dict[str, Any]] = {}
     for key, value in section.items():
         if is_secret_key(name, key):
-            # PDF report passwords reveal only configured/unconfigured state.
-            if name == "email" and key == "pdf_password":
-                secrets[key] = {"set": bool(value), "masked": "****" if value else ""}
-            else:
-                secrets[key] = _mask(value)
+            secrets[key] = _mask(value)
         else:
             values[key] = _strip_url_userinfo(value)
     return values, secrets

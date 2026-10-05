@@ -77,7 +77,6 @@ _CORRECTION_REASONS = {
     "tail_risk_needs_field_ref": "this session holds {sources}, which are different measurements; declare the figure with an exact field ref",
     "field_ref_needs_call_id": "{ref} uses a tool name before ::; use one exact call_id::field ref from {sources}",
     "unknown_call_id": "{ref} names no call, tool or run of this session; copy a real tool_call_id, not an alias",
-    "session_scope_needs_call_id": "{ref} uses a session run/artifact before ::, but this scalar came from one exact tool call; use a listed call_id::field ref",
     "no_formula": "its note states no arithmetic",
     "formula_not_evaluable": "its note is not an arithmetic expression over two or more operands",
     "formula_not_anchored": "no operand of its note is a value this session observed",
@@ -137,6 +136,7 @@ def _correction_line(issue: dict[str, Any]) -> str:
             "; that is the same size with the opposite sign — the formula runs the other "
             "way round from the answer, so write its operands in the order the answer states"
         )
+    # Each ref once, and not again when the reason already spelled the same list.
     candidates = list(dict.fromkeys(str(item) for item in issue.get("field_ref_candidates") or []))
     sources = list(dict.fromkeys(str(item) for item in issue.get("ambiguous_sources") or []))
     if candidates and not ("{sources}" in template and candidates == sources):
@@ -225,25 +225,6 @@ class _ReleaseMixin:
                 "the arithmetic itself, with one operand this session observed; "
                 "proposed must be derived or lie inside the observed price range; "
                 "cited needs a source in its note; count is not checked.",
-                "For a derived figure using multiple tools or calls, cite every exact "
-                "source ref, separated by semicolons; do not decorate refs with labels.",
-                "When a scalar already appears in a tool result, declare it observed; "
-                "rounding it or displaying a decimal fraction as a percent does not make "
-                "it derived. Use its exact `call_id::full.field.path` ref. For a real "
-                "derivation, show the formula and exact source call_id::field.path refs.",
-                "For field refs, use ONLY `call_id::full.field.path` from the exact call "
-                "in this session. Never use a bare tool name, decorated tool name, or "
-                "`tool_name(args)::field.path`; do not append labels, scopes, parentheses "
-                "or prose to a ref. Return the "
-                "FULL revised answer, not just corrected prose. Preserve or rebuild the "
-                "final figures block on every revision.",
-                "In each figures declaration, use the normalized raw number: no currency "
-                "prefix or thousands separators, and use a dot decimal (not ARS "
-                "123.456.789,125). Preserve a percent sign when prose shows a percent, "
-                "for example `0.9562% | observed | ...`; 0.9562 and 0.9562% are "
-                "different representations.",
-                "If a figure previously needed multiple refs, preserve ALL of those refs "
-                "in every revised figures declaration.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
@@ -322,46 +303,19 @@ class _ReleaseMixin:
             return None
         if self.identity_status == "locked" and any(
             issue.get("code") in {"numeric_claim_unavailable", "unsourced_symbol_figures"}
-            and issue.get("market_price") is True
             for issue in validation.issues
         ):
             if self._price_evidence_attempts < MAX_PRICE_EVIDENCE_ATTEMPTS:
                 return "get_market_data"
         return None
 
-    def record_recovery(
-        self,
-        action: str,
-        *,
-        draft: str | None = None,
-        validation: ValidationResult | None = None,
-    ) -> None:
-        """Account a bounded recovery and retain its rejected draft if supplied."""
+    def record_recovery(self, action: str) -> None:
+        """Account one bounded recovery attempt against its budget."""
         self._recovery_rounds += 1
         if action == _RESOLVER_TOOL:
             self._symbol_resolution_attempts += 1
         elif action == "get_market_data":
             self._price_evidence_attempts += 1
-        if draft is not None and validation is not None:
-            self._pending_recovery = {
-                "action": action,
-                "draft": draft,
-                "validation": validation,
-            }
-
-    def pending_recovery_stub(self, content: str) -> tuple[str, ValidationResult] | None:
-        """Consume an unfulfilled recovery when the next answer drops all figures."""
-        pending = self._pending_recovery
-        self._pending_recovery = None
-        if pending is None or self._has_measured_figures(content):
-            return None
-        return pending["draft"], pending["validation"]
-
-    @staticmethod
-    def _has_measured_figures(content: str) -> bool:
-        """Whether the answer contains any measured-shape figure."""
-        block = parse_figures_block(content)
-        return any(figure.shape == "measured" for figure in scan_figures(content, block))
 
     def recovery_prompt(self, action: str, validation: ValidationResult) -> str:
         """Build an executable next-step message for one bounded recovery turn."""
@@ -403,25 +357,24 @@ class _ReleaseMixin:
             )
         # No observed price: tell unresolved identity apart from a draft citing
         # prices this session never observed.
-        # Describe only the latest rejected draft; earlier price issues must not
-        # color the fallback after the model has moved on to a fundamentals claim.
-        last_issues = self._validations[-1]["issues"] if self._validations else []
-        redactable = [issue for issue in last_issues if issue.get("code") in _REDACTABLE_CODES]
-        if redactable and not self._analysis_completed:
-            is_price = any(issue.get("market_price") is True for issue in redactable)
+        issue_codes = {
+            code
+            for validation in self._validations
+            for code in (issue.get("code") for issue in validation.get("issues", []))
+        }
+        if issue_codes & _REDACTABLE_CODES and not self._analysis_completed:
             if is_zh:
                 return (
-                    f"我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的{'价格数字' if is_price else '数值'},无法核验。"
-                    "请重新发起任务,让模型先调用相应工具获取数据,或要求它去掉这些引用后重试。"
+                    "我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的价格数字,无法核验。"
+                    "请重新发起任务,让模型先调用行情工具获取数据,或要求它去掉这些价格引用后重试。"
                 )
             return (
-                f"My previous answer was rejected by the verification gate: it cited "
-                f"{'price figures' if is_price else 'numeric claim(s)'} that this session "
-                "never obtained through a tool, so they could not be verified. Re-run the task "
-                "and let the agent fetch the relevant data first, or ask it to answer without "
-                "the unverified figures."
+                "My previous answer was rejected by the verification gate: it cited price "
+                "figures that this session never obtained through a tool, so they could not "
+                "be verified. Re-run the task and let the agent fetch the market data first, "
+                "or ask it to answer without the unverified prices."
             )
-        if redactable:
+        if issue_codes & _REDACTABLE_CODES:
             # A completed analysis whose report failed the check: the draft's
             # figures, not prices, are what failed, and the run's output is
             # not lost with it.
@@ -560,12 +513,6 @@ class _ReleaseMixin:
             return None
         return content.rstrip() + "\n\n" + note
 
-    @staticmethod
-    def _redaction_needs_price_evidence(issues: Sequence[dict[str, Any]]) -> bool:
-        """Require price evidence unless every redactable issue is known non-price."""
-        redactable = [issue for issue in issues if issue.get("code") in _REDACTABLE_CODES]
-        return not redactable or any(issue.get("market_price") is not False for issue in redactable)
-
     def redacted_release(self, content: str, validation: ValidationResult) -> str | None:
         """Release the last rejected draft with its unverified figures cut out.
 
@@ -593,12 +540,7 @@ class _ReleaseMixin:
         # so does a completed analysis: naming 600519.SH in a backtest request
         # makes it a market answer, but the backtest's own output is what the
         # surviving figures were checked against.
-        if (
-            self._identity_required
-            and not self._price_records()
-            and not self._analysis_completed
-            and self._redaction_needs_price_evidence(validation.issues)
-        ):
+        if self._identity_required and not self._price_records() and not self._analysis_completed:
             return None
         text = _strip_release_markers(content)
         # Stripping shifts offsets and the cuts anchor on issue spans, so the

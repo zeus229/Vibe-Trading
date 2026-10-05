@@ -153,7 +153,7 @@
     "editingHint": "Dieser geplante Lauf wird bearbeitet. Beim Speichern bleiben Identität und Ausführungsverlauf erhalten.",
     "edit": "Bearbeiten",
     "editAria": "Geplanten Lauf bearbeiten: {{prompt}}",
-    "editRunningDisabled": "Warten Sie, bis dieser Lauf beendet ist, bevor Sie ihn bearbeiten.",
+    "editRunningDisabled": "Warte, bis der Lauf oder die Zustellung abgeschlossen ist.",
     "deliveryInApp": "Nur in Vibe behalten (nicht senden)",
     "deliveryNoChannels": "Es sind keine aktivierten Zustellungskanäle konfiguriert. Konfigurieren Sie einen unter Einstellungen → Kanäle.",
     "deliveryChannelsLoadFailed": "Konfigurierte Zustellungskanäle konnten nicht geladen werden.",
@@ -207,6 +207,13 @@
     "deliveryChannelPlaceholder": "telegram, feishu … (leer lassen, dann bleibt alles in der App)",
     "deliveryTargetLabel": "Ziel im Kanal",
     "deliveryTargetPlaceholder": "Chat- / Gruppen- / Benutzer-ID",
+    "deliveryFormatLabel": "Email report format",
+    "deliveryFormatDefault": "Channel default (plain text)",
+    "deliveryFormatHtml": "HTML email",
+    "deliveryFormatPdf": "PDF attachment",
+    "deliveryFormatDefaultHint": "Keeps the existing plain-text delivery behavior.",
+    "deliveryFormatHtmlHint": "Shows the full report as sanitized HTML in the email body.",
+    "deliveryFormatPdfHint": "Attaches the full report as PDF and keeps only a short notice in the body.",
     "deliveryHint": "Standardmäßig aus. Das Briefing wird **nach dem Lauf** gesendet, nicht bei der Planung.",
     "deliveryTargetRequired": "Geben Sie ein Ziel für diesen Kanal an, oder leeren Sie das Kanalfeld.",
     "delivery_none": "Wird nach dem nächsten Lauf an {{channel}} gesendet",
@@ -223,15 +230,12 @@
     "deliveryKnownTargetLabel": "Bekanntes Ziel",
     "deliveryKnownTargetPlaceholder": "Bekanntes Ziel auswählen…",
     "deliverySuggestionKind_private_chat": "Privater Chat",
-    "deliveryFormatLabel": "Email report format",
-    "deliveryFormatDefault": "Channel default (plain text)",
-    "deliveryFormatHtml": "Email HTML",
-    "deliveryFormatPdf": "PDF attachment",
-    "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
-    "deliveryFormatHtmlHint": "Sends the full report in the email body.",
-    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
-    "deliveryProtectPdf": "Protect PDF with password",
-    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
+    "deliveryTargetPlaceholder_email_address": "name@example.com",
+    "deliveryTargetPlaceholder_chat": "Chat-, Gruppen- oder Benutzer-ID",
+    "deliveryTargetPlaceholder_channel": "Kanal-ID",
+    "deliveryTargetPlaceholder_destination": "Chat- / Gruppen- / Benutzer-ID",
+    "deliveryTargetPlaceholder_slack_destination": "#Kanal, @Benutzer oder Konversations-ID",
+    "deliveryTargetKind_slack_destination": "Ziel"
   },
   "reports": {
     "badge": "Berichte",
@@ -604,10 +608,6 @@
             "label": "SMTP-Passwort",
             "help": "Passwort oder App-Passwort für SMTP. Wird serverseitig gespeichert und nie an den Browser zurückgegeben."
           },
-          "pdf_password": {
-            "label": "PDF report password",
-            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
-          },
           "smtp_use_tls": {
             "label": "SMTP-STARTTLS",
             "help": "SMTP-Verbindung per STARTTLS verschlüsseln (standardmäßig aktiv; üblich für Port 587). In der Praxis nicht mit SMTP-SSL kombinierbar."
@@ -683,6 +683,10 @@
           "max_attachments_per_email": {
             "label": "Max. Anhänge pro E-Mail",
             "help": "Wie viele Anhänge aus einer E-Mail übernommen werden (Standard 5)."
+          },
+          "trusted_authserv_id": {
+            "label": "Vertrauenswürdiger Authentifizierungsserver",
+            "help": "authserv-id des empfangenden Servers, z. B. mx.google.com. Der Mailanbieter muss gefälschte eingehende Authentication-Results-Header mit dieser ID entfernen. Bei SPF- oder DKIM-Prüfung erforderlich; leer wird eingehende Mail abgewiesen."
           }
         },
         "websocket": {
@@ -1008,6 +1012,7 @@
     "dropFiles": "Dateien hier ablegen",
     "removeAttachment": "{{filename}} entfernen",
     "uploadFailed": "Hochladen fehlgeschlagen: {{error}}",
+    "messageTooLong": "Die Nachricht überschreitet {{limit}} Zeichen einschließlich Anhangsinformationen und Teamanweisungen. Kürze sie vor dem Senden.",
     "failedToSend": "Nachricht konnte nicht gesendet werden, bitte erneut versuchen.",
     "failedToContinue": "Ziel konnte nicht fortgesetzt werden, bitte erneut versuchen.",
     "runtimeBadge": "LAUFZEIT",
@@ -1977,8 +1982,7 @@
       "coverage": "Bewertungsabdeckung",
       "coverageNote": "Bewertet {{priced}} · Bargeld {{cash}}",
       "lastComplete": "Letzte vollständige Aktualisierung",
-      "excluded": "{{count}} Konten konnten nicht gelesen werden und fehlen in dieser Summe",
-      "changeCanonicalNote": "Kanonische tägliche Portfolioänderung von Asistente Casa"
+      "excluded": "{{count}} Konten konnten nicht gelesen werden und fehlen in dieser Summe"
     },
     "allocation": {
       "byAccount": "Aufteilung nach Konto",
@@ -2015,8 +2019,7 @@
       "colPnl": "Nicht realisierte G/V",
       "colData": "Daten",
       "priced": "Bewertet",
-      "unpriced": "Ohne Kurs",
-      "colToday": "Heute"
+      "unpriced": "Ohne Kurs"
     },
     "history": {
       "title": "Vermögensverlauf",

@@ -13,78 +13,12 @@ from src.goal.context import default_goal_criteria
 from src.tools.path_utils import safe_run_dir
 
 
-def _json_error(
-    error: str,
-    *,
-    error_type: str = "validation",
-    extra: dict[str, Any] | None = None,
-) -> str:
-    """Return a standard JSON error envelope with optional repair context."""
-    payload: dict[str, Any] = {
-        "status": "error",
-        "error_type": error_type,
-        "error": error,
-    }
-    if extra:
-        payload.update(extra)
-    return json.dumps(payload, ensure_ascii=False)
-
-
-def _completion_contract(snapshot: dict[str, Any] | None) -> dict[str, Any] | None:
-    """Build a canonical criterion/evidence map for completion audits.
-
-    Goal completion is intentionally strict, but the model should not have to
-    reconstruct opaque criterion/evidence ids from separate tool responses.
-    This compact contract is returned by all goal tools so completion repairs
-    use the exact current ids instead of stale or grounding-ledger ids.
-    """
-    if snapshot is None:
-        return None
-    evidence = snapshot.get("evidence") or []
-    rows: list[dict[str, Any]] = []
-    for index, criterion in enumerate(snapshot.get("criteria") or [], start=1):
-        criterion_id = str(criterion.get("criterion_id") or "")
-        criterion_evidence = [
-            item for item in evidence if item.get("criterion_id") == criterion_id
-        ]
-        rows.append(
-            {
-                "criterion_index": index,
-                "criterion_id": criterion_id,
-                "text": criterion.get("text"),
-                "required": bool(criterion.get("required", True)),
-                "status": criterion.get("status"),
-                "evidence_ids": [
-                    str(item.get("evidence_id"))
-                    for item in criterion_evidence
-                    if item.get("evidence_id")
-                ],
-                "verified_evidence_ids": [
-                    str(item.get("evidence_id"))
-                    for item in criterion_evidence
-                    if item.get("evidence_id")
-                    and item.get("verification_status") == "verified"
-                ],
-            }
-        )
-    return {
-        "goal_id": (snapshot.get("goal") or {}).get("goal_id"),
-        "criteria": rows,
-        "instructions": (
-            "For status=complete, submit one audit row per required criterion. "
-            "Use these exact criterion_id values (or criterion_index) and cite "
-            "goal-ledger evidence_ids from the same criterion. Grounding evidence "
-            "ids are not goal evidence ids."
-        ),
-    }
-
-
-def _goal_payload(snapshot: dict[str, Any] | None) -> dict[str, Any]:
-    """Return a goal tool payload with one canonical completion contract."""
-    return {
-        "snapshot": snapshot,
-        "completion_contract": _completion_contract(snapshot),
-    }
+def _json_error(error: str, *, error_type: str = "validation") -> str:
+    """Return a standard JSON error envelope."""
+    return json.dumps(
+        {"status": "error", "error_type": error_type, "error": error},
+        ensure_ascii=False,
+    )
 
 
 def _coerce_string_list(value: Any) -> list[str]:
@@ -98,12 +32,8 @@ def _coerce_string_list(value: Any) -> list[str]:
     return []
 
 
-def _coerce_audit_rows(
-    value: Any,
-    *,
-    snapshot: dict[str, Any] | None = None,
-) -> list[AuditRow]:
-    """Coerce model/API-style audit rows and resolve canonical criterion ids."""
+def _coerce_audit_rows(value: Any) -> list[AuditRow]:
+    """Coerce model/API-style audit rows into dataclasses."""
     if value in (None, ""):
         return []
     if isinstance(value, str):
@@ -116,26 +46,9 @@ def _coerce_audit_rows(
         if not isinstance(item, dict):
             raise ValueError("audit rows must be objects")
         criterion_id = str(item.get("criterion_id") or "").strip()
-        criterion_index = item.get("criterion_index")
-        if criterion_index is not None:
-            if snapshot is None:
-                raise ValueError("criterion_index requires a current goal snapshot")
-            criteria = snapshot.get("criteria") or []
-            try:
-                index = int(criterion_index)
-            except (TypeError, ValueError) as exc:
-                raise ValueError("criterion_index must be an integer") from exc
-            if index < 1 or index > len(criteria):
-                raise ValueError(f"criterion_index out of range: {index}")
-            canonical_id = str(criteria[index - 1].get("criterion_id") or "")
-            if criterion_id and criterion_id != canonical_id:
-                raise ValueError(
-                    f"criterion_id does not match criterion_index {index}: {criterion_id}"
-                )
-            criterion_id = canonical_id
         result = str(item.get("result") or "").strip()
         if not criterion_id or not result:
-            raise ValueError("audit rows require criterion_id (or criterion_index) and result")
+            raise ValueError("audit rows require criterion_id and result")
         rows.append(
             AuditRow(
                 criterion_id=criterion_id,
@@ -297,7 +210,7 @@ class StartResearchGoalTool(_GoalToolBase):
             snapshot = self._store.get_goal_snapshot(goal.goal_id)
             if snapshot is not None:
                 self._emit("goal.created", {"goal": snapshot["goal"]})
-            return json.dumps({"status": "ok", **_goal_payload(snapshot)}, ensure_ascii=False)
+            return json.dumps({"status": "ok", "snapshot": snapshot}, ensure_ascii=False)
         except (TypeError, ValueError) as exc:
             return _json_error(str(exc))
 
@@ -334,14 +247,7 @@ class UpdateResearchGoalStatusTool(_GoalToolBase):
                 "items": {
                     "type": "object",
                     "properties": {
-                        "criterion_id": {
-                            "type": "string",
-                            "description": "Exact criterion_id from completion_contract.",
-                        },
-                        "criterion_index": {
-                            "type": "integer",
-                            "description": "1-based criterion index from completion_contract; may be used instead of criterion_id.",
-                        },
+                        "criterion_id": {"type": "string"},
                         "result": {
                             "type": "string",
                             "enum": [
@@ -354,13 +260,9 @@ class UpdateResearchGoalStatusTool(_GoalToolBase):
                         "evidence_ids": {"type": "array", "items": {"type": "string"}},
                         "notes": {"type": "string"},
                     },
-                    "required": ["result"],
+                    "required": ["criterion_id", "result"],
                 },
-                "description": (
-                    "Criterion audit rows, required when status is complete. "
-                    "Use exact ids from get_research_goal.completion_contract; "
-                    "do not use grounding-ledger ids."
-                ),
+                "description": "Criterion audit rows, required when status is complete.",
             },
             "recap": {"type": "string", "description": "Optional concise status recap."},
         },
@@ -393,32 +295,24 @@ class UpdateResearchGoalStatusTool(_GoalToolBase):
                 goal_id=goal_id,
                 expected_goal_id=expected_goal_id,
                 status=status,
-                audit=_coerce_audit_rows(kwargs.get("audit"), snapshot=snapshot),
+                audit=_coerce_audit_rows(kwargs.get("audit")),
                 recap=str(kwargs.get("recap") or "").strip() or None,
             )
             updated = self._store.get_goal_snapshot(goal_id)
             if updated is not None:
                 self._emit("goal.updated", {"goal": updated["goal"], "snapshot": updated})
-            return json.dumps({"status": "ok", **_goal_payload(updated)}, ensure_ascii=False)
+            return json.dumps({"status": "ok", "snapshot": updated}, ensure_ascii=False)
         except StaleGoalError as exc:
             return _json_error(str(exc), error_type="stale_goal")
         except (json.JSONDecodeError, TypeError, ValueError) as exc:
-            repair_snapshot = self._store.get_current_snapshot(session_id)
-            return _json_error(
-                str(exc),
-                extra=_goal_payload(repair_snapshot),
-            )
+            return _json_error(str(exc))
 
 
 class GetResearchGoalTool(_GoalToolBase):
     """Read the current research goal snapshot."""
 
     name = "get_research_goal"
-    description = (
-        "Read the current finance research goal, criteria, latest evidence, and "
-        "canonical completion_contract. Call immediately before completion or "
-        "after a completion validation error."
-    )
+    description = "Read the current finance research goal, criteria, claims, and latest evidence."
     parameters = {
         "type": "object",
         "properties": {
@@ -448,7 +342,7 @@ class GetResearchGoalTool(_GoalToolBase):
             return _json_error(str(exc))
         if snapshot is None:
             return _json_error("no current goal for this session", error_type="not_found")
-        return json.dumps({"status": "ok", **_goal_payload(snapshot)}, ensure_ascii=False)
+        return json.dumps({"status": "ok", "snapshot": snapshot}, ensure_ascii=False)
 
 
 class AddGoalEvidenceTool(_GoalToolBase):
@@ -456,11 +350,11 @@ class AddGoalEvidenceTool(_GoalToolBase):
 
     name = "add_goal_evidence"
     description = (
-        "Attach evidence to the current research goal with an explicit provenance shape. "
-        "Use provenance_kind=single_tool only for evidence from one concrete tool result and "
-        "copy its exact tool_call_id. Use synthesis for combined evidence and manual for notes "
-        "not attributable to one tool call. The runtime validates single-tool ids against calls "
-        "actually observed in this run; evidence_id (ev_...) is never a grounding source ref."
+        "Attach a concise evidence note, artifact reference, or tool result to the current "
+        "research goal. Prefer linking evidence to a criterion by criterion_id or criterion_index. "
+        "When the evidence comes from one specific tool result, preserve that result's exact "
+        "tool_call_id; the returned evidence_id (ev_...) identifies the goal-ledger row and is "
+        "not a grounding source reference."
     )
     is_readonly = False
     parameters = {
@@ -487,21 +381,12 @@ class AddGoalEvidenceTool(_GoalToolBase):
                 "type": "string",
                 "description": "Optional host-injected current run directory. Omit unless provided by the runtime.",
             },
-            "provenance_kind": {
-                "type": "string",
-                "enum": ["single_tool", "synthesis", "manual"],
-                "description": (
-                    "Required provenance shape. single_tool means exactly one concrete tool result; "
-                    "synthesis combines multiple/no single tool result; manual is reasoning or a note "
-                    "not sourced from a tool result."
-                ),
-            },
             "tool_call_id": {
                 "type": "string",
                 "description": (
-                    "For provenance_kind=single_tool, copy the exact observed tool call id verbatim. "
-                    "Never use an evidence_id (ev_...), tool name, alias, or invented id. Omit for "
-                    "synthesis/manual evidence."
+                    "Optional provenance id of the specific tool result behind this evidence. "
+                    "When known, copy its tool_call_id verbatim. Never substitute an evidence_id "
+                    "(ev_...), tool name, shortened alias, or invented id."
                 ),
             },
             "source_provider": {"type": "string", "description": "Data or tool provider."},
@@ -525,7 +410,7 @@ class AddGoalEvidenceTool(_GoalToolBase):
             "confidence": {"type": "string", "description": "Optional confidence label."},
             "caveat": {"type": "string", "description": "Optional caveat."},
         },
-        "required": ["text", "provenance_kind"],
+        "required": ["text"],
     }
 
     def execute(self, **kwargs: Any) -> str:
@@ -556,55 +441,6 @@ class AddGoalEvidenceTool(_GoalToolBase):
                 criterion_id = str(criteria[index - 1]["criterion_id"])
             run_id, artifact_path, artifact_hash = _trace_fields_from_runtime(kwargs)
 
-            provenance_kind = str(kwargs.get("provenance_kind") or "").strip()
-            if provenance_kind not in {"single_tool", "synthesis", "manual"}:
-                return _json_error(
-                    "provenance_kind must be one of: single_tool, synthesis, manual"
-                )
-            tool_call_id = str(kwargs.get("tool_call_id") or "").strip() or None
-            runtime_calls_raw = kwargs.get("_runtime_observed_tool_calls") or []
-            runtime_calls = [
-                {
-                    "call_id": str(item.get("call_id") or "").strip(),
-                    "tool": str(item.get("tool") or "").strip(),
-                    "status": str(item.get("status") or "").strip() or "unknown",
-                }
-                for item in runtime_calls_raw
-                if isinstance(item, dict)
-                and str(item.get("call_id") or "").strip()
-                and str(item.get("tool") or "").strip()
-            ]
-            observed_call_ids = {str(item["call_id"]).strip() for item in runtime_calls}
-            repair = {
-                "provenance_kind": provenance_kind,
-                "tool_call_candidates": runtime_calls,
-                "instructions": (
-                    "Choose the exact call_id of the single executed tool result that supports this evidence, "
-                    "including an error result when the error itself is the finding. "
-                    "Do not guess from recency or substitute a tool name/evidence_id. If the note "
-                    "combines multiple sources, retry with provenance_kind=synthesis and no tool_call_id."
-                ),
-            }
-            if provenance_kind == "single_tool":
-                if tool_call_id is None:
-                    return _json_error(
-                        "single_tool evidence requires tool_call_id",
-                        error_type="provenance",
-                        extra=repair,
-                    )
-                if tool_call_id not in observed_call_ids:
-                    return _json_error(
-                        "tool_call_id was not observed as a successful tool call in this run",
-                        error_type="provenance",
-                        extra=repair,
-                    )
-            elif tool_call_id is not None:
-                return _json_error(
-                    f"{provenance_kind} evidence must not declare a single tool_call_id",
-                    error_type="provenance",
-                    extra=repair,
-                )
-
             record = self._store.append_evidence(
                 session_id=session_id,
                 goal_id=goal_id,
@@ -614,7 +450,7 @@ class AddGoalEvidenceTool(_GoalToolBase):
                     claim_id=str(kwargs.get("claim_id") or "").strip() or None,
                     text=str(kwargs.get("text", "")),
                     run_id=run_id,
-                    tool_call_id=tool_call_id,
+                    tool_call_id=str(kwargs.get("tool_call_id") or "").strip() or None,
                     source_provider=str(kwargs.get("source_provider") or "agent_tool"),
                     source_type=str(kwargs.get("source_type") or "tool_note"),
                     source_uri=str(kwargs.get("source_uri") or "").strip() or None,
@@ -635,7 +471,7 @@ class AddGoalEvidenceTool(_GoalToolBase):
                 {"evidence": record.__dict__, "goal_id": goal_id},
             )
             return json.dumps(
-                {"status": "ok", "evidence": record.__dict__, **_goal_payload(updated)},
+                {"status": "ok", "evidence": record.__dict__, "snapshot": updated},
                 ensure_ascii=False,
             )
         except StaleGoalError as exc:

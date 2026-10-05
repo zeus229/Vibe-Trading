@@ -986,3 +986,33 @@ def test_signal_group_command_requires_per_sender_authorization() -> None:
     )
     assert allowed is True
     assert allowed_chat == "group-1"
+
+
+@pytest.mark.parametrize("fmt,label", [("html", "HTML"), ("pdf", "PDF"), (None, "plain text")])
+def test_channel_confirmation_displays_email_format(tmp_path, monkeypatch, fmt, label):
+    from src.scheduled_research import proposals
+
+    monkeypatch.setattr(proposals, "latest_pending_for_session", lambda sid: {
+        "operation": "create", "job": {
+            "title": "Research", "schedule": {"expression": "60000"},
+            "delivery": {"channel": "email", "target_label": "Research", "format": fmt},
+        },
+    })
+
+    async def scenario():
+        from src.channels.runtime import ChannelRuntime
+
+        bus = MessageBus()
+        runtime = ChannelRuntime(bus=bus, session_service=FakeSessionService(), manager=None,
+                                 session_map_path=tmp_path / "sessions.json", reply_timeout_s=1,
+                                 poll_interval_s=0.01)
+        await runtime.start(start_manager=False)
+        try:
+            await bus.publish_inbound(InboundMessage(channel="websocket", sender_id="u", chat_id="c", content="schedule research"))
+            outbound = await asyncio.wait_for(bus.consume_outbound(), timeout=1)
+            assert f"Email format: {label}" in outbound.content
+            assert 'Reply exactly "confirm"' in outbound.content
+        finally:
+            await runtime.stop()
+
+    asyncio.run(scenario())

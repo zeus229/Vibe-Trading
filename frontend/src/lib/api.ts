@@ -8,6 +8,17 @@ import type {
 
 const BASE = "";
 
+export async function downloadGeneratedReport(reportId: string, filename: string): Promise<void> {
+  const response = await fetch(`${BASE}/api/reports/${encodeURIComponent(reportId)}`, { headers: authHeaders() });
+  if (!response.ok) throw new ApiError(response.statusText, response.status);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -77,16 +88,8 @@ export interface PortfolioPosition {
   quantity: number;
   cost_price?: number | null;
   market_price?: number | null;
-  market_value_usd: number | null;
-  market_value_cny: number | null;
-  native_currency?: string | null;
-  market_value_native?: number | null;
-  unrealized_pnl_native?: number | null;
-  exposure_currency?: string | null;
-  daily_change_pct?: number | null;
-  daily_change_as_of?: string | null;
-  daily_change_source?: string | null;
-  daily_change_status?: "ready" | "unavailable" | string | null;
+  market_value_usd: number;
+  market_value_cny: number;
   unrealized_pnl_usd?: number | null;
   priced: boolean;
   updated_at: string;
@@ -119,11 +122,6 @@ export interface PortfolioAccount {
   total_usd?: number | null;
   total_cny?: number | null;
   total_display?: number | null;
-  native_currency?: string | null;
-  total_native?: number | null;
-  priced_value_native?: number | null;
-  cash_native?: number | null;
-  unpriced_or_other_native?: number | null;
   priced_value_usd?: number;
   cash_usd?: number;
   unpriced_or_other_usd?: number;
@@ -149,23 +147,13 @@ export interface PortfolioSnapshot {
   /** False whenever any enabled source did not reach `status === "ok"`. */
   complete: boolean;
   display_currency?: string;
-  totals: { usd: number; cny: number; display?: number | null; native_by_currency?: Record<string, number> };
+  totals: { usd: number; cny: number; display?: number };
   valuation?: {
     priced_usd: number;
     cash_usd: number;
     unpriced_or_other_usd: number;
     identified_coverage: number;
-    native_by_currency?: Record<string, { priced: number; cash: number; unpriced_or_other: number; identified_coverage: number }>;
   };
-  daily_change?: {
-    pct: number | null;
-    as_of?: string | null;
-    status?: "ready" | "unavailable" | string;
-    source?: string | null;
-    method?: string | null;
-    coverage_pct?: number | null;
-    trading_date?: string | null;
-  } | null;
   fx: { usd_cny: number; usd_hkd: number; rates?: Record<string, number>; fetched_at: string; stale: boolean };
   accounts: PortfolioAccount[];
   positions: PortfolioPosition[];
@@ -329,10 +317,13 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
     if (typeof raw === "string" && raw) {
       detail = raw;
     } else if (raw && typeof raw === "object") {
-      const structured = raw as { code?: unknown; message?: unknown };
+      const structured = raw as { code?: unknown; message?: unknown; max_length?: unknown };
       if (typeof structured.code === "string" && structured.code) code = structured.code;
       if (typeof structured.message === "string" && structured.message) detail = structured.message;
       else if (code) detail = code;
+      if (code === "message_too_long" && typeof structured.max_length === "number") {
+        detail = i18n.t("agent.messageTooLong", { limit: structured.max_length.toLocaleString() });
+      }
     }
   } catch { /* ignore */ }
   if (res.status === 401 || res.status === 403) {
@@ -701,10 +692,9 @@ export interface ScheduledRun {
   // app, which is what every monitor created before this did.
   delivery_channel: string | null;
   delivery_target: string | null;
+  delivery_format: "html" | "pdf" | null;
   delivery_target_ref: string | null;
   delivery_target_label: string | null;
-  delivery_format: "html" | "pdf" | null;
-  protect_pdf: boolean;
   delivery_status: string;
   delivery_error: string | null;
   delivery_updated_at: number | null;
@@ -725,9 +715,8 @@ export interface CreateScheduledRunRequest {
   config?: Record<string, unknown>;
   delivery_channel?: string | null;
   delivery_target?: string | null;
-  delivery_target_ref?: string | null;
   delivery_format?: "html" | "pdf" | null;
-  protect_pdf?: boolean;
+  delivery_target_ref?: string | null;
 }
 
 export interface UpdateScheduledRunRequest {
@@ -741,7 +730,6 @@ export interface UpdateScheduledRunRequest {
   delivery_target?: string | null;
   delivery_target_ref?: string | null;
   delivery_format?: "html" | "pdf" | null;
-  protect_pdf?: boolean;
 }
 
 export interface ScheduledResearchProposalJob {
@@ -759,6 +747,7 @@ export interface ScheduledResearchProposalJob {
     channel: string | null;
     target_ref: string | null;
     target_label: string | null;
+    format?: "html" | "pdf" | null;
     status: string;
   };
 }
@@ -908,7 +897,6 @@ export interface ChannelAdapterStatus {
   delivery_target_placeholder?: string;
   delivery_target_input_type?: string;
   delivery_target_suggestions?: DeliveryTargetSuggestion[];
-  pdf_password_configured?: boolean;
 }
 
 export interface ChannelRuntimeStatus {
@@ -1285,6 +1273,10 @@ export type SectorAssetClass =
   | "india_equity"
   | "kr_equity"
   | "ca_equity"
+  | "ar_equity"
+  | "uk_equity"
+  | "vietnam_equity"
+  | "index"
   | "crypto"
   | "futures"
   | "forex";

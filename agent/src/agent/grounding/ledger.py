@@ -21,6 +21,7 @@ from src.agent.grounding.identity import (
 from src.agent.grounding.evidence import EvidenceRecord, _EvidenceMixin, _json_object
 from src.agent.grounding.figures import parse_figures_block, scan_figures, strip_figures_block
 from src.agent.grounding.policies import ValidationResult, _PolicyMixin
+from src.agent.grounding.registry import GROUNDING_CHECKS
 from src.agent.grounding.release import (
     MAX_GROUNDING_RECOVERY_ROUNDS,
     MAX_PRICE_EVIDENCE_ATTEMPTS,
@@ -99,11 +100,6 @@ class GroundingLedger(
         self._recovery_rounds = 0
         self._symbol_resolution_attempts = 0
         self._price_evidence_attempts = 0
-        # #GGAL-D: the rejected draft + validation a still-outstanding
-        # recovery request (search_symbol/get_market_data) was issued for.
-        # Set by ``record_recovery``, cleared here when that exact tool
-        # succeeds, or consumed once by ``pending_recovery_stub``.
-        self._pending_recovery: dict[str, Any] | None = None
         self._ingested_csvs: set[str] = set()
         # Per-bar tables completed backtests wrote: resolved path -> (sha256,
         # backtest scope), so a later read of one can be recognised as engine
@@ -274,11 +270,6 @@ class GroundingLedger(
             self.persist()
             return
 
-        # #GGAL-D: the recovery this run was waiting on just happened —
-        # whatever the model answers next is a real revision attempt, not a
-        # stub standing in for one.
-        if self._pending_recovery is not None and tool_name == self._pending_recovery["action"]:
-            self._pending_recovery = None
         self._track_session_symbols(arguments, result)
         self._note_model_write(tool_name, arguments, payload)
         if tool_name in _ANALYSIS_TOOLS:
@@ -289,6 +280,8 @@ class GroundingLedger(
             self._ingest_market_data(arguments, payload, call_id)
         elif tool_name == "read_file" and payload is not None:
             self._ingest_engine_table(payload, call_id)
+        elif tool_name == "read_run_artifact" and payload is not None:
+            self._ingest_engine_table(payload, call_id, tool_name=tool_name)
         elif payload is not None:
             self._ingest_generic_numeric(tool_name, arguments, payload, call_id)
         self.persist()
@@ -300,8 +293,9 @@ class GroundingLedger(
             content: Candidate assistant answer.
 
         Returns:
-            A deterministic validation result. A record containing only the
-            answer hash and structured issues is appended to the artifact.
+            A deterministic validation result. A record containing the answer
+            hash, structured issues, and the names of the declared checks that
+            fired is appended to the artifact.
         """
         return self._validate(content, record=True)
 
@@ -358,6 +352,11 @@ class GroundingLedger(
                 "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
                 "valid": result.valid,
                 "issues": issues,
+                # Names let a run card say which declared checks fired without
+                # re-running the gate; inline rules carry codes only until migrated.
+                "fired_checks": GROUNDING_CHECKS.names_for_codes(
+                    {str(issue.get("code") or "") for issue in issues}
+                ),
                 "figures_block": block.raw,
             }
         )

@@ -153,7 +153,7 @@
     "editingHint": "Anda sedang mengedit proses terjadwal ini. Penyimpanan mempertahankan identitas dan riwayat eksekusinya.",
     "edit": "Edit",
     "editAria": "Edit proses terjadwal: {{prompt}}",
-    "editRunningDisabled": "Tunggu hingga proses ini selesai sebelum mengeditnya.",
+    "editRunningDisabled": "Tunggu proses atau pengirimannya selesai sebelum mengedit.",
     "deliveryInApp": "Simpan hanya di Vibe (jangan kirim)",
     "deliveryNoChannels": "Tidak ada saluran pengiriman aktif yang dikonfigurasi. Konfigurasikan satu di Pengaturan → Saluran.",
     "deliveryChannelsLoadFailed": "Tidak dapat memuat saluran pengiriman yang dikonfigurasi.",
@@ -207,6 +207,13 @@
     "deliveryChannelPlaceholder": "telegram, feishu, … (kosongkan agar hasil tetap di aplikasi)",
     "deliveryTargetLabel": "Target channel",
     "deliveryTargetPlaceholder": "ID chat / grup / pengguna",
+    "deliveryFormatLabel": "Email report format",
+    "deliveryFormatDefault": "Channel default (plain text)",
+    "deliveryFormatHtml": "HTML email",
+    "deliveryFormatPdf": "PDF attachment",
+    "deliveryFormatDefaultHint": "Keeps the existing plain-text delivery behavior.",
+    "deliveryFormatHtmlHint": "Shows the full report as sanitized HTML in the email body.",
+    "deliveryFormatPdfHint": "Attaches the full report as PDF and keeps only a short notice in the body.",
     "deliveryHint": "Nonaktif secara default. Ringkasan dikirim setelah run selesai, bukan saat dijadwalkan.",
     "deliveryTargetRequired": "Pilih target untuk channel tersebut, atau kosongkan channel.",
     "delivery_none": "Akan dikirim ke {{channel}} setelah run berikutnya",
@@ -223,15 +230,12 @@
     "deliveryKnownTargetLabel": "Tujuan dikenal",
     "deliveryKnownTargetPlaceholder": "Pilih tujuan yang dikenal…",
     "deliverySuggestionKind_private_chat": "Chat pribadi saya",
-    "deliveryFormatLabel": "Email report format",
-    "deliveryFormatDefault": "Channel default (plain text)",
-    "deliveryFormatHtml": "Email HTML",
-    "deliveryFormatPdf": "PDF attachment",
-    "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
-    "deliveryFormatHtmlHint": "Sends the full report in the email body.",
-    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
-    "deliveryProtectPdf": "Protect PDF with password",
-    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
+    "deliveryTargetPlaceholder_email_address": "name@example.com",
+    "deliveryTargetPlaceholder_chat": "ID obrolan, grup, atau pengguna",
+    "deliveryTargetPlaceholder_channel": "ID kanal",
+    "deliveryTargetPlaceholder_destination": "ID chat / grup / pengguna",
+    "deliveryTargetPlaceholder_slack_destination": "#kanal, @pengguna, atau ID percakapan",
+    "deliveryTargetKind_slack_destination": "Tujuan"
   },
   "reports": {
     "badge": "Laporan",
@@ -604,10 +608,6 @@
             "label": "Kata sandi SMTP",
             "help": "Kata sandi atau kata sandi aplikasi untuk SMTP. Disimpan di sisi server dan tidak pernah dikirim kembali ke browser."
           },
-          "pdf_password": {
-            "label": "PDF report password",
-            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
-          },
           "smtp_use_tls": {
             "label": "STARTTLS SMTP",
             "help": "Enkripsi koneksi SMTP dengan STARTTLS (aktif secara default; lazim untuk port 587). Dalam praktik tidak dipakai bersama SSL SMTP."
@@ -683,6 +683,10 @@
           "max_attachments_per_email": {
             "label": "Maks. lampiran per email",
             "help": "Berapa banyak lampiran yang diterima dari satu email (default 5)."
+          },
+          "trusted_authserv_id": {
+            "label": "Server autentikasi tepercaya",
+            "help": "authserv-id server penerima, misalnya mx.google.com. Penyedia email harus menghapus header Authentication-Results masuk palsu yang memakai ID ini. Wajib saat verifikasi SPF atau DKIM aktif; kosong menolak email masuk."
           }
         },
         "websocket": {
@@ -1008,6 +1012,7 @@
     "dropFiles": "Letakkan file di sini",
     "removeAttachment": "Hapus {{filename}}",
     "uploadFailed": "Gagal mengunggah: {{error}}",
+    "messageTooLong": "Pesan melebihi {{limit}} karakter, termasuk informasi lampiran dan instruksi tim. Persingkat sebelum mengirim.",
     "failedToSend": "Gagal mengirim pesan, silakan coba lagi.",
     "failedToContinue": "Gagal melanjutkan tujuan, silakan coba lagi.",
     "runtimeBadge": "RUNTIME",
@@ -1977,8 +1982,7 @@
       "coverage": "Cakupan valuasi",
       "coverageNote": "Harga tersedia {{priced}} · kas {{cash}}",
       "lastComplete": "Pembaruan lengkap terakhir",
-      "excluded": "{{count}} akun tidak dapat dibaca dan tidak disertakan dalam total ini",
-      "changeCanonicalNote": "Perubahan portofolio harian kanonis dari Asistente Casa"
+      "excluded": "{{count}} akun tidak dapat dibaca dan tidak disertakan dalam total ini"
     },
     "allocation": {
       "byAccount": "Alokasi berdasarkan akun",
@@ -2015,8 +2019,7 @@
       "colPnl": "P/L Belum Terealisasi",
       "colData": "Data",
       "priced": "Harga tersedia",
-      "unpriced": "Harga belum tersedia",
-      "colToday": "Hari ini"
+      "unpriced": "Harga belum tersedia"
     },
     "history": {
       "title": "Riwayat aset",

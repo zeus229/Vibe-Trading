@@ -113,7 +113,6 @@ export function Scheduled() {
   const [deliveryTarget, setDeliveryTarget] = useState("");
   const [deliveryTargetRef, setDeliveryTargetRef] = useState<string | null>(null);
   const [deliveryFormat, setDeliveryFormat] = useState<EmailDeliveryFormat>("");
-  const [protectPdf, setProtectPdf] = useState(false);
   const [saving, setSaving] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -202,7 +201,6 @@ export function Scheduled() {
     setDeliveryTarget("");
     setDeliveryTargetRef(null);
     setDeliveryFormat("");
-    setProtectPdf(false);
     setComposerError(null);
   }
 
@@ -215,8 +213,7 @@ export function Scheduled() {
     setDeliveryChannel(run.delivery_channel ?? "");
     setDeliveryTarget(run.delivery_target ?? "");
     setDeliveryTargetRef(run.delivery_target_ref);
-    setDeliveryFormat(run.delivery_format ?? "");
-    setProtectPdf(run.protect_pdf ?? false);
+    setDeliveryFormat(run.delivery_format === "html" || run.delivery_format === "pdf" ? run.delivery_format : "");
     setComposerError(null);
 
     if (cadence.kind === "daily") {
@@ -262,9 +259,8 @@ export function Scheduled() {
         timezone,
         delivery_channel: channel || null,
         delivery_target: channel ? target : null,
+        delivery_format: channel === "email" && deliveryFormat ? deliveryFormat : null,
         delivery_target_ref: channel ? deliveryTargetRef : null,
-        delivery_format: channel === "email" ? deliveryFormat || null : null,
-        protect_pdf: channel === "email" && deliveryFormat === "pdf" ? protectPdf : false,
       };
       if (editingId) {
         await api.updateScheduledRun(editingId, payload);
@@ -377,19 +373,15 @@ export function Scheduled() {
     .sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   const selectedChannel = deliveryChannel ? channelStatus[deliveryChannel] : undefined;
-  const emailPdfPasswordConfigured = channelStatus.email?.pdf_password_configured === true;
   const selectedChannelIsAvailable = configuredDeliveryChannels.some(
     (channel) => channel.name === deliveryChannel,
   );
-  const targetLabel =
-    selectedChannel?.delivery_target_label ||
-    (selectedChannel?.delivery_target_kind
-      ? t(`scheduled.deliveryTargetKind_${selectedChannel.delivery_target_kind}`, {
-          defaultValue: t("scheduled.deliveryTargetLabel"),
-        })
-      : t("scheduled.deliveryTargetLabel"));
-  const targetPlaceholder =
-    selectedChannel?.delivery_target_placeholder || t("scheduled.deliveryTargetPlaceholder");
+  const targetLabel = t(`scheduled.deliveryTargetKind_${selectedChannel?.delivery_target_kind || "destination"}`, {
+    defaultValue: selectedChannel?.delivery_target_label || t("scheduled.deliveryTargetLabel"),
+  });
+  const targetPlaceholder = t(`scheduled.deliveryTargetPlaceholder_${selectedChannel?.delivery_target_kind || "destination"}`, {
+    defaultValue: selectedChannel?.delivery_target_placeholder || t("scheduled.deliveryTargetPlaceholder"),
+  });
   const targetInputType =
     selectedChannel?.delivery_target_input_type === "email" ? "email" : "text";
   const targetSuggestions = selectedChannel?.delivery_target_suggestions ?? [];
@@ -529,11 +521,8 @@ export function Scheduled() {
                   setDeliveryTarget("");
                   setDeliveryTargetRef(null);
                 }
-                if (nextChannel !== "email") {
-                  setDeliveryFormat("");
-                  setProtectPdf(false);
-                }
                 setDeliveryChannel(nextChannel);
+                if (nextChannel !== "email") setDeliveryFormat("");
               }}
               className={fieldClass}
             >
@@ -609,19 +598,15 @@ export function Scheduled() {
               </select>
             )}
           </div>
-          {deliveryChannel === "email" && (
-            <div className="space-y-1.5">
+          {deliveryChannel.trim() === "email" && (
+            <div className="space-y-1.5 sm:col-span-2">
               <label htmlFor="scheduled-delivery-format" className={labelClass}>
                 {t("scheduled.deliveryFormatLabel")}
               </label>
               <select
                 id="scheduled-delivery-format"
                 value={deliveryFormat}
-                onChange={(e) => {
-                  const value = e.target.value as EmailDeliveryFormat;
-                  setDeliveryFormat(value);
-                  if (value !== "pdf") setProtectPdf(false);
-                }}
+                onChange={(e) => setDeliveryFormat(e.target.value as EmailDeliveryFormat)}
                 className={fieldClass}
               >
                 <option value="">{t("scheduled.deliveryFormatDefault")}</option>
@@ -629,28 +614,12 @@ export function Scheduled() {
                 <option value="pdf">{t("scheduled.deliveryFormatPdf")}</option>
               </select>
               <p className={hintClass}>
-                {deliveryFormat === "pdf"
-                  ? t("scheduled.deliveryFormatPdfHint")
-                  : deliveryFormat === "html"
-                    ? t("scheduled.deliveryFormatHtmlHint")
+                {deliveryFormat === "html"
+                  ? t("scheduled.deliveryFormatHtmlHint")
+                  : deliveryFormat === "pdf"
+                    ? t("scheduled.deliveryFormatPdfHint")
                     : t("scheduled.deliveryFormatDefaultHint")}
               </p>
-              {deliveryFormat === "pdf" && (
-                <label className="flex items-center gap-2 text-sm">
-                  <input
-                    type="checkbox"
-                    checked={protectPdf}
-                    disabled={!emailPdfPasswordConfigured && !protectPdf}
-                    onChange={(e) => setProtectPdf(e.target.checked)}
-                  />
-                  <span>{t("scheduled.deliveryProtectPdf")}</span>
-                </label>
-              )}
-              {deliveryFormat === "pdf" && !emailPdfPasswordConfigured && (
-                <p className={hintClass}>
-                  {t("scheduled.deliveryProtectPdfUnavailable")}
-                </p>
-              )}
             </div>
           )}
         </div>
@@ -792,10 +761,10 @@ export function Scheduled() {
                     <button
                       type="button"
                       onClick={() => beginEdit(run)}
-                      disabled={run.status === "running"}
+                      disabled={(run.status === "running" || run.delivery_status === "sending")}
                       aria-label={t("scheduled.editAria", { prompt: run.prompt })}
                       title={
-                        run.status === "running"
+                        (run.status === "running" || run.delivery_status === "sending")
                           ? t("scheduled.editRunningDisabled")
                           : undefined
                       }
