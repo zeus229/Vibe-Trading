@@ -199,27 +199,23 @@ Decide which workflow to use based on the request:
   returned needs nothing more. Any other such figure goes in ONE fenced block
   tagged `figures` at the end of the answer, one line per figure:
   `value | role | note | ref`. Roles:
-  `observed` — a tool value that is not a price or volume of the symbol, e.g. a
-  PE ratio (`ref`: the tool name such as `get_fundamentals`, or its call id). For
-  a metric whose identity matters (VaR vs ES, 95% vs 99%), use the result field
-  as `ref`: `data.tail_risk.var_95` or just `var_95` from `portfolio_risk_xray`,
-  `historical_var` from `quantlib_call`. When more than one call returned the
-  same field, name the exact call as `call_id::field` (for example
-  `<call_id>::historical_var`), where `<call_id>` is the tool_call_id of that
-  tool result copied verbatim; never invent a short alias. A tool name is not
-  a call id.
-  Each element of a list is its own field: address it by index,
-  `call_id::data.positions[0].contribution_pct` (`positions.0.contribution_pct`
-  is read the same way). A field name without the index does not select an
-  element, and one element's ref never grounds another element's value.
-  A ref that names a list or object (`data.groups.positive`) grounds nothing;
-  end it at the numeric field of the element you quote.
-  For Asistente Casa portfolio figures, always prefer the exact tool_call_id
-  plus the full numeric payload path for directly observed Risk X-Ray,
-  performance, concentration, correlation and diversification metrics. Never
-  substitute a tool name, arguments, scope label, or research-goal evidence_id
-  for that source ref. Preserve the displayed numeric shape in the declaration
-  (for example `0.9562%` remains a percent declaration).
+  `observed` — a scalar already present in a tool result, not a price or volume
+  of the symbol. Declare it as observed even when prose rounds it or displays a
+  decimal fraction as a percentage; rounding or unit display alone is not a
+  derivation. For every structured scalar, use the exact invocation and full
+  payload path as `call_id::field.path` (for example
+  `<call_id>::data.tail_risk.var_95`), where `<call_id>` is the tool_call_id of
+  that tool result copied verbatim; never invent a short alias for it. Never
+  use a bare tool name, a decorated tool
+  name, or `tool_name(args)::field.path` as a field ref. A call id identifies
+  one exact invocation; the full path identifies the scalar within its result.
+  Each element of a list is its own field: address it by index, for example
+  `call_id::data.positions[0].contribution_pct`; the dotted spelling
+  `positions.0.contribution_pct` is equivalent. A field name without the
+  index does not select an element, and a ref naming a list/object container
+  grounds nothing until it ends at the numeric leaf being quoted.
+  If the value is actually calculated from other values, declare it as derived
+  and show the real formula and exact source refs instead.
   Once this session holds more than one tail-risk measurement (a VaR and an ES,
   or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no
   declaration at all cannot say which of them you are quoting, and the figure is
@@ -228,6 +224,14 @@ Decide which workflow to use based on the request:
   `observed` with the backtest's run directory as `ref`, e.g. `rp`, or the file
   you read, e.g. `rp/artifacts/target_positions.csv`; two backtests are two
   directories, so a comparison names each one (`rp::sharpe`, `ew::sharpe`);
+  For Asistente Casa portfolio figures, use the exact call id and full payload
+  path for each directly observed scalar, including Risk X-Ray and performance
+  fields. For a derived value, cite every exact source call id and field path.
+  Never use tool names, arguments, or scope labels as refs.
+  In each figures declaration, use the normalized raw number (no currency prefix
+  or thousands separators; dot decimal). If prose shows a percent, preserve `%`
+  in the declaration, e.g. `0.9562% | observed | ...`; `0.9562` and `0.9562%`
+  are different shapes.
   `derived` — arithmetic on observed values (`note`: the formula; every number
   added or subtracted must itself be an observed value; `ref`: where the
   operands came from, e.g. `rp, ew` for a difference between two backtests);
