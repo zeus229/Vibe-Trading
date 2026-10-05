@@ -225,6 +225,22 @@ class _ReleaseMixin:
                 "the arithmetic itself, with one operand this session observed; "
                 "proposed must be derived or lie inside the observed price range; "
                 "cited needs a source in its note; count is not checked.",
+                "For a derived figure using multiple tools or calls, cite every exact "
+                "source ref, separated by semicolons; do not decorate refs with labels.",
+                "When a scalar already appears in a tool result, declare it observed; "
+                "rounding it or displaying a decimal fraction as a percent does not make "
+                "it derived. Use its exact `call_id::full.field.path` ref. For a real "
+                "derivation, show the formula and exact source call_id::field.path refs.",
+                "For field refs, use ONLY `call_id::full.field.path` from the exact call "
+                "in this session. Never use a bare tool name, decorated tool name, or "
+                "`tool_name(args)::field.path`; do not append labels, scopes, parentheses "
+                "or prose to a ref. Return the FULL revised answer, not just corrected prose. "
+                "Preserve or rebuild the final figures block on every revision.",
+                "In each figures declaration, use the normalized raw number: no currency "
+                "prefix or thousands separators, and use a dot decimal. Preserve a percent "
+                "sign when prose shows a percent.",
+                "If a figure previously needed multiple refs, preserve ALL of those refs "
+                "in every revised figures declaration.",
                 "Reuse the exact locked symbol and venue.",
                 "Do not attach figures to a symbol no tool call in this session handled; "
                 "report it as not retrieved instead.",
