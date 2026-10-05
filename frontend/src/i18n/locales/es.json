@@ -235,7 +235,9 @@
     "deliveryTargetPlaceholder_channel": "ID del canal",
     "deliveryTargetPlaceholder_destination": "chat, grupo, usuario, dirección o ID de canal",
     "deliveryTargetPlaceholder_slack_destination": "#canal, @usuario o ID de conversación",
-    "deliveryTargetKind_slack_destination": "Destino"
+    "deliveryTargetKind_slack_destination": "Destino",
+    "deliveryProtectPdf": "Proteger el PDF con contraseña",
+    "deliveryProtectPdfUnavailable": "No hay una contraseña PDF configurada. Configurala en Configuración > Canales > Email para habilitar la protección."
   },
   "reports": {
     "badge": "Informes",
@@ -687,6 +689,10 @@
           "trusted_authserv_id": {
             "label": "Servidor de autenticación de confianza",
             "help": "authserv-id del servidor receptor, p. ej. mx.google.com. Tu proveedor debe eliminar las cabeceras Authentication-Results falsificadas entrantes que usen este ID. Obligatorio al verificar SPF o DKIM; vacío rechaza el correo entrante."
+          },
+          "pdf_password": {
+            "label": "Contraseña de informes PDF",
+            "help": "Contraseña opcional para los informes PDF programados que soliciten protección. Se guarda en el servidor y nunca se incluye en los trabajos programados ni se devuelve al navegador."
           }
         },
         "websocket": {
@@ -1982,7 +1988,8 @@
       "coverage": "Cobertura de valoración",
       "coverageNote": "Valorado {{priced}} · efectivo {{cash}}",
       "lastComplete": "Última actualización completa",
-      "excluded": "No se pudieron leer {{count}} cuentas y quedan fuera de este total"
+      "excluded": "No se pudieron leer {{count}} cuentas y quedan fuera de este total",
+      "changeCanonicalNote": "Variación diaria canónica de Asistente Casa"
     },
     "allocation": {
       "byAccount": "Distribución por cuenta",
@@ -2019,7 +2026,8 @@
       "colPnl": "P/G no realizada",
       "colData": "Datos",
       "priced": "Con precio",
-      "unpriced": "Sin precio"
+      "unpriced": "Sin precio",
+      "colToday": "Hoy"
     },
     "history": {
       "title": "Histórico de activos",
