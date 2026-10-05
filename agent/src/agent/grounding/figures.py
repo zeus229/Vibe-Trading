@@ -89,6 +89,12 @@ _SEC_FORM_RE = re.compile(
 _INDEX_CELL_RE = re.compile(r"\d{1,3}[.)]?")
 _CELL_WORD_RE = re.compile(r"[^\W\d_]{2,}")
 
+# Compact year-horizon labels such as "1Y" or "10y" are table labels, not
+# measured figures. Keep this deliberately narrow: one-letter M is ambiguous
+# with the existing magnitude suffix ("5M"), while multi-letter labels such as
+# "12mo" / "1yr" are already classified as worded cells by _CELL_WORD_RE.
+_YEAR_HORIZON_CELL_RE = re.compile(r"\s*\d{1,3}[Yy]\s*")
+
 # SHAPE 4 — a CommonMark fence line: at most three spaces of indent, a run of
 # backticks or tildes, and the info string.
 _FENCE_RE = re.compile(r"(?m)^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -1126,7 +1132,10 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
         worded = (
             row is not None
             and position not in row.columns
-            and _CELL_WORD_RE.search(row.cells[position][0]) is not None
+            and (
+                _CELL_WORD_RE.search(row.cells[position][0]) is not None
+                or _YEAR_HORIZON_CELL_RE.fullmatch(row.cells[position][0]) is not None
+            )
         )
         if _within((start, digits_end), hard) or (cell is not None and cell[:2] in index_cells):
             shape = "exempt"
