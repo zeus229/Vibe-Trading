@@ -155,6 +155,32 @@ def _correction_line(issue: dict[str, Any]) -> str:
     return f"{subject} | {declared} | {evidence}"
 
 
+
+def _compact_correction_line(issue: dict[str, Any]) -> str:
+    """Render one rejected issue compactly so no correction work is hidden.
+
+    The detailed feedback remains capped for readability, but every additional
+    rejected figure is surfaced here with its reason and any exact repair refs.
+    """
+    value = str(issue.get("value") or issue.get("claim") or issue.get("code") or "issue")
+    reason = str(issue.get("reason") or issue.get("code") or "grounding_error")
+    candidates = list(
+        dict.fromkeys(str(item) for item in issue.get("field_ref_candidates") or [])
+    )
+    parts = [value, reason]
+    if candidates:
+        parts.append("refs=" + ",".join(candidates))
+    aggregate_candidate = issue.get("aggregate_ref_candidate")
+    if aggregate_candidate:
+        parts.append(
+            "aggregate=keep value/ref but rewrite as portfolio-level; do not attach to symbol"
+        )
+    elif reason == "aggregate_ref_needs_unscoped_claim":
+        parts.append(
+            "aggregate=keep value/ref but rewrite as portfolio-level; do not attach to symbol"
+        )
+    return " | ".join(parts)
+
 def _strip_release_markers(content: str) -> str:
     """Remove redaction markers and ※ note lines the model wrote itself.
 
@@ -197,17 +223,28 @@ class _ReleaseMixin:
             "answer itself: do not mention this rejection, the check or the figures block.",
             "Every figure below, exactly as you wrote it, with what you declared and what the evidence says:",
         ]
+        detailed = list(validation.issues[:24])
+        remaining = list(validation.issues[24:])
         figures, others = [], []
-        for issue in validation.issues[:24]:
+        for issue in detailed:
             (figures if issue.get("value") is not None else others).append(issue)
         lines.extend(f"- {_correction_line(issue)}" for issue in figures)
         lines.extend(
             f"- {issue.get('message', issue.get('code', 'grounding error'))}" for issue in others
         )
+        if remaining:
+            lines.extend(
+                [
+                    f"There are {len(validation.issues)} rejected issue(s) total. "
+                    f"The first {len(detailed)} are detailed above. EVERY remaining issue below "
+                    "is also rejected and must be repaired in this same revision:",
+                    *[f"- {_compact_correction_line(issue)}" for issue in remaining],
+                ]
+            )
         if figures:
             lines.extend(
                 [
-                    "Fix EVERY figure above in one of exactly three ways:",
+                    "Fix EVERY rejected figure in both the detailed list and compact repair queue in one of exactly three ways:",
                     "  (1) DECLARE it with the role it really has, in the figures block;",
                     "  (2) REWRITE it to a value this session's tools actually returned;",
                     "  (3) REMOVE it from the answer.",
@@ -229,10 +266,10 @@ class _ReleaseMixin:
                 keep += f", and {len(passed) - len(shown)} more"
             lines.extend(
                 [
-                    "Every other measured figure in the draft checked clean. Keep these "
-                    "values exactly as written, where they stand: " + keep + ".",
-                    "Cutting them or swapping whole sections for qualitative prose is not "
-                    "a fix; only the figures listed above need work.",
+                    "These measured figures checked clean and must be kept exactly as "
+                    "written, where they stand: " + keep + ".",
+                    "Do not infer that an unlisted figure passed. Every rejected issue is shown "
+                    "either in the detailed list or in the compact repair queue above.",
                 ]
             )
         lines.extend(
