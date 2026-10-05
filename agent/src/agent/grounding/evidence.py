@@ -22,6 +22,7 @@ from src.agent.grounding.identity import (
     _normalize_symbol,
     _utc_now,
 )
+from src.portfolio.iso4217 import is_iso_currency
 
 _PRICE_FIELDS = {"open", "high", "low", "close", "adj_close", "price"}
 
@@ -322,6 +323,189 @@ def _cell_symbol(text: str) -> str | None:
     return _normalize_symbol(stripped)
 
 
+# Generic tools do not share one schema, but a money value still has a stable
+# contract: an ISO-4217 code is carried by the surrounding object or by a
+# currency-keyed mapping, and the numeric path names a value/amount/total-like
+# quantity.  Keep this structural and currency-agnostic; connector-specific
+# fields belong in the connector adapter, not in grounding.
+_CURRENCY_CONTEXT_FIELDS = frozenset(
+    {
+        "currency",
+        "currency_code",
+        "native_currency",
+        "quote_currency",
+        "settlement_currency",
+        "denomination",
+        "unit_currency",
+    }
+)
+_MONEY_PATH_FIELDS = frozenset(
+    {
+        "amount",
+        "balance",
+        "cash",
+        "cost",
+        "coupon",
+        "amortization",
+        "income",
+        "equity",
+        "market_value",
+        "native",
+        "notional",
+        "proceeds",
+        "total",
+        "value",
+        "valuation",
+    }
+)
+# Currency declarations that scope a payload's monetary leaves. ``financial_currency``
+# is the currency of statement figures, which can differ from the quote currency.
+_UNIT_SCOPE_KEYS = _CURRENCY_CONTEXT_FIELDS | frozenset(
+    {"financial_currency", "reporting_currency", "statement_currency"}
+)
+
+# A leaf's own name says when it is not money even inside a monetary scope:
+# ratios, percents and counts sit next to amounts under the same currency.
+_RATIO_TOKENS = frozenset(
+    (
+        "pct percent percentage pp bps ratio ratios rate rates growth margin margins "
+        "yield yields weight weights return returns roe roa roic roi beta pe peg corr "
+        "correlation vol volatility drawdown probability prob concentration sharpe "
+        "sortino alpha hhi to"
+    ).split()
+)
+_COUNT_TOKENS = frozenset(
+    (
+        "count counts number num n quantity qty units shares opinions analysts "
+        "revisions holders positions trades employees obs observations days window "
+        "lookback duration rank age volume lots offset limit page returned index id "
+        "version year years month months"
+    ).split()
+)
+# A leaf that ends in an amount noun is an amount whatever else its name says.
+_AMOUNT_TOKENS = frozenset(
+    "amount value price cost balance proceeds total cash pnl".split()
+)
+# An explicit unit string naming a dimensionless quantity.
+_RATIO_UNITS = frozenset("% pct percent percentage ratio fraction x pp bps".split())
+_SYMBOL_LIKE_RE = re.compile(r"[A-Z0-9]{1,8}")
+
+
+def _name_tokens(name: str) -> list[str]:
+    """Lower-case words of a camelCase / snake_case field name."""
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", name)
+    spaced = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", spaced)
+    return [token for token in re.split(r"[^0-9A-Za-z\u3400-\u9fff]+", spaced.lower()) if token]
+
+
+def _leaf_dimension(path: str) -> str | None:
+    """The dimensionless unit a field name implies, or None.
+
+    A leaf keyed by a symbol or a currency code (``weights.YPFD``) is named by its
+    container, so the nearest descriptive ancestor is read instead.
+
+    Args:
+        path: Recorded evidence field, e.g. ``"data.sections.financials.revenueGrowth"``.
+
+    Returns:
+        ``"ratio"`` for a ratio, percent or metric, ``"count"`` for a count, else None.
+    """
+    parts = [re.sub(r"\[\d+\]$", "", part) for part in str(path or "").split(".")]
+    parts = [part for part in parts if part]
+    while (
+        len(parts) > 1
+        and _SYMBOL_LIKE_RE.fullmatch(parts[-1])
+        and not {*_name_tokens(parts[-1])} & (_RATIO_TOKENS | _COUNT_TOKENS | _AMOUNT_TOKENS)
+    ):
+        parts.pop()
+    if not parts:
+        return None
+    tokens = _name_tokens(parts[-1])
+    # A trailing amount noun or currency code (``bond_coupon_ars``) is the leaf's
+    # own unit declaration and outweighs any ratio word before it.
+    if not tokens or tokens[-1] in _AMOUNT_TOKENS or (
+        len(tokens) > 1 and _currency_code(tokens[-1])
+    ):
+        return None
+    if any(token in _RATIO_TOKENS for token in tokens) or _metric_kind_for_path(parts[-1]):
+        return "ratio"
+    if any(token in _COUNT_TOKENS for token in tokens) or _is_metadata_count_leaf(parts[-1]):
+        return "count"
+    return None
+
+
+def _declared_unit(hint: Any) -> str | None:
+    """The unit an explicit per-leaf declaration (``_units``) names, or None."""
+    if not isinstance(hint, str) or not hint.strip():
+        return None
+    text = hint.strip()
+    if _currency_code(text):
+        return "money"
+    return "ratio" if text.casefold() in _RATIO_UNITS else "other"
+
+
+def _declares_currency_scope(payload: Mapping[str, Any]) -> bool:
+    """Whether a payload's descriptor objects declare a monetary unit.
+
+    Only the payload root and its first two levels count (``data.listing``), so a
+    currency in one deep row does not scope unrelated leaves elsewhere.
+    """
+
+    def walk(node: Any, depth: int) -> bool:
+        if not isinstance(node, Mapping) or depth > 2:
+            return False
+        if any(
+            str(key).casefold() in _UNIT_SCOPE_KEYS and _currency_code(item)
+            for key, item in node.items()
+        ):
+            return True
+        return any(walk(item, depth + 1) for item in node.values())
+
+    return walk(payload, 0)
+
+
+def _currency_code(value: Any) -> str | None:
+    """Return an ISO-shaped currency code carried by generic tool data."""
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().upper()
+    return candidate if is_iso_currency(candidate) else None
+
+
+def _currency_from_path(path: str) -> str | None:
+    """Find a currency code embedded in a generic JSON path."""
+    for component in re.split(r"[.\[\]_]+", path):
+        currency = _currency_code(component)
+        if currency:
+            return currency
+    return None
+
+
+def _is_structured_money_field(path: str) -> bool:
+    """Whether a path names a value-like leaf, for a record with no unit of its own.
+
+    A dimensionless leaf is never money, and a currency in the path only makes a
+    leaf money when the leaf is itself the currency key of an amount mapping.
+    """
+    components = [
+        component.casefold()
+        for component in re.split(r"[.\[\]_]+", path)
+        if component
+    ]
+    if not components or _leaf_dimension(path):
+        return False
+    leaf = components[-1]
+    if leaf in _MONEY_PATH_FIELDS or leaf in _AMOUNT_FIELDS:
+        return True
+    if leaf.endswith("value") or leaf.endswith("amount") or leaf.endswith("total"):
+        return True
+    if _leaf_name(path) in {"value_start", "value_end"}:
+        return True
+    return _currency_code(leaf) is not None and any(
+        component in _MONEY_PATH_FIELDS for component in components
+    )
+
+
 def _symbol_from_csv_filename(stem: str) -> str | None:
     """Map a run-dir CSV stem (``BYN_V`` -> ``BYN.V``) to a canonical symbol.
 
@@ -508,6 +692,32 @@ _EXACT_ONLY_ALIASES = frozenset({"var", "es"})
 
 # Field-name qualifiers that follow a metric's head and do not change what it
 # measures ("hit_rate_daily", "vol_annualized"), like a numeric parameter.
+# Full-path metric kinds for leaves whose bare name is too generic to alias
+# globally. "corr" alone would admit any unrelated leaf named "corr", so
+# asistente_casa_portfolio_risk_xray's pairwise correlation reading is matched
+# by its exact path suffix instead.
+_METRIC_PATH_SUFFIXES: tuple[tuple[str, str], ...] = (
+    ("correlation.max_pair.corr", "correlation"),
+)
+
+
+def _metric_kind_for_registered_path(path: str) -> str | None:
+    """Path-specific metric kind for a leaf too generic to alias by name alone.
+
+    Args:
+        path: Recorded evidence field, e.g. ``"data.correlation.max_pair.corr"``.
+
+    Returns:
+        The matching kind, or None when no registered path suffix applies.
+    """
+    normalized = re.sub(r"\[\d+\]", "", str(path or "")).casefold()
+    for suffix, kind in _METRIC_PATH_SUFFIXES:
+        if normalized == suffix or normalized.endswith("." + suffix):
+            return kind
+    return None
+
+# Field-name qualifiers that follow a metric's head and do not change what it
+# measures ("hit_rate_daily", "vol_annualized"), like a numeric parameter.
 _QUALIFIER_SUFFIXES = frozenset(
     {"daily", "weekly", "monthly", "annual", "annualized", "yearly", "pct", "percent", "bps"}
 )
@@ -561,6 +771,9 @@ def _metric_kind_for_path(path: str) -> str | None:
     """
     if _is_metadata_count_leaf(path):
         return None
+    registered = _metric_kind_for_registered_path(path)
+    if registered is not None:
+        return registered
     leaf = _leaf_name(path)
     kind = _ANALYSIS_KIND_ALIASES.get(leaf)
     if kind is not None:
@@ -594,6 +807,10 @@ class EvidenceRecord:
     value was read from and the backtest run directory that produced it, both
     relative to the ledger's run directory ("" is that directory itself). A
     declaration's ``ref`` may name either one.
+
+    ``unit`` is what the evidence says the value is: ``money`` (an explicit
+    currency unit, or a declared currency scope), ``ratio``, ``count`` or
+    ``other``. None means the payload said nothing, so name rules apply.
     """
 
     call_id: str
@@ -609,6 +826,86 @@ class EvidenceRecord:
     currency_conversion: str | None = None
     artifact: str | None = None
     scope: str | None = None
+    unit: str | None = None
+    # Generic structured evidence distinguishes a bound entity from an
+    # aggregate, an unidentified item, and contradictory identities.
+    identity_scope: str | None = None
+
+
+@dataclass(frozen=True)
+class _EntityContext:
+    symbol: str | None
+    scope: str  # entity, aggregate, unknown, or conflict
+    origin: str = "inferred"
+
+
+_ITEM_IDENTITY_FIELDS = frozenset({"symbol", "ticker", "entity_id"})
+
+
+def _item_symbol(value: Mapping[str, Any], allowed: set[str]) -> tuple[str | None, bool]:
+    """Read explicit per-item identities, excluding unrelated status codes."""
+    symbols: set[str] = set()
+    for key, item in value.items():
+        if not isinstance(item, str) or not item.strip():
+            continue
+        name = str(key).casefold()
+        normalized = _normalize_symbol(item)
+        if name in _ITEM_IDENTITY_FIELDS or (
+            name == "code" and (normalized in allowed or _CANONICAL_SYMBOL_RE.fullmatch(item))
+        ):
+            symbols.add(normalized)
+    return (next(iter(symbols)), False) if len(symbols) == 1 else (None, len(symbols) > 1)
+
+
+def _entity_child(
+    parent: _EntityContext, explicit: str | None, allowed: set[str]
+) -> _EntityContext:
+    if explicit is None:
+        return parent
+    if parent.scope == "conflict" or (parent.scope == "entity" and parent.symbol != explicit):
+        return _EntityContext(explicit, "conflict")
+    if allowed and explicit not in allowed:
+        return _EntityContext(explicit, "conflict")
+    return _EntityContext(explicit, "entity", "explicit")
+
+
+def _entity_for_key(
+    parent: _EntityContext, key: Any, allowed: set[str]
+) -> _EntityContext:
+    label = str(key)
+    if _CANONICAL_SYMBOL_RE.fullmatch(label):
+        return _entity_child(parent, _normalize_symbol(label), allowed)
+    if label.casefold() in {"aggregate", "totals"} and parent.origin != "explicit":
+        return _EntityContext(None, "aggregate", "explicit")
+    return parent
+
+
+def _list_entity_context(items: list[Any], parent: _EntityContext) -> _EntityContext:
+    if len(items) < 2 or parent.origin == "explicit" or parent.scope == "conflict":
+        return parent
+    # Repeated dated observations can inherit one call's entity; otherwise an
+    # anonymous collection could contain several different entities.
+    if all(
+        isinstance(item, dict)
+        and any(item.get(key) is not None for key in _TIMESTAMP_FIELDS)
+        for item in items
+    ):
+        return parent
+    return _EntityContext(None, "unknown")
+
+
+def _record_matches_entity(record: EvidenceRecord, symbol: str | None) -> bool:
+    """Match entity-scoped claims without blocking legitimate unscoped evidence."""
+    if record.identity_scope == "conflict":
+        return False
+    if symbol is None:
+        return True
+    if record.identity_scope in {"unknown", "aggregate"}:
+        return False
+    if record.identity_scope == "entity":
+        return record.symbol == symbol
+    # Legacy non-generic sources retain their established semantics.
+    return not record.symbol or record.symbol == symbol
 
 
 def _is_price_kind(record: EvidenceRecord) -> bool:
@@ -626,11 +923,47 @@ def _is_price_kind(record: EvidenceRecord) -> bool:
         or _price_field_for_path(record.field) is not None
         or _is_registered_price_indicator(record.tool, record.field)
         or _leaf_name(record.field) in _AMOUNT_FIELDS
+        or record.unit == "money"
+        or (
+            record.unit is None
+            and record.currency is not None
+            and _is_structured_money_field(record.field)
+        )
     )
 
 
 class _EvidenceMixin:
     """Evidence behaviour of :class:`GroundingLedger`."""
+
+    def _numeric_entity_context(
+        self, arguments: Mapping[str, Any]
+    ) -> tuple[_EntityContext, set[str]]:
+        symbols = {
+            self._match_authorized_symbol(symbol, self.authorized_symbols) or symbol
+            for symbol in self._extract_symbol_arguments(arguments)
+        }
+        if len(symbols) == 1:
+            return _EntityContext(next(iter(symbols)), "entity", "argument"), symbols
+        if symbols:
+            return _EntityContext(None, "unknown"), symbols
+        # A later scalar analysis call may omit a symbol argument after this
+        # session has observed exactly one entity. Require that the session has
+        # no other candidate; an explicit aggregate subtree still stays global.
+        observed = {
+            record.symbol
+            for record in self._evidence
+            if record.status == "observed" and record.symbol and record.identity_scope != "conflict"
+        }
+        if len(observed) == 1:
+            if self._session_symbols <= observed:
+                return _EntityContext(next(iter(observed)), "entity", "observed"), symbols
+            return _EntityContext(None, "unknown"), symbols
+        if len(observed) > 1:
+            return _EntityContext(None, "unknown"), symbols
+        # A symbol mentioned in the user's prose is not evidence that a
+        # symbol-less tool result belongs to that entity. With no observed or
+        # argument identity, keep the result unscoped/aggregate.
+        return _EntityContext(None, "aggregate"), symbols
 
     def _ingest_analysis_result(
         self,
@@ -656,7 +989,7 @@ class _EvidenceMixin:
         elif tool_name == "factor_analysis":
             if str(payload.get("status") or "").casefold() != "ok":
                 return
-            recorded = self._record_leaf_metrics(payload, call_id, tool_name, "")
+            recorded = self._record_leaf_metrics(payload, call_id, tool_name, "", arguments)
         elif tool_name == "run_shadow_backtest":
             if str(payload.get("status") or "").casefold() != "ok":
                 return
@@ -664,7 +997,7 @@ class _EvidenceMixin:
             if not isinstance(combined, dict):
                 # A combined dict containing only {"error": ...} is no analysis.
                 return
-            recorded = self._record_leaf_metrics(combined, call_id, tool_name, "combined")
+            recorded = self._record_leaf_metrics(combined, call_id, tool_name, "combined", arguments)
         elif tool_name == "quantlib_call":
             if payload.get("ok") is not True or str(
                 arguments.get("action") or ""
@@ -672,7 +1005,7 @@ class _EvidenceMixin:
                 return
             function = str(arguments.get("function") or "")
             recorded = self._record_leaf_metrics(
-                payload.get("result"), call_id, tool_name, function
+                payload.get("result"), call_id, tool_name, function, arguments
             )
         else:
             return
@@ -687,11 +1020,13 @@ class _EvidenceMixin:
         call_id: str,
         tool_name: str,
         field_prefix: str,
+        arguments: Mapping[str, Any],
     ) -> int:
-        """Record nested numeric leaves whose key names a metric kind."""
+        """Record metric leaves with the identity of their containing item."""
         recorded = 0
+        root, allowed = self._numeric_entity_context(arguments)
 
-        def visit(item: Any, path: str) -> None:
+        def visit(item: Any, path: str, context: _EntityContext) -> None:
             nonlocal recorded
             if _is_number(item):
                 kind = _metric_kind_for_path(path)
@@ -704,18 +1039,28 @@ class _EvidenceMixin:
                         "tool": tool_name,
                         "call_id": call_id,
                         "field": path,
+                        "symbol": context.symbol,
+                        "identity_scope": context.scope,
                     }
                 )
                 recorded += 1
                 return
             if isinstance(item, dict):
+                explicit, contradictory = _item_symbol(item, allowed)
+                local = _entity_child(context, explicit, allowed)
+                if contradictory:
+                    local = _EntityContext(None, "conflict")
                 for key, child in item.items():
-                    visit(child, f"{path}.{key}" if path else str(key))
+                    visit(
+                        child,
+                        f"{path}.{key}" if path else str(key),
+                        _entity_for_key(local, key, allowed),
+                    )
             elif isinstance(item, list):
                 for index, child in enumerate(item):
-                    visit(child, f"{path}[{index}]")
+                    visit(child, f"{path}[{index}]", _list_entity_context(item, context))
 
-        visit(value, field_prefix or "")
+        visit(value, field_prefix or "", root)
         return recorded
 
     def _record_backtest_metrics(
@@ -1123,38 +1468,58 @@ class _EvidenceMixin:
         call_id: str,
     ) -> None:
         """Flatten bounded numeric leaves from other market-sensitive tools."""
-        symbols = self._extract_symbol_arguments(arguments)
-        symbol = symbols[0] if len(symbols) == 1 else None
-        if symbol:
-            symbol = (
-                self._match_authorized_symbol(symbol, self.authorized_symbols) or symbol
-            )
+        root, allowed = self._numeric_entity_context(arguments)
         source = str(payload.get("source") or tool_name)
         remaining = _MAX_GENERIC_EVIDENCE
         timestamp_fields = (*_TIMESTAMP_FIELDS, "latest_date", "as_of")
+        payload_scope = _declares_currency_scope(payload)
 
-        def visit(value: Any, path: str, timestamp: str | None = None) -> None:
+        def visit(
+            value: Any,
+            path: str,
+            timestamp: str | None = None,
+            currency: str | None = None,
+            unit_hint: Any = None,
+            context: _EntityContext = root,
+        ) -> None:
             nonlocal remaining
             if remaining <= 0:
                 return
             if _is_number(value):
+                evidence_currency = (
+                    currency
+                    or _currency_from_path(path)
+                    or _infer_currency(context.symbol or "")
+                )
+                # The unit is what the payload declares, never what the venue of
+                # the symbol implies: an explicit per-leaf unit, else a declared
+                # currency scope for a leaf that is not a ratio or a count.
+                unit = _declared_unit(unit_hint) or _leaf_dimension(path)
+                if unit is None and (currency or payload_scope):
+                    unit = "money"
                 self._evidence.append(
                     EvidenceRecord(
                         call_id=call_id,
                         tool=tool_name,
-                        symbol=symbol,
+                        symbol=context.symbol,
                         source=source,
                         timestamp=timestamp,
                         field=path or "value",
                         value=value,
                         status="observed",
-                        currency=_infer_currency(symbol or ""),
-                        venue=_infer_venue(symbol or ""),
+                        currency=evidence_currency,
+                        venue=_infer_venue(context.symbol or ""),
+                        identity_scope=context.scope,
+                        unit=unit,
                     )
                 )
                 remaining -= 1
                 return
             if isinstance(value, dict):
+                explicit, contradictory = _item_symbol(value, allowed)
+                local = _entity_child(context, explicit, allowed)
+                if contradictory:
+                    local = _EntityContext(None, "conflict")
                 local_timestamp = next(
                     (
                         str(value[key])
@@ -1163,17 +1528,28 @@ class _EvidenceMixin:
                     ),
                     timestamp,
                 )
+                local_currency = currency or _currency_from_path(path)
+                for key, item in value.items():
+                    if str(key).casefold() in _CURRENCY_CONTEXT_FIELDS:
+                        local_currency = _currency_code(item) or local_currency
+                units = value.get("_units")
+                units = units if isinstance(units, dict) else {}
                 for key, item in value.items():
                     if str(key).casefold() in timestamp_fields:
                         continue
+                    child_path = f"{path}.{key}" if path else str(key)
                     visit(
                         item,
-                        f"{path}.{key}" if path else str(key),
+                        child_path,
                         local_timestamp,
+                        local_currency or _currency_from_path(child_path),
+                        units.get(key),
+                        _entity_for_key(local, key, allowed),
                     )
             elif isinstance(value, list):
+                item_context = _list_entity_context(value, context)
                 for index, item in enumerate(value):
-                    visit(item, f"{path}[{index}]", timestamp)
+                    visit(item, f"{path}[{index}]", timestamp, currency, None, item_context)
 
         visit(payload, "")
 
