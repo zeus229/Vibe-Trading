@@ -26,7 +26,8 @@ Do not start a goal for a tiny one-shot answer unless the user explicitly asks.
 3. Before continuing an existing task, call `get_research_goal`.
 4. After a market-data lookup, backtest, document read, web source, or manual reasoning step, call `add_goal_evidence`.
 5. Link evidence to a criterion using `criterion_id` or `criterion_index`.
-6. When all required criteria have been audited, call `update_research_goal_status`.
+6. Immediately before completion, call `get_research_goal` and use its `completion_contract` as the canonical map of criterion/evidence ids.
+7. When all required criteria have been audited, call `update_research_goal_status`.
 
 ## Criteria Template
 
@@ -42,7 +43,13 @@ Use this shape when the user did not provide criteria:
 - Keep evidence short and concrete.
 - Prefer artifact-backed evidence when a tool produced a run or file.
 - Include `run_id`, `artifact_path`, `source_provider`, `source_type`, `symbol_universe`, `benchmark`, and `data_as_of` when known.
-- For evidence backed by one specific tool result, copy that result's exact `tool_call_id` into `add_goal_evidence`; do not shorten, alias, or invent it.
+- Record direct tool evidence immediately after the tool result you intend to use, before moving on to unrelated research. If one exact number, date, status, or error comes from one call, create a separate `single_tool` evidence row for that call; do not postpone it and fold several direct results into one `synthesis` row.
+- A later `synthesis` row may compare or summarize several already-recorded direct evidence rows, but it does not replace their `single_tool` provenance.
+- Every `add_goal_evidence` call must declare `provenance_kind`:
+  - `single_tool`: the note is backed by exactly one concrete tool result, including a structured error when that error is itself the finding. Copy that result's exact `tool_call_id`. If the runtime rejects it, choose only from the returned observed candidates; never guess from recency.
+  - `synthesis`: the note combines multiple sources or has no single source tool call. Omit `tool_call_id`.
+  - `manual`: reasoning or a note not sourced from a tool result. Omit `tool_call_id`.
+- Never use a tool name, shortened alias, invented id, or "last tool call" as provenance.
 - `evidence_id` values such as `ev_...` identify rows in the research-goal ledger. They are used by goal audits and are never grounding source refs; do not write `ev_...::field` in a figures declaration.
 - `tool_call_id` preserves provenance but does not verify goal completion by itself. Completion still needs verified evidence from an existing `run_id` or an allowed `artifact_path` with a matching sha256 hash.
 - Do not mark live trading instructions as evidence. Refuse or reframe them as research-only analysis.
@@ -50,7 +57,9 @@ Use this shape when the user did not provide criteria:
 ## Completion Rules
 
 - Use `update_research_goal_status(status="complete")` only after every required criterion has an audit row.
-- Satisfied audit rows must cite verified `evidence_ids`.
+- Satisfied audit rows must cite verified `evidence_ids` from the same criterion in `completion_contract`.
+- Never use grounding-ledger evidence ids as goal-ledger evidence ids.
+- If completion returns a missing/mismatched audit error, use the returned `completion_contract` to repair the ledger/audit. Do not collect more web evidence unless that contract shows a required criterion actually lacks verified evidence.
 - Use `status="blocked"` or `status="insufficient_evidence"` when evidence is missing, stale, contradictory, or not verifiable.
 - Use `status="cancelled"` only when the user explicitly asks to end or discard the goal.
 
