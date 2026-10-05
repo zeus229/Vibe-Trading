@@ -36,19 +36,23 @@ def _percent_figure(value=20.3):
     )
 
 
-def test_exact_field_ref_keeps_aggregate_evidence_despite_neighbor_symbol(tmp_path: Path):
+def test_exact_aggregate_ref_stays_invalid_when_claim_is_symbol_scoped(tmp_path: Path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
     aggregate = _record()
     ledger._evidence = [aggregate]
+    figure = _percent_figure()
 
     records, metrics = ledger._referenced_one(
         "call_portfolio::data.concentration.top1_pct",
         "YPFD",
-        _percent_figure(),
+        figure,
     )
 
-    assert records == [aggregate]
+    assert records == []
     assert metrics == []
+    assert ledger._aggregate_exact_ref_match(
+        "call_portfolio::data.concentration.top1_pct", figure
+    ) is True
 
 
 def test_exact_field_ref_still_rejects_other_entity(tmp_path: Path):
@@ -81,9 +85,9 @@ def test_unique_wrong_call_candidate_tells_correction_to_replace_only_ref():
         }
     )
 
-    assert "written value matches this exact session ref" in line
-    assert "call_acciones::data.volatility.annualized_vol" in line
-    assert "keep the value and replace only the incorrect ref" in line
+    assert "valid field refs: call_acciones::data.volatility.annualized_vol" in line
+    assert line.count("call_acciones::data.volatility.annualized_vol") == 1
+    assert "keep the written value and replace only the incorrect ref" in line
 
 
 def test_multiple_candidates_remain_non_prescriptive():
@@ -158,5 +162,19 @@ def test_unique_first_pass_candidate_is_prescriptive():
         }
     )
 
-    assert "written value matches this exact session ref" in line
-    assert "keep the value and replace only the incorrect ref" in line
+    assert "matching exact call_id::field ref(s): call_acciones::data.volatility.annualized_vol" in line
+    assert line.count("call_acciones::data.volatility.annualized_vol") == 1
+    assert "keep the written value and replace only the incorrect ref" in line
+
+
+def test_aggregate_scope_feedback_preserves_fail_closed_and_explains_rewrite(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
+    ledger._evidence = [_record()]
+    figure = _percent_figure()
+
+    assert ledger._aggregate_exact_ref_match(
+        "call_portfolio::data.concentration.top1_pct", figure
+    )
+    assert not ledger._aggregate_exact_ref_match(
+        "portfolio_summary::data.concentration.top1_pct", figure
+    )
