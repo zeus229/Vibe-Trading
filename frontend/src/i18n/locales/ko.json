@@ -230,7 +230,9 @@
     "deliveryTargetPlaceholder_channel": "채널 ID",
     "deliveryTargetPlaceholder_destination": "채팅 / 그룹 / 사용자 ID",
     "deliveryTargetPlaceholder_slack_destination": "#채널, @사용자 또는 대화 ID",
-    "deliveryTargetKind_slack_destination": "대상"
+    "deliveryTargetKind_slack_destination": "대상",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
   },
   "reports": {
     "badge": "리포트",
@@ -682,6 +684,10 @@
           "trusted_authserv_id": {
             "label": "신뢰할 인증 서버",
             "help": "수신 서버의 authserv-id(예: mx.google.com)입니다. 메일 제공자는 이 ID를 위조한 외부 Authentication-Results 헤더를 제거해야 합니다. SPF 또는 DKIM 검증을 사용하면 필수이며, 비워 두면 수신 메일이 거부됩니다."
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           }
         },
         "websocket": {
@@ -1982,7 +1988,8 @@
       "coverage": "평가 커버리지",
       "coverageNote": "평가 완료 {{priced}} · 현금 {{cash}}",
       "lastComplete": "마지막 완전 업데이트",
-      "excluded": "{{count}}개 계좌를 읽지 못해 이 합계에서 제외했습니다"
+      "excluded": "{{count}}개 계좌를 읽지 못해 이 합계에서 제외했습니다",
+      "changeCanonicalNote": "Asistente Casa의 표준 일일 포트폴리오 변동"
     },
     "allocation": {
       "byAccount": "계좌별 비중",
@@ -2019,7 +2026,8 @@
       "colPnl": "미실현 손익",
       "colData": "데이터",
       "priced": "평가 완료",
-      "unpriced": "미평가"
+      "unpriced": "미평가",
+      "colToday": "오늘"
     },
     "history": {
       "title": "자산 추이",
