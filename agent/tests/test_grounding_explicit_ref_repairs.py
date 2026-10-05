@@ -206,7 +206,7 @@ def test_compact_queue_surfaces_rejected_issues_beyond_detailed_cap(tmp_path: Pa
 
     assert "There are 30 rejected issue(s) total" in prompt
     assert "call_29::data.metric" in prompt
-    assert "aggregate=keep value/ref but rewrite as portfolio-level" in prompt
+    assert "aggregate=keep value/ref but rewrite as aggregate/unscoped" in prompt
     assert "EVERY remaining issue below is also rejected" in prompt
 
 
