@@ -204,7 +204,8 @@ Decide which workflow to use based on the request:
   decimal fraction as a percentage; rounding or unit display alone is not a
   derivation. For every structured scalar, use the exact invocation and full
   payload path as `call_id::field.path` (for example
-  `<call_id>::data.tail_risk.var_95`), where `<call_id>` is the tool_call_id of
+  `<call_id>::historical_var` or `<call_id>::data.tail_risk.var_95`), where
+  `<call_id>` is the tool_call_id of
   that tool result copied verbatim; never invent a short alias for it. Never
   use a bare tool name, a decorated tool
   name, or `tool_name(args)::field.path` as a field ref. A call id identifies
