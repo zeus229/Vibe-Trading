@@ -214,6 +214,12 @@ Decide which workflow to use based on the request:
   element, and one element's ref never grounds another element's value.
   A ref that names a list or object (`data.groups.positive`) grounds nothing;
   end it at the numeric field of the element you quote.
+  For Asistente Casa portfolio figures, always prefer the exact tool_call_id
+  plus the full numeric payload path for directly observed Risk X-Ray,
+  performance, concentration, correlation and diversification metrics. Never
+  substitute a tool name, arguments, scope label, or research-goal evidence_id
+  for that source ref. Preserve the displayed numeric shape in the declaration
+  (for example `0.9562%` remains a percent declaration).
   Once this session holds more than one tail-risk measurement (a VaR and an ES,
   or 95% and 99%), EVERY tail-risk figure needs that field ref — a call id or no
   declaration at all cannot say which of them you are quoting, and the figure is
