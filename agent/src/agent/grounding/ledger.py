@@ -100,6 +100,9 @@ class GroundingLedger(
         self._recovery_rounds = 0
         self._symbol_resolution_attempts = 0
         self._price_evidence_attempts = 0
+        # The rejected draft + validation a still-outstanding grounding recovery
+        # request was issued for. Consumed by the release mixin.
+        self._pending_recovery: dict[str, Any] | None = None
         self._ingested_csvs: set[str] = set()
         # Per-bar tables completed backtests wrote: resolved path -> (sha256,
         # backtest scope), so a later read of one can be recognised as engine
@@ -270,6 +273,8 @@ class GroundingLedger(
             self.persist()
             return
 
+        if self._pending_recovery is not None and tool_name == self._pending_recovery["action"]:
+            self._pending_recovery = None
         self._track_session_symbols(arguments, result)
         self._note_model_write(tool_name, arguments, payload)
         if tool_name in _ANALYSIS_TOOLS:
