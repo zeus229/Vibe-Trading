@@ -13,7 +13,7 @@ from src.agent.grounding.evidence import _leaf_dimension, _name_tokens
         ("data.composition.by_country_pct.Argentina", "ratio"),
         ("data.composition.weights.Some Company", "ratio"),
         ("data.composition.by_sector_pct.trade_count", "count"),
-        ("data.composition.by_sector_pct.return_observations", "count"),
+        ("data.composition.by_sector_pct.return_observations", "ratio"),
         ("data.composition.by_sector_pct.cash_amount", None),
         ("data.composition.by_sector_pct.price_ars", None),
     ],
