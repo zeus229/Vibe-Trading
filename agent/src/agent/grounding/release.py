@@ -75,7 +75,7 @@ _CORRECTION_REASONS = {
     "not_in_referenced_call": "call {ref} returned no such value",
     "ambiguous_field_ref": "{ref} names {sources}, which hold different values; use the one quoted as the ref",
     "tail_risk_needs_field_ref": "this session holds {sources}, which are different measurements; declare the figure with an exact field ref",
-    "field_ref_needs_call_id": "{ref} uses a tool name before ::; use one exact call_id::field ref from {sources}",
+    "field_ref_needs_call_id": "{ref} uses a tool name before ::; matching exact call_id::field ref(s): {sources}",
     "unknown_call_id": "{ref} names no call, tool or run of this session; copy a real tool_call_id, not an alias",
     "session_scope_needs_call_id": "{ref} uses a session run/artifact before ::, but this scalar came from one exact tool call; use a listed call_id::field ref",
     "no_formula": "its note states no arithmetic",
@@ -92,6 +92,7 @@ _CORRECTION_REASONS = {
     "role_in_price_column": "it sits in a price column, which holds only observed prints",
     "proposed_not_a_price": "a proposed level is a price, not a percentage; state the price it implies",
     "symbol_mismatch": "it is declared for one instrument but the sentence writes it about another",
+    "aggregate_ref_needs_unscoped_claim": "the exact ref is portfolio-level aggregate evidence; keep the value and ref, but rewrite the claim so the metric is not attributed to the nearby instrument",
     "citation_not_visible": "its source is not named on the figure's own line, and the note is stripped before the user reads the answer",
 }
 
@@ -139,15 +140,13 @@ def _correction_line(issue: dict[str, Any]) -> str:
         )
     candidates = list(dict.fromkeys(str(item) for item in issue.get("field_ref_candidates") or []))
     sources = list(dict.fromkeys(str(item) for item in issue.get("ambiguous_sources") or []))
-    if candidates:
-        if reason in {"field_ref_needs_call_id", "not_in_referenced_call"} and len(candidates) == 1:
-            evidence += (
-                "; the written value matches this exact session ref: "
-                + candidates[0]
-                + "; keep the value and replace only the incorrect ref with this exact ref"
-            )
-        elif not ("{sources}" in template and candidates == sources):
-            evidence += "; valid field refs: " + ", ".join(candidates)
+    if candidates and not ("{sources}" in template and candidates == sources):
+        evidence += "; valid field refs: " + ", ".join(candidates)
+    if (
+        reason in {"field_ref_needs_call_id", "not_in_referenced_call"}
+        and len(candidates) == 1
+    ):
+        evidence += "; keep the written value and replace only the incorrect ref with the exact ref listed above"
     nearest = issue.get("observed_nearest") or []
     if nearest:
         evidence += "; nearest observed " + ", ".join(_format_price(float(item)) for item in nearest)
