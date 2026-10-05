@@ -153,7 +153,7 @@
     "editingHint": "Você está editando esta execução agendada. Ao salvar, a identidade e o histórico de execuções são preservados.",
     "edit": "Editar",
     "editAria": "Editar execução agendada: {{prompt}}",
-    "editRunningDisabled": "Aguarde esta execução terminar antes de editá-la.",
+    "editRunningDisabled": "Aguarde a execução ou a entrega terminar antes de editar.",
     "deliveryInApp": "Manter apenas no Vibe (não enviar)",
     "deliveryNoChannels": "Nenhum canal de entrega habilitado está configurado. Configure um em Configurações → Canais.",
     "deliveryChannelsLoadFailed": "Não foi possível carregar os canais de entrega configurados.",
@@ -207,6 +207,13 @@
     "deliveryChannelPlaceholder": "telegram, feishu,… (deixe em branco para manter os resultados no aplicativo)",
     "deliveryTargetLabel": "Segmentação do canal",
     "deliveryTargetPlaceholder": "chat / grupo / ID de usuário",
+    "deliveryFormatLabel": "Email report format",
+    "deliveryFormatDefault": "Channel default (plain text)",
+    "deliveryFormatHtml": "HTML email",
+    "deliveryFormatPdf": "PDF attachment",
+    "deliveryFormatDefaultHint": "Keeps the existing plain-text delivery behavior.",
+    "deliveryFormatHtmlHint": "Shows the full report as sanitized HTML in the email body.",
+    "deliveryFormatPdfHint": "Attaches the full report as PDF and keeps only a short notice in the body.",
     "deliveryHint": "Desativado por padrão. Um briefing é enviado assim que a execução termina, não quando está agendada.",
     "deliveryTargetRequired": "Escolha um alvo para esse canal ou limpe o canal.",
     "delivery_none": "Entregando para {{channel}} após a próxima execução",
@@ -223,13 +230,12 @@
     "deliveryKnownTargetLabel": "Destino conhecido",
     "deliveryKnownTargetPlaceholder": "Escolher um destino conhecido…",
     "deliverySuggestionKind_private_chat": "Meu chat privado",
-    "deliveryFormatLabel": "Email report format",
-    "deliveryFormatDefault": "Channel default (plain text)",
-    "deliveryFormatHtml": "Email HTML",
-    "deliveryFormatPdf": "PDF attachment",
-    "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
-    "deliveryFormatHtmlHint": "Sends the full report in the email body.",
-    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
+    "deliveryTargetPlaceholder_email_address": "name@example.com",
+    "deliveryTargetPlaceholder_chat": "ID do chat, grupo ou usuário",
+    "deliveryTargetPlaceholder_channel": "ID do canal",
+    "deliveryTargetPlaceholder_destination": "chat / grupo / ID de usuário",
+    "deliveryTargetPlaceholder_slack_destination": "#canal, @usuário ou ID da conversa",
+    "deliveryTargetKind_slack_destination": "Destino",
     "deliveryProtectPdf": "Protect PDF with password",
     "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
   },
@@ -604,10 +610,6 @@
             "label": "Senha SMTP",
             "help": "Senha ou senha de aplicativo para SMTP. Fica armazenada no servidor e nunca é devolvida ao navegador."
           },
-          "pdf_password": {
-            "label": "PDF report password",
-            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
-          },
           "smtp_use_tls": {
             "label": "STARTTLS do SMTP",
             "help": "Criptografar a conexão SMTP com STARTTLS (ativado por padrão; o usual na porta 587). Na prática, é exclusivo com o SSL do SMTP."
@@ -683,6 +685,14 @@
           "max_attachments_per_email": {
             "label": "Máx. de anexos por e-mail",
             "help": "Quantos anexos são aceitos em um único e-mail (padrão 5)."
+          },
+          "trusted_authserv_id": {
+            "label": "Servidor de autenticação confiável",
+            "help": "authserv-id do servidor receptor, por exemplo mx.google.com. O provedor deve remover cabeçalhos Authentication-Results recebidos e forjados com esse ID. Obrigatório ao verificar SPF ou DKIM; vazio rejeita emails recebidos."
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           }
         },
         "websocket": {
@@ -1008,6 +1018,7 @@
     "dropFiles": "Solte os arquivos aqui",
     "removeAttachment": "Remover {{filename}}",
     "uploadFailed": "Falha no upload: {{error}}",
+    "messageTooLong": "A mensagem excede {{limit}} caracteres, incluindo informações dos anexos e instruções da equipe. Reduza-a antes de enviar.",
     "failedToSend": "Falha ao enviar mensagem, tente novamente.",
     "failedToContinue": "Falha ao continuar a meta. Tente novamente.",
     "runtimeBadge": "RUNTIME",

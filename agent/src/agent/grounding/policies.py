@@ -20,6 +20,8 @@ from src.agent.grounding.identity import (
     _normalize_symbol,
     _scan_symbols,
 )
+from src.agent.grounding import identity_checks  # noqa: F401  (registers declared checks)
+from src.agent.grounding.registry import GROUNDING_CHECKS
 from src.agent.grounding.evidence import (
     EvidenceRecord,
     _record_matches_entity,
@@ -509,29 +511,13 @@ class _PolicyMixin:
                     ),
                 }
             )
-        listed = [
-            record
-            for record in self._identities.values()
-            if record.status == "locked"
-            and record.instrument_type in {"listed_security", "fund"}
-        ]
-        if listed and _PRIVATE_ASSERTION_RE.search(content):
-            symbols = sorted(record.symbol for record in listed if record.symbol)
-            issues.append(
-                {
-                    "code": "listed_identity_relabelled_private",
-                    "symbols": symbols,
-                    "value": None,
-                    "role": None,
-                    "span": None,
-                    "symbol": None,
-                    "reason": "listed_relabelled_private",
-                    "message": (
-                        f"Locked listed identity {', '.join(symbols)} was relabelled as "
-                        "private/unlisted without a conflicting resolver result."
-                    ),
-                }
+        issues.extend(
+            GROUNDING_CHECKS.run(
+                "listed-identity-relabelled-private",
+                self,
+                content,
             )
+        )
         return issues
 
     def _validate_figures(
@@ -1050,7 +1036,7 @@ class _PolicyMixin:
             if named(record.field)
             and record.status == "observed"
             and record.value is not None
-            and _record_matches_entity(record, symbol)
+            and (not symbol or not record.symbol or record.symbol == symbol)
         ]
         entries = [
             entry
@@ -1240,8 +1226,9 @@ class _PolicyMixin:
     ) -> list[str]:
         """Exact call refs for a mistaken tool_name::field declaration.
 
-        With figure, refs whose observed value matches it come first, most
-        recent call first among equals. The hint never authorizes a value.
+        With ``figure``, refs whose observed value matches it come first, most
+        recent call first among equals; the list is capped. The hint never
+        selects a call: the next draft must still declare the exact ref.
         """
         key = (ref or "").strip()
         if "::" not in key:
@@ -1253,12 +1240,14 @@ class _PolicyMixin:
         found: dict[str, list[float]] = {}
         for record in records:
             if record.tool == scope and record.call_id and record.field:
-                label = self._ref_source(record.call_id, record.field, record.scope)[1]
-                found.setdefault(label, []).append(float(record.value))
+                found.setdefault(self._ref_source(record.call_id, record.field, record.scope)[1], []).append(
+                    float(record.value)
+                )
         for entry in entries:
             if entry.get("tool") == scope and entry.get("call_id") and entry.get("field"):
-                label = self._ref_source(str(entry["call_id"]), str(entry["field"]), None)[1]
-                found.setdefault(label, []).append(float(entry["value"]))
+                found.setdefault(self._ref_source(str(entry.get("call_id")), str(entry.get("field")), None)[1], []).append(
+                    float(entry["value"])
+                )
         if figure is None:
             return sorted(found)
         recency = {item: index for index, item in enumerate(found)}
@@ -1273,9 +1262,24 @@ class _PolicyMixin:
         return ranked[:_MAX_CALL_REF_CANDIDATES]
 
     def _indexed_field_ref_candidates(
-        self, ref: str, figure: Figure
+        self, ref: str, figure: Figure, symbol: str | None = None
     ) -> list[str]:
-        """Exact indexed leaf refs for an unresolved structured ref."""
+        """Exact ``call_id::path[i]`` refs for a ``call::field`` ref that selected no value.
+
+        Two shapes of an unresolved ref are helped, both only from the call (or
+        tool) the ref names:
+
+        * the ref names a list field without its index: paths that equal the
+          declared field once every collection index is dropped are offered;
+        * the ref names a container (``data.groups.positive``): its numeric
+          descendants that hold the figure's value are offered, and none
+          otherwise. An index written in the ref narrows the container to that
+          element.
+
+        Refs whose value matches the figure come first. These are hints for the
+        next draft; a ref is never resolved through them and a container ref
+        authorizes nothing.
+        """
         found: dict[str, float] = {}
         containers: set[str] = set()
         for key in (part.strip() for part in re.split(r"[;,]", ref or "")):
@@ -1305,14 +1309,16 @@ class _PolicyMixin:
                     and scope in (call_id, tool)
                 ):
                     continue
-                if record is not None and not self._kind_fits(record, figure):
-                    continue
+                if record is not None:
+                    if symbol and record.symbol and record.symbol != symbol:
+                        continue
+                    if not self._kind_fits(record, figure):
+                        continue
                 item = f"{call_id}::{path}"
-                normalized_path = _index_normalized(path)
-                if below.search(normalized_path):
+                if below.search(_index_normalized(path)):
                     containers.add(item)
                     found[item] = float(value)
-                elif _INDEX_RE.search(path):
+                elif _INDEX_RE.search(path) and not _INDEX_RE.search(wanted):
                     stripped = _INDEX_RE.sub("", path)
                     if stripped == bare or stripped.endswith("." + bare):
                         found[item] = float(value)
@@ -1320,6 +1326,7 @@ class _PolicyMixin:
             item: self._matches_evidence(figure, [value], [value])
             for item, value in found.items()
         }
+        # A container is answered only by the leaf that holds the figure.
         kept = [item for item in found if item not in containers or matches[item]]
         ranked = sorted(kept, key=lambda item: (not matches[item], item))
         cap = _MAX_CONTAINER_REF_CANDIDATES if containers else _MAX_INDEXED_REF_CANDIDATES
@@ -1328,18 +1335,21 @@ class _PolicyMixin:
     def _other_call_field_ref_candidates(
         self, ref: str, symbol: str | None, figure: Figure
     ) -> list[str]:
-        """Same-field refs from other calls of the same tool that match figure."""
+        """Same-field refs from other calls of the tool whose value matches ``figure``.
+
+        A ``call_id::field`` ref that does not hold the figure may still name the
+        right field of the wrong call (scope or period). Only calls of the same
+        tool as the declared call, whose value for that field matches, are
+        offered, most recent first. A hint only: the declared ref stays rejected
+        and the next draft must name the exact ref itself.
+        """
         found: dict[str, None] = {}
         for key in (part.strip() for part in re.split(r"[;,]", ref or "")):
             if "::" not in key:
                 continue
             scope, field = (part.strip() for part in key.split("::", 1))
             tools = {r.tool for r in self._evidence if r.call_id == scope}
-            tools |= {
-                str(e.get("tool"))
-                for e in self._analysis_metrics
-                if e.get("call_id") == scope and e.get("tool")
-            }
+            tools |= {e.get("tool") for e in self._analysis_metrics if e.get("call_id") == scope}
             if not scope or not field or not tools:
                 continue
             records, entries = self._field_sources(field, symbol)
@@ -1352,7 +1362,6 @@ class _PolicyMixin:
                     and call_id != scope
                     and tool in tools
                     and isinstance(path, str)
-                    and value is not None
                     and (record is None or self._kind_fits(record, figure))
                     and self._matches_evidence(figure, [float(value)], [float(value)])
                 ):
@@ -1361,15 +1370,15 @@ class _PolicyMixin:
 
     @staticmethod
     def _kind_fits(record: EvidenceRecord, figure: Figure) -> bool:
-        """Whether record is of a kind that figure can quote."""
+        """Whether a record is of the kind ``figure`` can be grounded in.
+
+        Mirrors the narrowing ``_referenced`` applies, so a hint never points at
+        a leaf the next draft would still be rejected for.
+        """
         if figure.column and record.field != figure.column:
             return False
         if figure.percent:
-            return (
-                not _is_price_kind(record)
-                and not _is_metadata_count_leaf(record.field)
-                and record.unit != "count"
-            )
+            return not _is_price_kind(record) and not _is_metadata_count_leaf(record.field)
         if figure.currency:
             return _is_price_kind(record)
         return True
@@ -1439,8 +1448,9 @@ class _PolicyMixin:
         no evidence. This only lists where the field really lives, so the next
         draft can copy an exact ref; it grants nothing, and the figure stays
         rejected until it is re-declared with one of them. Refs whose value the
-        figure matches come first; at most :data:`_MAX_FIELD_REF_CANDIDATES` are
-        returned.
+        figure matches come first; at most :data:`_MAX_CALL_REF_CANDIDATES` are
+        returned. Candidates keep the same symbol and kind restrictions as a
+        real field ref, so the correction cannot recommend an unusable ref.
         """
         key = (ref or "").strip()
         if "::" not in key:
@@ -1448,7 +1458,24 @@ class _PolicyMixin:
         scope, field = (part.strip() for part in key.split("::", 1))
         if not scope or not field or self._names_session_source(scope):
             return []
-        return self._field_ref_repair_candidates(field, symbol, figure)
+        records, entries = self._field_sources(field, symbol)
+        found: dict[str, list[float]] = {}
+        money = bool(figure.currency and not figure.percent)
+        for record in records:
+            if record.call_id and record.field and self._kind_fits(record, figure):
+                label = self._ref_source(record.call_id, record.field, record.scope)[1]
+                found.setdefault(label, []).append(float(record.value))
+        for entry in entries if not (money or figure.column) else ():
+            if entry.get("call_id") and entry.get("field"):
+                label = self._ref_source(str(entry["call_id"]), str(entry["field"]), None)[1]
+                found.setdefault(label, []).append(float(entry["value"]))
+        compatible = {
+            label
+            for label, values in found.items()
+            if self._matches_evidence(figure, values, [] if money else values)
+        }
+        ranked = sorted(found, key=lambda label: (label not in compatible, label))
+        return ranked[:_MAX_CALL_REF_CANDIDATES]
 
     def _names_session_source(self, name: str) -> bool:
         """Whether ``name`` is a call id, tool name or backtest run of this session."""

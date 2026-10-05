@@ -533,7 +533,7 @@ def _microcompact(
     *,
     target_tokens: Optional[int] = None,
     measure: Optional[Callable[[list], int]] = None,
-    preserve_tool_call_ids: set[str] | None = None,
+    preserve_tool_call_ids: Optional[set[str]] = None,
 ) -> list:
     """Layer 1: prune old tool results, keeping the most recent N intact.
 
@@ -545,8 +545,8 @@ def _microcompact(
             still needs is what made it re-fetch its evidence until
             ``no_progress``, so the loop passes a target.
         measure: Prompt-size function for ``target_tokens``.
-        preserve_tool_call_ids: Replayed results awaiting one successful model
-            turn; these stay readable even when older than ``KEEP_RECENT``.
+        preserve_tool_call_ids: Replayed results no successful model request
+            has carried yet; they are never cleared here.
 
     Returns:
         Names of tools whose every result just became unreadable (legacy
@@ -558,10 +558,10 @@ def _microcompact(
         return []
     newly_cleared = []
     for msg in tool_msgs[:-KEEP_RECENT]:
-        if msg.get("tool_call_id") in (preserve_tool_call_ids or set()):
-            continue
         if target_tokens is not None and measure is not None and measure(messages) <= target_tokens:
             break
+        if preserve_tool_call_ids and msg.get("tool_call_id") in preserve_tool_call_ids:
+            continue
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
         # re-clearing it would rewrite the recorded original size with the
@@ -593,7 +593,7 @@ def _result_data_gone(content: Any) -> bool:
     return _is_cleared(content) or content == _STUB_RESULT_CONTENT
 
 
-def _context_collapse(messages: list) -> None:
+def _context_collapse(messages: list, *, preserve_tool_call_ids: Optional[set[str]] = None) -> None:
     """Layer 2: fold long text blocks in older messages without LLM call.
 
     Preserves head + tail of large text, collapses the middle.
@@ -605,6 +605,8 @@ def _context_collapse(messages: list) -> None:
     if len(messages) <= COLLAPSE_PRESERVE_RECENT + 1:
         return
     for msg in messages[1:-COLLAPSE_PRESERVE_RECENT]:
+        if msg.get("role") == "tool" and msg.get("tool_call_id") in (preserve_tool_call_ids or ()):
+            continue
         content = msg.get("content")
         if not isinstance(content, str) or len(content) <= COLLAPSE_TEXT_MIN:
             continue
@@ -948,6 +950,8 @@ class AgentLoop:
                 ),
             )
         self._llm_runtime = runtime_snapshot
+        self._active_model_id = runtime_snapshot.configured_model
+        self._active_model_source = "configured"
         self.memory = memory or WorkspaceMemory()
         self._event_callback = event_callback
         self.max_iterations = max_iterations
@@ -967,9 +971,7 @@ class AgentLoop:
         # Skipped/error call IDs never enter this ledger.
         self._successful_call_keys: dict[str, tuple[str, str]] = {}
         # Every call that actually reached a tool implementation is a valid
-        # provenance candidate, even when the tool returned a structured error
-        # (for example, "insufficient history"). Synthetic blocked/skipped
-        # calls are intentionally excluded.
+        # provenance candidate, including structured error findings.
         self._observed_tool_calls: dict[str, dict[str, str]] = {}
         self._cancel_event = threading.Event()
         self._previous_summary: str = ""
@@ -997,6 +999,8 @@ class AgentLoop:
         self._readonly_replay_cache: dict[tuple[str, str], str] = {}
         self._readonly_replay_ready: set[tuple[str, str]] = set()
         self._readonly_replay_protected: set[tuple[str, str]] = set()
+        # Replayed tool_call_ids whose restored payload no successful model
+        # request has carried yet (message identity, not call identity).
         self._readonly_replay_visibility_pending: set[str] = set()
         self._readonly_replay_recoveries = 0
         self._tool_progress = ToolProgress()
@@ -1200,13 +1204,9 @@ class AgentLoop:
         empty_model_response_iter: int | None = None
         consecutive_empty_responses = 0
         grounding_revisions = 0
-        # A rejected draft whose only defects are numeric conflicts gets one
-        # correction-only turn with tools withheld. Those conflicts already
-        # carry evidence (for example a derivation_result_mismatch), so
-        # re-fetching the same read-only data cannot repair them; ToolProgress
-        # would eventually abort the redundant loop as no_progress. Explicit
-        # grounding recovery (identity / missing price evidence) keeps tools
-        # available; ordinary correction turns do not.
+        # A normal grounding correction is a text revision, not a new research
+        # turn. Explicit grounding recovery (identity / missing price evidence)
+        # keeps tools available; ordinary correction turns do not.
         grounding_correction_text_only = False
         pending_grounding_draft = ""
         llm_usage_summary = _new_llm_usage_summary(self.llm)
@@ -1254,10 +1254,15 @@ class AgentLoop:
                     # can force each layer with a tiny number.
                     tokens = estimate_tokens(messages)
                     if tokens > int(_token_threshold() * 0.5):
-                        self._microcompact_and_unblock(messages, trace, iteration)
+                        self._microcompact_and_unblock(
+                            messages,
+                            trace,
+                            iteration,
+                            preserve_tool_call_ids=self._readonly_replay_visibility_pending,
+                        )
                         tokens = estimate_tokens(messages)
                     if tokens > int(_token_threshold() * 0.7):
-                        _context_collapse(messages)
+                        _context_collapse(messages, preserve_tool_call_ids=self._readonly_replay_visibility_pending)
                         tokens = estimate_tokens(messages)
                     _tok_threshold = _token_threshold()
                     if tokens > _tok_threshold:
@@ -1387,11 +1392,10 @@ class AgentLoop:
                         reasoning_event["tail"] = reasoning_tail
                     self._emit("reasoning_delta", reasoning_event)
 
-                # On the last iteration, or on a numeric-conflict correction
-                # turn whose evidence is already sufficient, drop tool
-                # definitions and force the model to revise using the evidence
-                # already in context. Missing/unsourced evidence and other
-                # rejection classes keep the ordinary tool surface available.
+                # The final iteration is always text-only. A grounding correction
+                # whose validator requested no explicit recovery is text-only too:
+                # the model must revise from evidence already gathered instead of
+                # starting another research/refetch loop merely to reformat a draft.
                 is_last_iteration = (iteration == self.max_iterations)
                 correction_text_only = grounding_correction_text_only
                 tool_defs = (
@@ -1491,29 +1495,25 @@ class AgentLoop:
                 else:
                     stream_failure_streak = 0
 
+                self._consume_readonly_replay_visibility(messages, trace, current_iter)
+
                 # Cancelled mid-stream: discard this turn's partial response and
                 # end the run now, without executing any of its tool calls.
                 if self._cancel_event.is_set():
                     break
 
-                # A replayed result is leased through the next successful
-                # model turn. Failed/overflowed provider attempts never reach
-                # this point, so they cannot consume its visibility lease.
-                self._consume_readonly_replay_visibility(
-                    messages, trace, current_iter
-                )
-
                 # An LLM response arrived - real progress for the stall watchdog.
                 self._last_activity_wall = _time.time()
 
                 usage = getattr(response, "usage_metadata", None)
+                current_response_model = getattr(response, "response_model", None)
                 # `messages` is still exactly what this request sent.
                 self._context_meter.observe(
                     usage.get("input_tokens") if isinstance(usage, dict) else None,
                     messages,
                 )
-                if getattr(response, "response_model", None):
-                    last_response_model = response.response_model
+                if current_response_model:
+                    last_response_model = current_response_model
                 usage_delta = _record_llm_usage(
                     run_dir,
                     llm_usage_summary,
@@ -1603,12 +1603,9 @@ class AgentLoop:
 
                 forced_grounding_release = False
                 if correction_text_only and response.has_tool_calls:
-                    # Tools were deliberately not offered on this correction turn.
-                    # Some providers/models can still emit a tool call anyway;
-                    # never let that escape the bounded correction path. An
-                    # unoffered call consumes the same bounded correction budget
-                    # as an invalid revised draft, but is never executed or
-                    # inserted into the transcript as an unanswered tool call.
+                    # An unoffered call consumes the same bounded correction
+                    # budget as an invalid revised draft, but is never executed
+                    # or inserted into the transcript as an unanswered tool call.
                     grounding_revisions += 1
                     trace.write(
                         {
@@ -1675,11 +1672,6 @@ class AgentLoop:
                         continue
                     # A real response resets the consecutive-empty counter.
                     consecutive_empty_responses = 0
-                    # The correction-only constraint is consumed only by a
-                    # non-empty text response. Content-filter and empty-response
-                    # retries above keep it armed for the next iteration.
-                    if correction_text_only:
-                        grounding_correction_text_only = False
                     # A model can answer the forced-text final iteration with its
                     # native tool-call DSL as prose (see _looks_like_tool_call_syntax).
                     # That is not an answer: retry once with a plain-text instruction,
@@ -1759,13 +1751,10 @@ class AgentLoop:
                                     final_content = repaired
                                     validation = recheck
                         if validation.valid:
-                            # #GGAL-D: a validated answer can still be a stub —
-                            # the model declining a requested recovery tool
-                            # call with a short operational reply instead of
-                            # revising the rejected research. Such a reply
-                            # would otherwise release cleanly (it has no
-                            # figures to check), silently discarding the
-                            # actual analysis. See ``pending_recovery_stub``.
+                            # A validated answer can still be a stub that declines
+                            # the explicit recovery tool call and silently drops
+                            # the rejected research. Preserve the production
+                            # fail-closed behavior for that case.
                             stub = self._grounding.pending_recovery_stub(final_content)
                             if stub is not None:
                                 rejected_draft, rejected_validation = stub
@@ -1797,19 +1786,16 @@ class AgentLoop:
                                     )
                                     self._released_fallback_reason = (
                                         "the model declined the requested recovery tool "
-                                        "call and replied with a short operational "
-                                        "message instead of a revised draft; released "
-                                        "the original research with its unverified "
-                                        "figures redacted instead of the stub"
+                                        "call and replied with a short operational message "
+                                        "instead of a revised draft; released the original "
+                                        "research with its unverified figures redacted"
                                     )
                                 else:
                                     final_content = self._grounding.safe_fallback()
                                     self._released_fallback_reason = (
                                         "the model declined the requested recovery tool "
-                                        "call and replied with a short operational "
-                                        "message instead of a revised draft, and the "
-                                        "original research could not be released even "
-                                        "with its unverified figures redacted"
+                                        "call and the original research could not be "
+                                        "released safely"
                                     )
                                 self._released_fallback = True
                                 trace.write(
@@ -1860,10 +1846,6 @@ class AgentLoop:
                                 # Explicit bounded recovery is the one case where
                                 # the next turn is allowed to research again.
                                 grounding_correction_text_only = False
-                                # #GGAL-D: track this rejected draft as the
-                                # pending recovery's subject, so a later stub
-                                # reply (the model declining the tool call)
-                                # can be told apart from a real revision.
                                 self._grounding.record_recovery(
                                     recovery, draft=final_content, validation=validation
                                 )
@@ -1917,21 +1899,6 @@ class AgentLoop:
                                 and iteration < self.max_iterations
                                 and grounding_revisions < MAX_GROUNDING_REVISIONS
                             ):
-                                # A rejection that still has an explicit bounded
-                                # recovery step (identity resolution / missing
-                                # price evidence) took the ``recovery_action``
-                                # branch above and never reaches here. Once that
-                                # is exhausted (or was never applicable, as for
-                                # a pure numeric_claim_conflict, where the gate
-                                # already has the evidence and only the
-                                # arithmetic is wrong), this correction turn
-                                # must not re-open tool access: a model that
-                                # cannot resolve the identity or find the price
-                                # would otherwise keep re-issuing the same
-                                # read-only call forever, and ToolProgress would
-                                # eventually abort the run as no_progress
-                                # instead of cleanly releasing the redacted
-                                # draft within the revision budget.
                                 grounding_correction_text_only = True
                                 self._emit(
                                     "grounding_status",
@@ -2125,6 +2092,12 @@ class AgentLoop:
                 messages.append(assistant_message)
 
                 # Execute tools with read/write batching
+                self._active_model_id = (
+                    current_response_model or self._llm_runtime.configured_model
+                )
+                self._active_model_source = (
+                    "provider_response" if current_response_model else "configured"
+                )
                 compact_requested, focus_topic = self._process_tool_calls(
                     response.tool_calls, context, messages, trace, react_trace, current_iter,
                 )
@@ -2876,22 +2849,17 @@ class AgentLoop:
         Returns:
             Tuple of (result_str, elapsed_ms).
         """
-        # Goal evidence provenance is validated against identities the runtime
-        # actually observed in this run.  This context is host-injected: it is
-        # deliberately absent from the model-facing schema and never guesses a
-        # source from tool name, recency, or evidence text.
+        # Goal evidence provenance is validated against tool calls the runtime
+        # actually observed in this run. This host-only context is absent from
+        # the model-facing schema and never guesses a source.
         if tool_name == "add_goal_evidence":
             args = dict(args)
             args["_runtime_observed_tool_calls"] = [
                 dict(item)
                 for item in self._observed_tool_call_ledger().values()
-                if item["tool"]
-                not in {
-                    "start_research_goal",
-                    "get_research_goal",
-                    "add_goal_evidence",
-                    "update_research_goal_status",
-                    "compact",
+                if item["tool"] not in {
+                    "start_research_goal", "get_research_goal", "add_goal_evidence",
+                    "update_research_goal_status", "compact",
                 }
             ]
 
@@ -3078,9 +3046,53 @@ class AgentLoop:
         if not p.is_absolute() and self.memory.run_dir:
             p = Path(self.memory.run_dir) / p
         try:
-            self._written_files.add(str(p.resolve()).casefold())
+            resolved = p.resolve()
+            self._written_files.add(str(resolved).casefold())
         except (OSError, ValueError):
+            resolved = p
             self._written_files.add(str(p).casefold())
+
+        if not self.memory.run_dir:
+            return
+        run_root = Path(self.memory.run_dir).resolve()
+        try:
+            relative = resolved.relative_to(run_root).as_posix()
+        except ValueError:
+            return
+        if relative not in {"config.json", "code/signal_engine.py"}:
+            return
+
+        metadata_path = run_root / "strategy_provenance.json"
+        try:
+            metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            files = {}
+        except (OSError, json.JSONDecodeError) as exc:
+            logger.warning(
+                "Could not read strategy model provenance; update skipped: %s",
+                exc,
+            )
+            return
+        else:
+            if not isinstance(metadata, dict):
+                logger.warning("Invalid strategy model provenance; update skipped.")
+                return
+            files = metadata.get("files", {})
+            if not isinstance(files, dict):
+                logger.warning("Invalid strategy model provenance files; update skipped.")
+                return
+        files[relative] = {
+            "provider": self._llm_runtime.provider or None,
+            "model_id": self._active_model_id or None,
+            "model_source": self._active_model_source,
+        }
+        try:
+            metadata_path.write_text(
+                json.dumps({"files": files}, ensure_ascii=False, sort_keys=True) + "\n",
+                encoding="utf-8",
+            )
+        except OSError as exc:
+            logger.warning("Could not write strategy model provenance: %s", exc)
 
     def _pending_write_directive(
         self, user_message: str, run_started_wall: float
@@ -3195,10 +3207,11 @@ class AgentLoop:
                 iteration,
                 target_tokens=budget.micro_at,
                 measure=self._prompt_tokens,
+                preserve_tool_call_ids=self._readonly_replay_visibility_pending,
             )
             tokens = self._prompt_tokens(messages)
         if tokens > budget.collapse_at:
-            _context_collapse(messages)
+            _context_collapse(messages, preserve_tool_call_ids=self._readonly_replay_visibility_pending)
             tokens = self._prompt_tokens(messages)
         # A summary keeps the static prompt plus a ~20K-token tail, so on a
         # window that small the prompt stays over the line after compacting;
@@ -3260,6 +3273,7 @@ class AgentLoop:
         *,
         target_tokens: Optional[int] = None,
         measure: Optional[Callable[[list], int]] = None,
+        preserve_tool_call_ids: Optional[set[str]] = None,
     ) -> list[str]:
         """Run layer-1 microcompact and re-open lost readonly call identities.
 
@@ -3276,6 +3290,7 @@ class AgentLoop:
             iteration: Current ReAct iteration, recorded on the trace event.
             target_tokens: Clear oldest-first only until the prompt fits.
             measure: Prompt-size function for ``target_tokens``.
+            preserve_tool_call_ids: Replayed results still owed one model request.
 
         Returns:
             The tool names re-opened, for callers and tests to assert on.
@@ -3285,7 +3300,7 @@ class AgentLoop:
             messages,
             target_tokens=target_tokens,
             measure=measure,
-            preserve_tool_call_ids=self._readonly_replay_visibility_pending,
+            preserve_tool_call_ids=preserve_tool_call_ids,
         )
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:
@@ -3299,23 +3314,17 @@ class AgentLoop:
     def _consume_readonly_replay_visibility(
         self, messages: list, trace: TraceWriter, iteration: int
     ) -> None:
-        """Consume replay visibility only after a successful model turn saw it."""
-        readable_call_ids = {
+        """Release replay leases once a successful model request carried them."""
+        visible = {
             msg.get("tool_call_id")
             for msg in messages
             if msg.get("role") == "tool"
             and msg.get("tool_call_id") in self._readonly_replay_visibility_pending
             and not _result_data_gone(msg.get("content"))
         }
-        for call_id in sorted(readable_call_ids):
+        for call_id in sorted(visible):
             self._readonly_replay_visibility_pending.discard(call_id)
-            trace.write(
-                {
-                    "type": "replay_visibility_consumed",
-                    "iter": iteration,
-                    "call_id": call_id,
-                }
-            )
+            trace.write({"type": "replay_visibility_consumed", "iter": iteration, "call_id": call_id})
 
     def _readable_success_keys(self, messages: list) -> set[tuple[str, str]]:
         """Identify surviving successful results, not synthetic skip/stub calls."""
@@ -3345,13 +3354,7 @@ class AgentLoop:
         return sorted({key[0] for key in reopened})
 
     def _observed_tool_call_ledger(self) -> dict[str, dict[str, str]]:
-        """Return the run-scoped provenance ledger, creating it lazily if needed.
-
-        Some focused harnesses construct AgentLoop via object.__new__ to
-        exercise replay/compaction internals without running __init__. Keep
-        this new provenance state backward-compatible with those paths instead
-        of requiring every internal fixture/caller to know about the attribute.
-        """
+        """Return the run-scoped provenance ledger, creating it lazily if needed."""
         ledger = getattr(self, "_observed_tool_calls", None)
         if not isinstance(ledger, dict):
             ledger = {}
@@ -3429,7 +3432,7 @@ class AgentLoop:
                 self._successful_call_keys[tc.id] = recorded_key
             if tc.name == "backtest":
                 try:
-                    _archive_backtest_result(result, self.memory.run_dir)
+                    _archive_backtest_result(result, self.memory.run_dir, source_call_id=tc.id)
                 except OSError as exc:
                     logger.warning("Could not archive backtest output into active run: %s", exc)
             if tc.name in {"write_file", "edit_file"}:
@@ -3498,6 +3501,18 @@ class AgentLoop:
             iteration=iteration,
         )
         preview = trace_result[:200]
+        artifact = None
+        if status == "ok" and tc.name in {"write_file", "render_shadow_report"}:
+            try:
+                payload = json.loads(trace_result)
+                from src.tools.report_artifacts import report_path
+                report_id = payload.get("report_id", "")
+                path = report_path(report_id) if isinstance(report_id, str) else None
+                if path is not None:
+                    artifact = {"report_id": report_id, "filename": path.name,
+                                "download_url": f"/api/reports/{report_id}"}
+            except (ValueError, TypeError, AttributeError, OSError):
+                pass
         react_trace.append({"type": "tool_call", "tool": tc.name, "result_preview": preview})
         self._emit(
             "tool_result",
@@ -3507,6 +3522,7 @@ class AgentLoop:
                 "elapsed_ms": elapsed_ms,
                 "preview": preview,
                 "call_id": tc.id,
+                **({"artifact": artifact} if artifact else {}),
             },
         )
 
@@ -3563,6 +3579,16 @@ class AgentLoop:
             else:
                 logger.warning("Auto compact: nothing to compress (body too small)")
                 return
+
+        # Replayed results are owed one successful writing request. Keep the
+        # entire assistant-call/result pair out of summaries until then.
+        pending = self._readonly_replay_visibility_pending
+        leased = [msg for msg in head if (
+            msg.get("role") == "tool" and msg.get("tool_call_id") in pending
+        ) or any(call.get("id") in pending for call in msg.get("tool_calls") or [])]
+        if leased:
+            head = [msg for msg in head if all(msg is not kept for kept in leased)]
+            tail = leased + tail
 
         # Build focus section
         focus_section = _FOCUS_SECTION.format(topic=focus_topic) if focus_topic else ""

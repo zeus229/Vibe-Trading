@@ -53,7 +53,7 @@ NowFn = Callable[[], int]
 DispatchCallback = Callable[[ScheduledResearchJob], Awaitable[Optional[str]]]
 #: session_id -> (terminal status, briefing text), or None while in flight.
 BriefingReader = Callable[[str], Optional[tuple[str, str]]]
-#: (channel, target, text) -> delivered.
+#: (channel, target, text[, delivery_format]) -> delivered.
 ChannelSender = Callable[..., Awaitable[DeliveryReceipt | None]]
 
 _TRUE_VALUES = {"1", "true", "yes", "on"}
@@ -648,8 +648,6 @@ class ScheduledResearchExecutor:
 
             try:
                 if job.delivery_format is None:
-                    # Preserve compatibility with embedders/tests that inject
-                    # the historical three-argument sender.
                     receipt = await self._channel_sender(
                         job.delivery_channel, job.delivery_target, text
                     )

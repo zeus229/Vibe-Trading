@@ -148,7 +148,7 @@
     "editingHint": "이 예약 실행을 편집 중입니다. 저장해도 식별 정보와 실행 기록은 유지됩니다.",
     "edit": "편집",
     "editAria": "예약 실행 편집: {{prompt}}",
-    "editRunningDisabled": "이 실행이 끝난 후 편집하세요.",
+    "editRunningDisabled": "실행 또는 전송이 완료된 후 편집하세요.",
     "deliveryInApp": "Vibe에만 보관(전송 안 함)",
     "deliveryNoChannels": "활성화된 전송 채널이 구성되어 있지 않습니다. 설정 → 채널에서 하나를 구성하세요.",
     "deliveryChannelsLoadFailed": "구성된 전송 채널을 불러오지 못했습니다.",
@@ -202,17 +202,15 @@
     "deliveryChannelPlaceholder": "telegram, feishu … (비우면 앱 안에만 남습니다)",
     "deliveryTargetLabel": "채널 대상",
     "deliveryTargetPlaceholder": "채팅 / 그룹 / 사용자 ID",
-    "deliveryHint": "기본은 꺼짐입니다. 브리핑은 예약 시점이 아니라 실행이 **끝난 뒤** 전달됩니다.",
-    "deliveryTargetRequired": "해당 채널의 대상을 지정하거나 채널을 비워 주세요.",
     "deliveryFormatLabel": "Email report format",
     "deliveryFormatDefault": "Channel default (plain text)",
-    "deliveryFormatHtml": "Email HTML",
+    "deliveryFormatHtml": "HTML email",
     "deliveryFormatPdf": "PDF attachment",
-    "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
-    "deliveryFormatHtmlHint": "Sends the full report in the email body.",
-    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
-    "deliveryProtectPdf": "Protect PDF with password",
-    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection.",
+    "deliveryFormatDefaultHint": "Keeps the existing plain-text delivery behavior.",
+    "deliveryFormatHtmlHint": "Shows the full report as sanitized HTML in the email body.",
+    "deliveryFormatPdfHint": "Attaches the full report as PDF and keeps only a short notice in the body.",
+    "deliveryHint": "기본은 꺼짐입니다. 브리핑은 예약 시점이 아니라 실행이 **끝난 뒤** 전달됩니다.",
+    "deliveryTargetRequired": "해당 채널의 대상을 지정하거나 채널을 비워 주세요.",
     "delivery_none": "다음 실행이 끝나면 {{channel}}(으)로 전달합니다",
     "delivery_pending": "{{channel}}(으)로 전달 대기 중",
     "delivery_sending": "{{channel}}(으)로 전달하는 중",
@@ -226,7 +224,15 @@
     "verdictRecorded": "{{when}} 기준",
     "deliveryKnownTargetLabel": "알려진 대상",
     "deliveryKnownTargetPlaceholder": "알려진 대상 선택…",
-    "deliverySuggestionKind_private_chat": "내 비공개 채팅"
+    "deliverySuggestionKind_private_chat": "내 비공개 채팅",
+    "deliveryTargetPlaceholder_email_address": "name@example.com",
+    "deliveryTargetPlaceholder_chat": "채팅, 그룹 또는 사용자 ID",
+    "deliveryTargetPlaceholder_channel": "채널 ID",
+    "deliveryTargetPlaceholder_destination": "채팅 / 그룹 / 사용자 ID",
+    "deliveryTargetPlaceholder_slack_destination": "#채널, @사용자 또는 대화 ID",
+    "deliveryTargetKind_slack_destination": "대상",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
   },
   "reports": {
     "badge": "리포트",
@@ -599,10 +605,6 @@
             "label": "SMTP 비밀번호",
             "help": "SMTP용 비밀번호 또는 앱 비밀번호입니다. 서버 측에만 저장되며 브라우저로 반환되지 않습니다."
           },
-          "pdf_password": {
-            "label": "PDF report password",
-            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
-          },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",
             "help": "STARTTLS로 SMTP 연결을 암호화합니다(기본 켜짐, 포트 587의 표준). 실제로는 SMTP SSL과 함께 사용하지 않습니다."
@@ -678,6 +680,14 @@
           "max_attachments_per_email": {
             "label": "메일당 첨부 수 상한",
             "help": "메일 한 통에서 허용하는 첨부 파일 수입니다(기본 5)."
+          },
+          "trusted_authserv_id": {
+            "label": "신뢰할 인증 서버",
+            "help": "수신 서버의 authserv-id(예: mx.google.com)입니다. 메일 제공자는 이 ID를 위조한 외부 Authentication-Results 헤더를 제거해야 합니다. SPF 또는 DKIM 검증을 사용하면 필수이며, 비워 두면 수신 메일이 거부됩니다."
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           }
         },
         "websocket": {
@@ -1003,6 +1013,7 @@
     "dropFiles": "여기에 파일 놓기",
     "removeAttachment": "{{filename}} 제거",
     "uploadFailed": "업로드 실패: {{error}}",
+    "messageTooLong": "첨부 정보와 팀 지침을 포함한 메시지가 {{limit}}자를 초과합니다. 줄인 후 보내세요.",
     "failedToSend": "메시지 전송에 실패했습니다. 다시 시도해 주세요.",
     "failedToContinue": "목표 진행에 실패했습니다. 다시 시도해 주세요.",
     "runtimeBadge": "거래 모니터",

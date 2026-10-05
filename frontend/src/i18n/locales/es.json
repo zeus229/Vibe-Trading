@@ -187,21 +187,12 @@
     "lastError": "Último error: {{error}}",
     "edit": "Editar",
     "editAria": "Editar ejecución programada: {{prompt}}",
-    "editRunningDisabled": "Espera a que termine esta ejecución antes de editarla.",
+    "editRunningDisabled": "Espera a que termine la ejecución o su entrega antes de editar.",
     "delete": "Eliminar",
     "deleteAria": "Eliminar ejecución programada: {{prompt}}",
     "confirmDelete": "Confirmar eliminación",
     "confirmDeleteAria": "Confirmar eliminación de ejecución programada: {{prompt}}",
     "deliveryChannelLabel": "Canal de entrega",
-    "deliveryFormatLabel": "Formato del informe por email",
-    "deliveryFormatDefault": "Predeterminado del canal (texto plano)",
-    "deliveryFormatHtml": "Email HTML",
-    "deliveryFormatPdf": "PDF adjunto",
-    "deliveryFormatDefaultHint": "Mantiene el formato actual del canal por compatibilidad.",
-    "deliveryFormatHtmlHint": "El informe completo se muestra en el cuerpo del email.",
-    "deliveryFormatPdfHint": "El cuerpo del email es breve; el informe completo va adjunto como PDF.",
-    "deliveryProtectPdf": "Proteger el PDF con contraseña",
-    "deliveryProtectPdfUnavailable": "No hay una contraseña PDF configurada. Configurala en Configuración > Canales > Email para habilitar la protección.",
     "deliveryChannelPlaceholder": "Elige un canal configurado",
     "deliveryInApp": "Solo en Vibe (no enviar)",
     "deliveryNoChannels": "No hay canales de entrega habilitados configurados. Configura uno en Configuración → Canales.",
@@ -218,6 +209,13 @@
     "deliveryTargetRequired": "Indica un destino para ese canal, o deja la entrega solo en Vibe.",
     "deliverySummary": "{{channel}} → {{target}}",
     "deliveryUnknownTarget": "Destino configurado",
+    "deliveryFormatLabel": "Formato del informe por email",
+    "deliveryFormatDefault": "Predeterminado del canal (texto plano)",
+    "deliveryFormatHtml": "Email HTML",
+    "deliveryFormatPdf": "PDF adjunto",
+    "deliveryFormatDefaultHint": "Mantiene el comportamiento de texto plano existente.",
+    "deliveryFormatHtmlHint": "Muestra el informe completo como HTML sanitizado en el cuerpo del email.",
+    "deliveryFormatPdfHint": "Adjunta el informe completo como PDF y deja solo un aviso breve en el cuerpo.",
     "delivery_none": "Se enviará a {{channel}} tras la próxima ejecución",
     "delivery_pending": "Informe pendiente de envío a {{channel}}",
     "delivery_sending": "Enviando el informe a {{channel}}",
@@ -231,7 +229,15 @@
     "verdictRecorded": "a fecha de {{when}}",
     "deliveryKnownTargetLabel": "Destino conocido",
     "deliveryKnownTargetPlaceholder": "Elegir un destino conocido…",
-    "deliverySuggestionKind_private_chat": "Mi chat privado"
+    "deliverySuggestionKind_private_chat": "Mi chat privado",
+    "deliveryTargetPlaceholder_email_address": "name@example.com",
+    "deliveryTargetPlaceholder_chat": "ID de chat, grupo o usuario",
+    "deliveryTargetPlaceholder_channel": "ID del canal",
+    "deliveryTargetPlaceholder_destination": "chat, grupo, usuario, dirección o ID de canal",
+    "deliveryTargetPlaceholder_slack_destination": "#canal, @usuario o ID de conversación",
+    "deliveryTargetKind_slack_destination": "Destino",
+    "deliveryProtectPdf": "Proteger el PDF con contraseña",
+    "deliveryProtectPdfUnavailable": "No hay una contraseña PDF configurada. Configurala en Configuración > Canales > Email para habilitar la protección."
   },
   "reports": {
     "badge": "Informes",
@@ -604,10 +610,6 @@
             "label": "Contraseña SMTP",
             "help": "Contraseña o contraseña de aplicación para SMTP. Se guarda en el servidor y nunca se devuelve al navegador."
           },
-          "pdf_password": {
-            "label": "Contraseña de informes PDF",
-            "help": "Contraseña opcional para los informes PDF programados que soliciten protección. Se guarda en el servidor y nunca se incluye en los trabajos programados ni se devuelve al navegador."
-          },
           "smtp_use_tls": {
             "label": "STARTTLS de SMTP",
             "help": "Cifrar la conexión SMTP con STARTTLS (activado de forma predeterminada; lo habitual en el puerto 587). En la práctica es excluyente con SSL de SMTP."
@@ -683,6 +685,14 @@
           "max_attachments_per_email": {
             "label": "Máx. adjuntos por correo",
             "help": "Cuántos adjuntos se aceptan de un mismo correo (predeterminado 5)."
+          },
+          "trusted_authserv_id": {
+            "label": "Servidor de autenticación de confianza",
+            "help": "authserv-id del servidor receptor, p. ej. mx.google.com. Tu proveedor debe eliminar las cabeceras Authentication-Results falsificadas entrantes que usen este ID. Obligatorio al verificar SPF o DKIM; vacío rechaza el correo entrante."
+          },
+          "pdf_password": {
+            "label": "Contraseña de informes PDF",
+            "help": "Contraseña opcional para los informes PDF programados que soliciten protección. Se guarda en el servidor y nunca se incluye en los trabajos programados ni se devuelve al navegador."
           }
         },
         "websocket": {
@@ -1008,6 +1018,7 @@
     "dropFiles": "Suelta los archivos aquí",
     "removeAttachment": "Eliminar {{filename}}",
     "uploadFailed": "Error al subir: {{error}}",
+    "messageTooLong": "El mensaje supera {{limit}} caracteres, incluidos los datos de los adjuntos y las instrucciones del equipo. Acórtalo antes de enviarlo.",
     "failedToSend": "Error al enviar el mensaje, intenta de nuevo.",
     "failedToContinue": "Error al continuar el objetivo, intenta de nuevo.",
     "runtimeBadge": "RUNTIME",

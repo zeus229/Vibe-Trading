@@ -380,9 +380,6 @@ class ScheduledResearchJob:
     delivery_target: Optional[str] = None
     delivery_target_ref: Optional[str] = None
     delivery_target_label: Optional[str] = None
-    # Per-job presentation for email delivery. None preserves the historical
-    # channel default; "html" sends the full briefing in the body and "pdf"
-    # sends a brief body with the full briefing attached.
     delivery_format: Optional[str] = None
     # Whether a generated PDF must be password-protected. The password itself
     # belongs to private Email channel configuration and is never persisted here.

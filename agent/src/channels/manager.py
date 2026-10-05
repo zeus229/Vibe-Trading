@@ -6,9 +6,7 @@ import asyncio
 import hashlib
 import logging
 from collections import defaultdict
-from collections.abc import Callable
 from contextlib import suppress
-from pathlib import Path
 from typing import Any
 
 from src.channels.base import BaseChannel

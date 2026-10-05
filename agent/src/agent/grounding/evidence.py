@@ -122,11 +122,6 @@ _ANALYSIS_KIND_ALIASES = {
     "return": "return",
     "returns": "return",
     "ic_positive_ratio": "win_rate",
-    # Portfolio co-movement leaves a risk x-ray tool emits under its own
-    # field names (asistente_casa_portfolio_risk_xray's correlation/
-    # diversification block). Grouped as one kind since the ledger only
-    # needs "this is a legitimate risk metric", never a cross-kind identity
-    # check between e.g. beta and avg pairwise correlation.
     "diversification_ratio": "diversification",
     "avg_pairwise_abs": "correlation",
     "avg_pairwise_correlation": "correlation",
@@ -238,14 +233,30 @@ def _file_sha256(path: Path) -> str | None:
         return None
 
 
-def _archive_source(root: Path) -> str | None:
-    """The run directory name the active run's archived backtest came from."""
+def _archive_matches(root: Path, declared_dir: Path, call_id: str) -> bool:
+    """Check the engine directory and call that produced an archived result.
+
+    Args:
+        root: Active run holding the archive manifest.
+        declared_dir: Source run directory declared by the backtest call.
+        call_id: Exact successful engine tool call.
+
+    Returns:
+        Whether the archive was created for this directory and call.
+    """
     try:
         payload = json.loads((root / ARCHIVE_MANIFEST).read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return None
-    source = payload.get("source_run") if isinstance(payload, dict) else None
-    return str(source) if source else None
+        return False
+    if not isinstance(payload, dict) or payload.get("source_call_id") != call_id:
+        return False
+    source = payload.get("source_run_dir")
+    if not isinstance(source, str) or not source:
+        return False
+    try:
+        return Path(source).resolve() == declared_dir.resolve()
+    except (OSError, RuntimeError, ValueError):
+        return False
 
 
 def _run_card_manifest(directory: Path) -> dict[str, str]:
@@ -310,6 +321,7 @@ def _cell_symbol(text: str) -> str | None:
     if not stripped or _CANONICAL_SYMBOL_RE.fullmatch(stripped) is None:
         return None
     return _normalize_symbol(stripped)
+
 
 # Generic tools do not share one schema, but a money value still has a stable
 # contract: an ISO-4217 code is carried by the surrounding object or by a
@@ -560,21 +572,6 @@ _CLAIM_DATE_RE = re.compile(
 )
 
 
-def _claim_date_tuple(date_value: str) -> tuple[int, int] | None:
-    """Extract the (month, day) a report-style date cell names.
-
-    Args:
-        date_value: Date cell as written in the answer, e.g. ``08-10(周一)``.
-
-    Returns:
-        The (month, day) tuple, or None when no date prefix is present.
-    """
-    match = _CLAIM_DATE_RE.match((date_value or "").strip())
-    if match is None:
-        return None
-    return (int(match.group(2)), int(match.group(3)))
-
-
 def _timestamp_matches_claim_date(timestamp: str, date_value: str) -> bool:
     """Match an evidence timestamp against the date cell of a claim.
 
@@ -595,15 +592,17 @@ def _timestamp_matches_claim_date(timestamp: str, date_value: str) -> bool:
         return False
     if stamp.startswith(claim):
         return True
-    claim_tuple = _claim_date_tuple(claim)
+    match = _CLAIM_DATE_RE.match(claim)
     parts = stamp[:10].split("-")
-    if claim_tuple is None or len(parts) != 3:
+    if match is None or len(parts) != 3:
         return False
     try:
-        stamp_tuple = (int(parts[1]), int(parts[2]))
+        stamp_year, stamp_month, stamp_day = map(int, parts)
     except ValueError:
         return False
-    return stamp_tuple == claim_tuple
+    if match.group(1) is not None and stamp_year != int(match.group(1)):
+        return False
+    return (stamp_month, stamp_day) == (int(match.group(2)), int(match.group(3)))
 
 
 def _leaf_name(path: str) -> str:
@@ -691,6 +690,8 @@ def _is_registered_price_indicator(tool: str, path: str) -> bool:
 # as the whole leaf: "var_explained" and "sales_es" are not a VaR.
 _EXACT_ONLY_ALIASES = frozenset({"var", "es"})
 
+# Field-name qualifiers that follow a metric's head and do not change what it
+# measures ("hit_rate_daily", "vol_annualized"), like a numeric parameter.
 # Full-path metric kinds for leaves whose bare name is too generic to alias
 # globally. "corr" alone would admit any unrelated leaf named "corr", so
 # asistente_casa_portfolio_risk_xray's pairwise correlation reading is matched
@@ -1073,31 +1074,32 @@ class _EvidenceMixin:
         candidates: list[Path] = []
         own_dir: Path | None = None
         raw_dir = arguments.get("run_dir") or payload.get("run_dir")
+        declared = root
         if raw_dir:
-            candidate = Path(str(raw_dir))
-            if not candidate.is_absolute():
-                candidate = self.run_dir / candidate
+            declared = Path(str(raw_dir))
+            declared = declared if declared.is_absolute() else self.run_dir / declared
             try:
-                resolved = candidate.resolve()
+                resolved = declared.resolve()
                 if resolved == root or resolved.is_relative_to(root):
                     candidates.append(resolved)
                     own_dir = resolved
-            except OSError:
+            except (OSError, RuntimeError, ValueError):
                 pass
-        # The loop archives a detached backtest's artifacts into the active run
-        # dir right after it succeeds, so that copy is the second candidate.
-        candidates.append(root)
-        artifacts = payload.get("artifacts")
-        if isinstance(artifacts, dict):
-            for path_value in artifacts.values():
-                if not isinstance(path_value, str):
-                    continue
-                try:
-                    resolved = Path(path_value).resolve()
-                    if resolved.is_relative_to(root):
-                        candidates.append(resolved)
-                except OSError:
-                    continue
+        else:
+            own_dir = root
+            candidates.append(root)
+        # The loop copies detached output before ingesting this result. The
+        # archive must name the full directory AND this call, since basenames
+        # collide and one directory can be backtested repeatedly in a turn.
+        archived = (
+            own_dir != root
+            and not self._is_model_written(root / ARCHIVE_MANIFEST)
+            and _archive_matches(root, declared, call_id)
+        )
+        if archived:
+            candidates.append(root)
+        # Only canonical engine metric locations count. A result's explicit
+        # artifact path cannot reintroduce an unrelated run or arbitrary CSV.
         files: list[Path] = []
         seen_dirs: set[Path] = set()
         for candidate in candidates:
@@ -1110,12 +1112,12 @@ class _EvidenceMixin:
             for dir_path in (candidate, candidate / "artifacts"):
                 for name in ("metrics.csv", "metrics.json"):
                     target = dir_path / name
-                    if target.is_file():
+                    if target.is_file() and target.resolve().is_relative_to(candidate.resolve()):
                         files.append(target)
         recorded = 0
         seen_files: set[Path] = set()
         for file_path in files:
-            if file_path in seen_files:
+            if file_path in seen_files or self._is_model_written(file_path):
                 continue
             seen_files.add(file_path)
             recorded += self._record_metrics_file(file_path, call_id)
@@ -1127,7 +1129,7 @@ class _EvidenceMixin:
             self._record_backtest_outputs(own_dir, call_id, scope)
             # The active run holds this backtest's copy only when the loop's
             # archive names it as the source; otherwise it is an earlier run's.
-            if own_dir != root and _archive_source(root) == own_dir.name:
+            if archived:
                 self._record_backtest_outputs(root, call_id, scope)
         return recorded
 
@@ -1150,7 +1152,11 @@ class _EvidenceMixin:
         room = _MAX_GENERIC_EVIDENCE
         for name in _BACKTEST_SUMMARY_FILES:
             path = directory / name
-            if not path.is_file() or self._is_model_written(path):
+            if (
+                not path.is_file()
+                or not path.resolve().is_relative_to(directory.resolve())
+                or self._is_model_written(path)
+            ):
                 continue
             if name not in _MANIFEST_EXEMPT and manifest.get(name) != _file_sha256(path):
                 continue
@@ -1179,7 +1185,11 @@ class _EvidenceMixin:
         tables = directory / "artifacts"
         if tables.is_dir():
             for path in sorted(tables.glob("*.csv")):
-                if self._is_model_written(path) or f"artifacts/{path.name}" in _BACKTEST_SUMMARY_FILES:
+                if (
+                    not path.resolve().is_relative_to(directory.resolve())
+                    or self._is_model_written(path)
+                    or f"artifacts/{path.name}" in _BACKTEST_SUMMARY_FILES
+                ):
                     continue
                 digest = _file_sha256(path)
                 if digest is not None:
@@ -1209,7 +1219,9 @@ class _EvidenceMixin:
         except OSError:
             return True
 
-    def _ingest_engine_table(self, payload: dict[str, Any], call_id: str) -> None:
+    def _ingest_engine_table(
+        self, payload: dict[str, Any], call_id: str, *, tool_name: str = "read_file"
+    ) -> None:
         """Record the rows of a backtest table the model just read back.
 
         Only a table a completed backtest wrote counts, and only while it is
@@ -1219,31 +1231,48 @@ class _EvidenceMixin:
         chance. Price columns are left out, as in a summary file.
 
         Args:
-            payload: The ``read_file`` result.
-            call_id: The ``read_file`` call.
+            payload: The file or structured artifact reader's result.
+            call_id: The reader's call.
+            tool_name: The reader that showed these rows to the model.
         """
-        raw, content = payload.get("path"), payload.get("content")
-        if not isinstance(raw, str) or not isinstance(content, str):
+        raw = payload.get("path")
+        if not isinstance(raw, str):
             return
         try:
             path = Path(raw).resolve()
         except OSError:
             return
         known = self._engine_tables.get(str(path))
-        if known is None or _file_sha256(path) != known[0]:
+        if known is None or self._is_model_written(path) or _file_sha256(path) != known[0]:
             return
         scope = known[1]
-        truncated = "\n... (truncated)"
-        if content.endswith(truncated):
-            content = content[: -len(truncated)]
-            content = content[: content.rfind("\n") + 1]
-        try:
-            rows = list(csv.reader(content.splitlines()))
-        except csv.Error:
-            return
-        if len(rows) < 2:
-            return
-        header = [cell.strip() for cell in rows[0]]
+        if tool_name == "read_run_artifact":
+            columns, records = payload.get("columns"), payload.get("rows")
+            if (
+                not isinstance(columns, list)
+                or not all(isinstance(cell, str) for cell in columns)
+                or not isinstance(records, list)
+                or not all(isinstance(row, list) and len(row) == len(columns) for row in records)
+            ):
+                return
+            header = [cell.strip() for cell in columns]
+            data_rows = [["" if cell is None else str(cell) for cell in row] for row in records]
+        else:
+            content = payload.get("content")
+            if not isinstance(content, str):
+                return
+            truncated = "\n... (truncated)"
+            if content.endswith(truncated):
+                content = content[: -len(truncated)]
+                content = content[: content.rfind("\n") + 1]
+            try:
+                rows = list(csv.reader(content.splitlines()))
+            except csv.Error:
+                return
+            if len(rows) < 2:
+                return
+            header = [cell.strip() for cell in rows[0]]
+            data_rows = rows[1:]
         folded = [cell.casefold() for cell in header]
         date_index = next(
             (index for index, name in enumerate(folded) if name in _CSV_DATE_COLUMNS), None
@@ -1253,7 +1282,7 @@ class _EvidenceMixin:
         )
         artifact = _relative_posix(path, self.run_dir.resolve())
         room = _MAX_GENERIC_EVIDENCE
-        for row in rows[1:]:
+        for row in data_rows:
             timestamp = (
                 row[date_index].strip()
                 if date_index is not None and date_index < len(row)
@@ -1278,7 +1307,7 @@ class _EvidenceMixin:
                 self._evidence.append(
                     EvidenceRecord(
                         call_id=call_id,
-                        tool="read_file",
+                        tool=tool_name,
                         symbol=None,
                         source="backtest",
                         timestamp=timestamp,
@@ -1377,9 +1406,9 @@ class _EvidenceMixin:
                 and symbol_provenance.get("currency_conversion")
                 else None
             )
-            # Preserve source-declared listing currency when one venue lists
-            # instruments in more than one currency; identity suffixes alone
-            # do not establish the quote currency for every line.
+            # The currency the source declared for this line wins over the
+            # one its suffix implies: a venue can list lines in more than one
+            # (#1566), and the answer is required to name this one.
             quote_currency = (
                 str(symbol_provenance.get("quote_currency"))
                 if isinstance(symbol_provenance, dict)

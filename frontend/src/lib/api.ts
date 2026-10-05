@@ -8,6 +8,17 @@ import type {
 
 const BASE = "";
 
+export async function downloadGeneratedReport(reportId: string, filename: string): Promise<void> {
+  const response = await fetch(`${BASE}/api/reports/${encodeURIComponent(reportId)}`, { headers: authHeaders() });
+  if (!response.ok) throw new ApiError(response.statusText, response.status);
+  const url = URL.createObjectURL(await response.blob());
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  link.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -329,10 +340,13 @@ async function errorFromResponse(res: Response): Promise<ApiError> {
     if (typeof raw === "string" && raw) {
       detail = raw;
     } else if (raw && typeof raw === "object") {
-      const structured = raw as { code?: unknown; message?: unknown };
+      const structured = raw as { code?: unknown; message?: unknown; max_length?: unknown };
       if (typeof structured.code === "string" && structured.code) code = structured.code;
       if (typeof structured.message === "string" && structured.message) detail = structured.message;
       else if (code) detail = code;
+      if (code === "message_too_long" && typeof structured.max_length === "number") {
+        detail = i18n.t("agent.messageTooLong", { limit: structured.max_length.toLocaleString() });
+      }
     }
   } catch { /* ignore */ }
   if (res.status === 401 || res.status === 403) {
@@ -701,9 +715,9 @@ export interface ScheduledRun {
   // app, which is what every monitor created before this did.
   delivery_channel: string | null;
   delivery_target: string | null;
+  delivery_format: "html" | "pdf" | null;
   delivery_target_ref: string | null;
   delivery_target_label: string | null;
-  delivery_format: "html" | "pdf" | null;
   protect_pdf: boolean;
   delivery_status: string;
   delivery_error: string | null;
@@ -725,8 +739,8 @@ export interface CreateScheduledRunRequest {
   config?: Record<string, unknown>;
   delivery_channel?: string | null;
   delivery_target?: string | null;
-  delivery_target_ref?: string | null;
   delivery_format?: "html" | "pdf" | null;
+  delivery_target_ref?: string | null;
   protect_pdf?: boolean;
 }
 
@@ -759,6 +773,7 @@ export interface ScheduledResearchProposalJob {
     channel: string | null;
     target_ref: string | null;
     target_label: string | null;
+    format?: "html" | "pdf" | null;
     status: string;
   };
 }
@@ -1285,6 +1300,10 @@ export type SectorAssetClass =
   | "india_equity"
   | "kr_equity"
   | "ca_equity"
+  | "ar_equity"
+  | "uk_equity"
+  | "vietnam_equity"
+  | "index"
   | "crypto"
   | "futures"
   | "forex";

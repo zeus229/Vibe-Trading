@@ -148,7 +148,7 @@
     "editingHint": "このスケジュール実行を編集中です。保存しても識別子と実行履歴は保持されます。",
     "edit": "編集",
     "editAria": "スケジュール実行を編集: {{prompt}}",
-    "editRunningDisabled": "この実行が完了してから編集してください。",
+    "editRunningDisabled": "実行または配信が完了してから編集してください。",
     "deliveryInApp": "Vibe内のみに保持（送信しない）",
     "deliveryNoChannels": "有効な配信チャネルが設定されていません。設定 → チャネルで設定してください。",
     "deliveryChannelsLoadFailed": "設定済みの配信チャネルを読み込めませんでした。",
@@ -202,17 +202,15 @@
     "deliveryChannelPlaceholder": "telegram、feishu など（空欄ならアプリ内のみ）",
     "deliveryTargetLabel": "チャンネル送信先",
     "deliveryTargetPlaceholder": "チャット / グループ / ユーザー ID",
-    "deliveryHint": "既定はオフです。ブリーフィングは実行の**完了後**に配信され、スケジュール時ではありません。",
-    "deliveryTargetRequired": "そのチャンネルの送信先を指定するか、チャンネルを空にしてください。",
     "deliveryFormatLabel": "Email report format",
     "deliveryFormatDefault": "Channel default (plain text)",
-    "deliveryFormatHtml": "Email HTML",
+    "deliveryFormatHtml": "HTML email",
     "deliveryFormatPdf": "PDF attachment",
-    "deliveryFormatDefaultHint": "Uses the channel format and preserves existing behavior.",
-    "deliveryFormatHtmlHint": "Sends the full report in the email body.",
-    "deliveryFormatPdfHint": "Sends a short email body with the full report attached as a PDF.",
-    "deliveryProtectPdf": "Protect PDF with password",
-    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection.",
+    "deliveryFormatDefaultHint": "Keeps the existing plain-text delivery behavior.",
+    "deliveryFormatHtmlHint": "Shows the full report as sanitized HTML in the email body.",
+    "deliveryFormatPdfHint": "Attaches the full report as PDF and keeps only a short notice in the body.",
+    "deliveryHint": "既定はオフです。ブリーフィングは実行の**完了後**に配信され、スケジュール時ではありません。",
+    "deliveryTargetRequired": "そのチャンネルの送信先を指定するか、チャンネルを空にしてください。",
     "delivery_none": "次回の実行完了後に {{channel}} へ配信します",
     "delivery_pending": "{{channel}} への配信待ちです",
     "delivery_sending": "{{channel}} へ配信中です",
@@ -226,7 +224,15 @@
     "verdictRecorded": "{{when}} 時点",
     "deliveryKnownTargetLabel": "既知の送信先",
     "deliveryKnownTargetPlaceholder": "既知の送信先を選択…",
-    "deliverySuggestionKind_private_chat": "自分のプライベートチャット"
+    "deliverySuggestionKind_private_chat": "自分のプライベートチャット",
+    "deliveryTargetPlaceholder_email_address": "name@example.com",
+    "deliveryTargetPlaceholder_chat": "チャット、グループ、ユーザーの ID",
+    "deliveryTargetPlaceholder_channel": "チャンネル ID",
+    "deliveryTargetPlaceholder_destination": "チャット / グループ / ユーザー ID",
+    "deliveryTargetPlaceholder_slack_destination": "#チャンネル、@ユーザー、会話 ID",
+    "deliveryTargetKind_slack_destination": "送信先",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
   },
   "reports": {
     "badge": "レポート",
@@ -599,10 +605,6 @@
             "label": "SMTP パスワード",
             "help": "SMTP 用のパスワードまたはアプリパスワード。サーバー側にのみ保存され、ブラウザーには返されません。"
           },
-          "pdf_password": {
-            "label": "PDF report password",
-            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
-          },
           "smtp_use_tls": {
             "label": "SMTP STARTTLS",
             "help": "STARTTLS で SMTP 接続を暗号化します（既定オン。ポート 587 の標準）。実際には SMTP SSL と併用しません。"
@@ -678,6 +680,14 @@
           "max_attachments_per_email": {
             "label": "1 通あたりの添付数上限",
             "help": "1 通のメールから受け入れる添付ファイルの最大数（既定 5）。"
+          },
+          "trusted_authserv_id": {
+            "label": "信頼する認証サーバー",
+            "help": "受信サーバーの authserv-id（例：mx.google.com）。メール提供者が、この ID を偽装した外部の Authentication-Results ヘッダーを削除する必要があります。SPF または DKIM 検証時は必須です。空欄では受信メールを拒否します。"
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           }
         },
         "websocket": {
@@ -1003,6 +1013,7 @@
     "dropFiles": "ここにファイルをドロップ",
     "removeAttachment": "{{filename}} を削除",
     "uploadFailed": "アップロードに失敗しました: {{error}}",
+    "messageTooLong": "添付情報とチーム指示を含むメッセージが {{limit}} 文字を超えています。短くしてから送信してください。",
     "failedToSend": "メッセージ送信に失敗しました。再試行してください。",
     "failedToContinue": "目標の続行に失敗しました。再試行してください。",
     "runtimeBadge": "取引モニター",
