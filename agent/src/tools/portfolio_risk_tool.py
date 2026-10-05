@@ -13,12 +13,16 @@ import json
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
+from urllib.error import HTTPError, URLError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 import pandas as pd
 
 from backtest.metrics import calc_bars_per_year
 from backtest.risk_xray import MIN_HISTORY_DAYS, PERIODS_PER_YEAR, compute_risk_xray
 from src.agent.tools import BaseTool
+from src.config.accessor import get_env_value
 from src.market_data import fetch_market_data
 
 logger = logging.getLogger(__name__)
@@ -30,6 +34,68 @@ _MAX_SYMBOLS = 50
 # ``DataFrame.reset_index().to_dict("records")`` — loaders name the index
 # differently ("date", "datetime", "trade_date", ...).
 _DATE_KEYS = ("date", "datetime", "trade_date", "time", "timestamp")
+_ASISTENTE_CASA_HISTORY_SOURCE = "asistente-casa"
+_ASISTENTE_CASA_TIMEOUT_SECONDS = 15.0
+
+
+def _fetch_asistente_casa_history(
+    *, codes: list[str], start_date: str, end_date: str, interval: str
+) -> dict[str, Any]:
+    """Read canonical persisted-only bars from Asistente Casa.
+
+    This path is intentionally explicit instead of extending Vibe's generic
+    market-data resolver with a BYMA guess. Missing/unsafe history fails
+    closed so Risk X-Ray never reports metrics for a silently smaller basket.
+    """
+    if str(interval).upper() not in {"1D", "D", "1DAY"}:
+        raise ValueError("Asistente Casa risk history supports daily EOD bars only")
+    base_url = str(get_env_value("ASISTENTE_CASA_BASE_URL") or "").strip().rstrip("/")
+    api_key = str(get_env_value("ASISTENTE_CASA_API_KEY") or "").strip()
+    if not base_url or not api_key:
+        raise ValueError("Asistente Casa market-history environment is not configured")
+    query = urlencode({"symbols": ",".join(codes), "from": start_date, "to": end_date})
+    request = Request(
+        f"{base_url}/inversiones/vibe/market-history?{query}",
+        headers={"Accept": "application/json", "X-Vibe-API-Key": api_key},
+        method="GET",
+    )
+    try:
+        with urlopen(request, timeout=_ASISTENTE_CASA_TIMEOUT_SECONDS) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        raise ValueError(f"Asistente Casa market-history returned HTTP {exc.code}") from exc
+    except (URLError, TimeoutError, OSError) as exc:
+        raise ValueError(f"Asistente Casa market-history is unavailable: {exc}") from exc
+    except json.JSONDecodeError as exc:
+        raise ValueError("Asistente Casa market-history returned invalid JSON") from exc
+    if not isinstance(payload, Mapping) or payload.get("ok") is not True:
+        raise ValueError("Asistente Casa market-history returned an unsuccessful payload")
+    if payload.get("numeric_format") != "json_number":
+        raise ValueError("unexpected Asistente Casa numeric_format")
+    if payload.get("policy") != "persisted_only" or str(payload.get("interval") or "").upper() != "1D":
+        raise ValueError("Asistente Casa market-history policy is not persisted daily EOD")
+    series = payload.get("series")
+    if not isinstance(series, Mapping):
+        raise ValueError("Asistente Casa market-history series is missing")
+    problems = set(str(s) for s in (payload.get("unresolved_symbols") or []))
+    problems.update(str(s) for s in (payload.get("symbols_without_history") or []))
+    for item in payload.get("unsafe_symbols") or []:
+        if isinstance(item, Mapping) and item.get("symbol"):
+            problems.add(str(item["symbol"]))
+    result: dict[str, Any] = {}
+    for code in codes:
+        item = series.get(code)
+        observations = item.get("observations") if isinstance(item, Mapping) else None
+        if not isinstance(observations, list) or not observations:
+            problems.add(code)
+            continue
+        result[code] = observations
+    if problems or payload.get("complete") is not True:
+        raise ValueError(
+            "Asistente Casa history incomplete/unsafe for: " + ", ".join(sorted(problems or set(codes)))
+        )
+    result["_unresolved"] = []
+    return result
 
 
 class PortfolioRiskXrayTool(BaseTool):
@@ -112,16 +178,24 @@ class PortfolioRiskXrayTool(BaseTool):
             kwargs.get("start_date"), kwargs.get("end_date"), interval
         )
 
-        raw = self._fetch(
-            codes=symbols,
-            start_date=start_date,
-            end_date=end_date,
-            source=source,
-            interval=interval,
-            # Volatility, VaR/ES and drawdown need consecutive bars; the
-            # shared row cap would sample the series down on longer windows.
-            max_rows=0,
-        )
+        if source.strip().lower() == _ASISTENTE_CASA_HISTORY_SOURCE:
+            raw = _fetch_asistente_casa_history(
+                codes=symbols,
+                start_date=start_date,
+                end_date=end_date,
+                interval=interval,
+            )
+        else:
+            raw = self._fetch(
+                codes=symbols,
+                start_date=start_date,
+                end_date=end_date,
+                source=source,
+                interval=interval,
+                # Volatility, VaR/ES and drawdown need consecutive bars; the
+                # shared row cap would sample the series down on longer windows.
+                max_rows=0,
+            )
         closes = self._closes_frame(raw, symbols)
         unresolved = raw.get("_unresolved") if isinstance(raw, Mapping) else None
 
