@@ -1263,15 +1263,24 @@ class _PolicyMixin:
         if figure is None:
             return sorted(found)
         recency = {item: index for index, item in enumerate(found)}
+        matches = {
+            item: self._matches_evidence(figure, found[item], found[item])
+            for item in found
+        }
         ranked = sorted(
             found,
             key=lambda item: (
-                not self._matches_evidence(figure, found[item], found[item]),
+                not matches[item],
                 -recency[item],
                 item,
             ),
         )
-        return ranked[:_MAX_CALL_REF_CANDIDATES]
+        # When the written value identifies one or more calls exactly, do not
+        # dilute the correction hint with same-field calls holding other values.
+        # The hint still authorizes nothing: the next draft must declare one of
+        # these exact refs and survive validation normally.
+        matching = [item for item in ranked if matches[item]]
+        return (matching or ranked)[:_MAX_CALL_REF_CANDIDATES]
 
     def _indexed_field_ref_candidates(
         self, ref: str, figure: Figure, symbol: str | None = None
