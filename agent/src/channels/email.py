@@ -1,6 +1,7 @@
 """Email channel implementation using IMAP polling + SMTP replies."""
 
 import asyncio
+from io import BytesIO
 import html
 import imaplib
 import logging
@@ -91,6 +92,9 @@ class EmailConfig(BaseModel):
     allowed_attachment_types: list[str] = Field(default_factory=list)
     max_attachment_size: int = 2_000_000  # 2MB per attachment
     max_attachments_per_email: int = 5
+    # Optional operator-managed secret used only when a message explicitly
+    # requests PDF protection. Never persist this value in scheduled jobs.
+    pdf_password: str = ""
 
 
 @dataclass
@@ -258,6 +262,11 @@ class EmailChannel(BaseChannel):
         """
         return await email_probe.test_connection(self.config)
 
+    @property
+    def pdf_password_configured(self) -> bool:
+        """Return whether an operator-managed PDF password is configured."""
+        return bool(self.config.pdf_password)
+
     async def send(self, msg: OutboundMessage) -> None:
         """Send email via SMTP; explicit scheduled sends fail visibly if disabled."""
         force_send = bool((msg.metadata or {}).get("force_send"))
@@ -343,6 +352,9 @@ class EmailChannel(BaseChannel):
         delivery_format = (msg.metadata or {}).get("delivery_format")
         if delivery_format not in {"html", "pdf"}:
             delivery_format = None
+        protect_pdf = bool((msg.metadata or {}).get("protect_pdf"))
+        if protect_pdf and delivery_format != "pdf":
+            raise ValueError("PDF protection requires PDF delivery")
 
         email_msg = EmailMessage()
         email_msg["From"] = self.config.from_address or self.config.smtp_username or self.config.imap_username
@@ -360,6 +372,8 @@ class EmailChannel(BaseChannel):
                 from src.channels.rich_text import render_email_pdf
 
                 generated_pdf = await asyncio.to_thread(render_email_pdf, content)
+                if protect_pdf:
+                    generated_pdf = self._encrypt_pdf(generated_pdf)
             except Exception:
                 self.logger.exception("Failed to render required PDF attachment")
                 raise
@@ -393,6 +407,22 @@ class EmailChannel(BaseChannel):
         except Exception:
             self.logger.exception("Error sending to %s", to_addr)
             raise
+
+    def _encrypt_pdf(self, pdf_data: bytes) -> bytes:
+        """Encrypt a generated report PDF with the operator-managed password."""
+        password = self.config.pdf_password
+        if not password:
+            raise RuntimeError("PDF protection requested but no PDF password is configured")
+
+        from pypdf import PdfReader, PdfWriter
+
+        reader = PdfReader(BytesIO(pdf_data))
+        writer = PdfWriter()
+        writer.append_pages_from_reader(reader)
+        writer.encrypt(user_password=password, algorithm="AES-256")
+        output = BytesIO()
+        writer.write(output)
+        return output.getvalue()
 
     def _validate_config(self) -> bool:
         missing = []
