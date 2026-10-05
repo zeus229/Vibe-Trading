@@ -1828,8 +1828,7 @@ class _PolicyMixin:
                     ]
                 if call_field_candidates:
                     aggregate_candidate = (
-                        symbol is not None
-                        and len(call_field_candidates) == 1
+                        len(call_field_candidates) == 1
                         and self._aggregate_exact_ref_match(
                             call_field_candidates[0], figure
                         )
