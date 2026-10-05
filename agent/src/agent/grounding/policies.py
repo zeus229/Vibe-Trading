@@ -969,19 +969,8 @@ class _PolicyMixin:
                     # refs return earlier as an explicit empty scope instead.
                     return None
         if symbol:
-            # An exact call_id::field ref can deliberately name an aggregate
-            # portfolio metric even when nearby prose made the figure inherit
-            # an instrument symbol. Preserve only aggregate records in that
-            # case; entity-scoped records must still match the instrument.
-            exact_field_ref = "::" in key
             records = [
-                record
-                for record in records
-                if (
-                    exact_field_ref
-                    and record.identity_scope == "aggregate"
-                )
-                or _record_matches_entity(record, symbol)
+                record for record in records if _record_matches_entity(record, symbol)
             ]
         if figure is not None and figure.column:
             # A table cell quotes its own column, not whatever else the call returned.
@@ -1771,6 +1760,32 @@ class _PolicyMixin:
             band = min(band, _written_half_unit(written) * unit * (1 + 1e-9))
         return abs(candidate - target) <= max(band, 1e-9)
 
+    def _aggregate_exact_ref_match(
+        self,
+        ref: str,
+        figure: Figure,
+    ) -> bool:
+        """Whether an exact ref holds this value only as aggregate evidence.
+
+        This is correction metadata, never an authorization path: a draft that
+        attaches the aggregate to an instrument remains invalid.  The model can
+        repair it by keeping the exact value/ref while rewriting the claim as
+        portfolio-level.
+        """
+        keys = [key.strip() for key in re.split(r"[,;]", ref or "") if key.strip()]
+        if len(keys) != 1 or "::" not in keys[0]:
+            return False
+        scoped = self._referenced(keys[0], None, figure)
+        if scoped is None:
+            return False
+        aggregate_records, metric_values = scoped
+        if metric_values or not aggregate_records:
+            return False
+        if any(record.identity_scope != "aggregate" for record in aggregate_records):
+            return False
+        values = [float(record.value) for record in aggregate_records if record.value is not None]
+        return bool(values) and self._matches_evidence(figure, values, values)
+
     def _check_observed(
         self,
         figure: Figure,
@@ -1794,6 +1809,23 @@ class _PolicyMixin:
                 call_field_candidates = self._tool_field_ref_candidates(
                     declaration.ref, symbol, figure
                 )
+                if (
+                    symbol
+                    and declaration is not None
+                    and self._aggregate_exact_ref_match(declaration.ref, figure)
+                ):
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "aggregate_ref_needs_unscoped_claim",
+                            f"is declared from exact aggregate evidence at {declaration.ref}, "
+                            f"but the answer attaches that portfolio-level metric to {symbol}",
+                            source_tool_call_ids=[declaration.ref],
+                        )
+                    ]
                 if call_field_candidates:
                     return [
                         self._figure_issue(
