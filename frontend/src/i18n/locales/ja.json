@@ -230,7 +230,9 @@
     "deliveryTargetPlaceholder_channel": "チャンネル ID",
     "deliveryTargetPlaceholder_destination": "チャット / グループ / ユーザー ID",
     "deliveryTargetPlaceholder_slack_destination": "#チャンネル、@ユーザー、会話 ID",
-    "deliveryTargetKind_slack_destination": "送信先"
+    "deliveryTargetKind_slack_destination": "送信先",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
   },
   "reports": {
     "badge": "レポート",
@@ -682,6 +684,10 @@
           "trusted_authserv_id": {
             "label": "信頼する認証サーバー",
             "help": "受信サーバーの authserv-id（例：mx.google.com）。メール提供者が、この ID を偽装した外部の Authentication-Results ヘッダーを削除する必要があります。SPF または DKIM 検証時は必須です。空欄では受信メールを拒否します。"
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           }
         },
         "websocket": {
@@ -1982,7 +1988,8 @@
       "coverage": "評価カバレッジ",
       "coverageNote": "評価済み {{priced}} · 現金 {{cash}}",
       "lastComplete": "最後の完全更新",
-      "excluded": "{{count}} 件の口座を読み取れなかったため、この合計から除外しています"
+      "excluded": "{{count}} 件の口座を読み取れなかったため、この合計から除外しています",
+      "changeCanonicalNote": "Asistente Casa による正規の本日のポートフォリオ変動"
     },
     "allocation": {
       "byAccount": "口座別の構成",
@@ -2019,7 +2026,8 @@
       "colPnl": "評価損益",
       "colData": "データ",
       "priced": "評価済み",
-      "unpriced": "未評価"
+      "unpriced": "未評価",
+      "colToday": "本日"
     },
     "history": {
       "title": "資産推移",
