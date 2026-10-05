@@ -230,7 +230,9 @@
     "deliveryTargetPlaceholder_channel": "频道 ID",
     "deliveryTargetPlaceholder_destination": "会话 / 群 / 用户 id",
     "deliveryTargetPlaceholder_slack_destination": "#频道、@用户或会话 ID",
-    "deliveryTargetKind_slack_destination": "目标"
+    "deliveryTargetKind_slack_destination": "目标",
+    "deliveryProtectPdf": "Protect PDF with password",
+    "deliveryProtectPdfUnavailable": "No PDF password is configured. Set one in Settings > Channels > Email to enable protection."
   },
   "reports": {
     "badge": "报告",
@@ -682,6 +684,10 @@
           "trusted_authserv_id": {
             "label": "受信任的认证服务器",
             "help": "收件服务器的 authserv-id，例如 mx.google.com。邮件服务商必须移除外部伪造且使用此 ID 的 Authentication-Results 邮件头。启用 SPF 或 DKIM 验证时必填；留空会拒收邮件。"
+          },
+          "pdf_password": {
+            "label": "PDF report password",
+            "help": "Optional password for scheduled PDF reports that explicitly request protection. Stored server-side and never included in scheduled jobs or returned to the browser."
           }
         },
         "websocket": {
@@ -1982,7 +1988,8 @@
       "coverage": "估值覆盖率",
       "coverageNote": "已定价 {{priced}} · 现金 {{cash}}",
       "lastComplete": "最后一次完整更新",
-      "excluded": "{{count}} 个账户读取失败，未计入该合计"
+      "excluded": "{{count}} 个账户读取失败，未计入该合计",
+      "changeCanonicalNote": "来自 Asistente Casa 的规范每日投资组合变动"
     },
     "allocation": {
       "byAccount": "按账户分布",
@@ -2019,7 +2026,8 @@
       "colPnl": "未实现盈亏",
       "colData": "数据状态",
       "priced": "已定价",
-      "unpriced": "未定价"
+      "unpriced": "未定价",
+      "colToday": "今日"
     },
     "history": {
       "title": "资产历史",
