@@ -100,3 +100,63 @@ def test_multiple_candidates_remain_non_prescriptive():
 
     assert "valid field refs: call_a::field, call_b::field" in line
     assert "replace only the incorrect ref" not in line
+
+
+def test_tool_field_candidates_keep_only_calls_matching_written_value(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="risk comparison")
+    acciones = EvidenceRecord(
+        call_id="call_acciones",
+        tool="asistente_casa_portfolio_risk_xray",
+        symbol=None,
+        source="asistente_casa",
+        timestamp=None,
+        field="data.volatility.annualized_vol",
+        value=35.72,
+        status="observed",
+        unit="ratio",
+        identity_scope="aggregate",
+    )
+    cedears = EvidenceRecord(
+        call_id="call_cedears",
+        tool="asistente_casa_portfolio_risk_xray",
+        symbol=None,
+        source="asistente_casa",
+        timestamp=None,
+        field="data.volatility.annualized_vol",
+        value=24.12,
+        status="observed",
+        unit="ratio",
+        identity_scope="aggregate",
+    )
+    ledger._evidence = [acciones, cedears]
+
+    candidates = ledger._tool_field_ref_candidates(
+        "asistente_casa_portfolio_risk_xray::data.volatility.annualized_vol",
+        None,
+        _percent_figure(35.72),
+    )
+
+    assert candidates == ["call_acciones::data.volatility.annualized_vol"]
+
+
+def test_unique_first_pass_candidate_is_prescriptive():
+    line = _correction_line(
+        {
+            "code": "numeric_claim_conflict",
+            "value": "35.72%",
+            "role": "observed",
+            "reason": "field_ref_needs_call_id",
+            "source_tool_call_ids": [
+                "asistente_casa_portfolio_risk_xray::data.volatility.annualized_vol"
+            ],
+            "ambiguous_sources": [
+                "call_acciones::data.volatility.annualized_vol"
+            ],
+            "field_ref_candidates": [
+                "call_acciones::data.volatility.annualized_vol"
+            ],
+        }
+    )
+
+    assert "written value matches this exact session ref" in line
+    assert "keep the value and replace only the incorrect ref" in line
