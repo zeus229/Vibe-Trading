@@ -20,6 +20,8 @@ from src.agent.grounding.identity import (
     _normalize_symbol,
     _scan_symbols,
 )
+from src.agent.grounding import identity_checks  # noqa: F401  (registers declared checks)
+from src.agent.grounding.registry import GROUNDING_CHECKS
 from src.agent.grounding.evidence import (
     EvidenceRecord,
     _record_matches_entity,
@@ -509,29 +511,13 @@ class _PolicyMixin:
                     ),
                 }
             )
-        listed = [
-            record
-            for record in self._identities.values()
-            if record.status == "locked"
-            and record.instrument_type in {"listed_security", "fund"}
-        ]
-        if listed and _PRIVATE_ASSERTION_RE.search(content):
-            symbols = sorted(record.symbol for record in listed if record.symbol)
-            issues.append(
-                {
-                    "code": "listed_identity_relabelled_private",
-                    "symbols": symbols,
-                    "value": None,
-                    "role": None,
-                    "span": None,
-                    "symbol": None,
-                    "reason": "listed_relabelled_private",
-                    "message": (
-                        f"Locked listed identity {', '.join(symbols)} was relabelled as "
-                        "private/unlisted without a conflicting resolver result."
-                    ),
-                }
+        issues.extend(
+            GROUNDING_CHECKS.run(
+                "listed-identity-relabelled-private",
+                self,
+                content,
             )
+        )
         return issues
 
     def _validate_figures(
