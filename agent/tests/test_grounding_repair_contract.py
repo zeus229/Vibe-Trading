@@ -406,3 +406,93 @@ def test_contract_rejects_ambiguous_pre_pipe_alias_across_allowed_refs():
     )
 
     assert contract.missing_figures(draft) == ("35.81%",)
+
+
+
+def test_replace_contract_requires_replacement_value_and_ref():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "20.01%",
+                "figure_value": 20.01,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "20.01",
+                "reason": "entity_value_needs_canonical_replacement",
+                "replacement_text": "19.97%",
+                "replacement_value": 19.97,
+                "replacement_digits": "19.97",
+                "replacement_ref_candidate": "call_p|fc_w::context.holdings_native.ARS[0].weight",
+                "replacement_entity_symbol": "YPFD",
+            }
+        ],
+    )
+
+    contract = CorrectionContract.from_validation(validation)
+    assert len(contract.required_figures) == 1
+    required = contract.required_figures[0]
+    assert required.text == "19.97%"
+    assert required.value == 19.97
+    assert required.allowed_refs == (
+        "call_p|fc_w::context.holdings_native.ARS[0].weight",
+    )
+
+    old_value = (
+        "YPFD 20.01%.\n\n"
+        "```figures\n"
+        "20.01% | observed | weight | "
+        "call_p|fc_w::context.holdings_native.ARS[0].weight\n"
+        "```"
+    )
+    assert contract.missing_figures(old_value) == ("19.97%",)
+
+    replaced = (
+        "YPFD 19.97%.\n\n"
+        "```figures\n"
+        "19.97% | observed | weight | "
+        "call_p|fc_w::context.holdings_native.ARS[0].weight\n"
+        "```"
+    )
+    assert contract.missing_figures(replaced) == ()
+
+
+def test_derive_contract_requires_all_operand_refs():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "12.73%",
+                "figure_value": 12.73,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "12.73",
+                "reason": "derived_refs_incomplete",
+                "derive_formula": "(0.3581-0.2308)*100",
+                "derive_operand_refs": [
+                    "call_a|fc_x::data.volatility.annualized_vol",
+                    "call_b|fc_y::data.volatility.annualized_vol",
+                ],
+            }
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
+
+    one_ref = (
+        "Difference 12.73%.\n\n"
+        "```figures\n"
+        "12.73% | derived | (0.3581-0.2308)*100 | "
+        "call_a|fc_x::data.volatility.annualized_vol\n"
+        "```"
+    )
+    assert contract.missing_figures(one_ref) == ("12.73%",)
+
+    both_refs = (
+        "Difference 12.73%.\n\n"
+        "```figures\n"
+        "12.73% | derived | (0.3581-0.2308)*100 | "
+        "call_a|fc_x::data.volatility.annualized_vol;"
+        "call_b|fc_y::data.volatility.annualized_vol\n"
+        "```"
+    )
+    assert contract.missing_figures(both_refs) == ()
