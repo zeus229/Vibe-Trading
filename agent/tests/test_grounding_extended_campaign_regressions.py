@@ -641,7 +641,7 @@ def test_derived_summary_row_does_not_need_total_to_match_one_operand(
             f"{call_id}::context.risk_xray_args.weights.EWZ",
         ]
     )
-    formula = "+".join(str(value) for value in weights) + "*100"
+    formula = "(" + "+".join(str(value) for value in weights) + ")*100"
 
     validation = ledger.validate_final_answer(
         "| Ticker | Peso |\n"
