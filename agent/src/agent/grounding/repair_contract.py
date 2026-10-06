@@ -173,7 +173,13 @@ class RequiredFigure:
         )
 
     def matches_declaration(self, declaration: Declaration) -> bool:
-        """Whether one validated declaration carries this required claim."""
+        """Whether one validated declaration carries this required claim.
+
+        The gate may accept a provider call id copied without its pipe suffix
+        by uniquely canonicalizing the pre-pipe token. The contract runs only
+        after grounding validation passes, so it recognizes that same spelling
+        when exactly one allowed ref maps to it. Ambiguous aliases stay rejected.
+        """
 
         if declaration.percent != self.percent or not self._value_matches(declaration.value):
             return False
@@ -184,7 +190,22 @@ class RequiredFigure:
             for part in declaration.ref.split(";")
             if part.strip()
         }
-        return bool(refs.intersection(self.allowed_refs))
+        if refs.intersection(self.allowed_refs):
+            return True
+
+        alias_to_full: dict[str, set[str]] = {}
+        for allowed in self.allowed_refs:
+            if "::" not in allowed:
+                continue
+            call_id, field = allowed.split("::", 1)
+            if "|" not in call_id:
+                continue
+            alias = call_id.split("|", 1)[0] + "::" + field
+            alias_to_full.setdefault(alias, set()).add(allowed)
+        return any(
+            ref in alias_to_full and len(alias_to_full[ref]) == 1
+            for ref in refs
+        )
 
 
 @dataclass(frozen=True)
