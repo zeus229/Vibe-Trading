@@ -229,5 +229,4 @@ def test_session_run_alias_repair_ranks_matching_call_first(tmp_path: Path) -> N
 
     assert result.valid is False
     candidates = result.issues[0]["field_ref_candidates"]
-    assert candidates[0] == f"{CALL_B}::data.portfolio_return_pct"
-    assert f"{CALL_A}::data.portfolio_return_pct" in candidates
+    assert candidates == [f"{CALL_B}::data.portfolio_return_pct"]
