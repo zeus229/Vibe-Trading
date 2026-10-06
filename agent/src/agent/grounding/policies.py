@@ -1569,28 +1569,49 @@ class _PolicyMixin:
         candidates: Sequence[str],
         figure: Figure,
         symbol: str | None,
-    ) -> dict[str, str]:
-        """Correction metadata only for a candidate proven to hold the figure."""
-        if len(candidates) != 1:
+    ) -> dict[str, Any]:
+        """Correction metadata for refs proven to hold the written figure.
+
+        Candidate lists are hints and may contain structural fallbacks. Re-resolve
+        every candidate and expose only refs whose evidence actually matches the
+        written value. One proven ref is an exact repair; several proven refs are
+        an explicit ambiguity the correction must preserve rather than drop.
+        """
+        proven: list[str] = []
+        aggregate: list[str] = []
+        for candidate in dict.fromkeys(str(item) for item in candidates):
+            scoped = self._referenced(candidate, symbol, figure)
+            matched = False
+            if scoped is not None:
+                records, metric_values = scoped
+                values = [
+                    float(record.value)
+                    for record in records
+                    if record.value is not None
+                ] + metric_values
+                money = bool(figure.currency and not figure.percent)
+                matched = bool(values) and self._matches_evidence(
+                    figure, values, [] if money else values
+                )
+            if matched:
+                proven.append(candidate)
+            if self._aggregate_exact_ref_match(candidate, figure):
+                if candidate not in proven:
+                    proven.append(candidate)
+                aggregate.append(candidate)
+
+        if not proven:
             return {}
-        candidate = candidates[0]
-        metadata: dict[str, str] = {}
-        scoped = self._referenced(candidate, symbol, figure)
-        if scoped is not None:
-            records, metric_values = scoped
-            values = [
-                float(record.value)
-                for record in records
-                if record.value is not None
-            ] + metric_values
-            money = bool(figure.currency and not figure.percent)
-            if values and self._matches_evidence(
-                figure, values, [] if money else values
-            ):
-                metadata["exact_ref_repair_candidate"] = candidate
-        if self._aggregate_exact_ref_match(candidate, figure):
-            metadata["aggregate_ref_candidate"] = candidate
-            metadata["exact_ref_repair_candidate"] = candidate
+
+        metadata: dict[str, Any] = {
+            "proven_ref_repair_candidates": proven,
+        }
+        if len(proven) == 1:
+            metadata["exact_ref_repair_candidate"] = proven[0]
+        if aggregate and len(aggregate) == len(proven):
+            metadata["aggregate_ref_candidates"] = aggregate
+            if len(aggregate) == 1:
+                metadata["aggregate_ref_candidate"] = aggregate[0]
         return metadata
 
     def _names_session_source(self, name: str) -> bool:
