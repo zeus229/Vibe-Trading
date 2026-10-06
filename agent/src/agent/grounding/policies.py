@@ -764,7 +764,7 @@ class _PolicyMixin:
         for figure in figures:
             if figure.shape not in ("measured", "bare"):
                 continue
-            matches = block.matching_declarations(
+            matches = block.compatible_declarations(
                 figure.value, figure.percent, figure.digits
             )
             if len(matches) <= 1:
