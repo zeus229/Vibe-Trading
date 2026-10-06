@@ -292,6 +292,61 @@ def test_multiple_candidates_remain_non_prescriptive():
     assert "replace only the incorrect ref" not in line
 
 
+def test_multiple_matching_calls_are_exposed_as_proven_repair_options(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio value")
+    first = EvidenceRecord(
+        call_id="call_snapshot_a",
+        tool="portfolio_summary",
+        symbol=None,
+        source="asistente_casa",
+        timestamp=None,
+        field="data.total_value",
+        value=221963026.08,
+        status="observed",
+        unit="money",
+        identity_scope="aggregate",
+    )
+    second = EvidenceRecord(
+        call_id="call_snapshot_b",
+        tool="portfolio_summary",
+        symbol=None,
+        source="asistente_casa",
+        timestamp=None,
+        field="data.total_value",
+        value=221963026.08,
+        status="observed",
+        unit="money",
+        identity_scope="aggregate",
+    )
+    ledger._evidence = [first, second]
+    figure = Figure(
+        text="221963026.08",
+        value=221963026.08,
+        percent=False,
+        start=0,
+        end=12,
+        line=0,
+        shape="measured",
+        digits="221963026.08",
+        currency=True,
+    )
+
+    candidates = ledger._tool_field_ref_candidates(
+        "portfolio_summary::data.total_value",
+        None,
+        figure,
+    )
+    metadata = ledger._exact_repair_metadata(candidates, figure, None)
+
+    assert candidates == [
+        "call_snapshot_b::data.total_value",
+        "call_snapshot_a::data.total_value",
+    ]
+    assert metadata["proven_ref_repair_candidates"] == candidates
+    assert "exact_ref_repair_candidate" not in metadata
+    assert metadata["aggregate_ref_candidates"] == candidates
+
+
 def test_tool_field_candidates_keep_only_calls_matching_written_value(tmp_path: Path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="risk comparison")
     acciones = EvidenceRecord(
