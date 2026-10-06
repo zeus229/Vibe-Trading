@@ -496,3 +496,68 @@ def test_derive_contract_requires_all_operand_refs():
         "```"
     )
     assert contract.missing_figures(both_refs) == ()
+
+
+
+def test_replace_derived_contract_requires_canonical_total_and_all_refs():
+    refs = [
+        "call_p|fc_w::context.holdings_native.ARS[0].weight",
+        "call_p|fc_w::context.holdings_native.ARS[1].weight",
+        "call_p|fc_w::context.holdings_native.ARS[2].weight",
+        "call_p|fc_w::context.holdings_native.ARS[3].weight",
+        "call_p|fc_w::context.holdings_native.ARS[4].weight",
+    ]
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "50.73%",
+                "figure_value": 50.73,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "50.73",
+                "reason": "derived_summary_needs_canonical_replacement",
+                "replacement_text": "50.61%",
+                "replacement_value": 50.61,
+                "replacement_digits": "50.61",
+                "replacement_role": "derived",
+                "replacement_refs": refs,
+                "replacement_formula": "(0.1997+0.1311+0.0598+0.0591+0.0564)*100",
+            }
+        ],
+    )
+
+    contract = CorrectionContract.from_validation(validation)
+    assert len(contract.required_figures) == 1
+    required = contract.required_figures[0]
+    assert required.text == "50.61%"
+    assert required.value == 50.61
+    assert required.require_all_refs is True
+    assert set(required.allowed_refs) == set(refs)
+
+    old_total = (
+        "Total 50.73%.\n\n"
+        "```figures\n"
+        "50.73% | derived | (0.2001+0.1314+0.0599+0.0592+0.0567)*100 | "
+        + ";".join(refs)
+        + "\n```"
+    )
+    assert contract.missing_figures(old_total) == ("50.61%",)
+
+    missing_one = (
+        "Total 50.61%.\n\n"
+        "```figures\n"
+        "50.61% | derived | (0.1997+0.1311+0.0598+0.0591+0.0564)*100 | "
+        + ";".join(refs[:-1])
+        + "\n```"
+    )
+    assert contract.missing_figures(missing_one) == ("50.61%",)
+
+    canonical = (
+        "Total 50.61%.\n\n"
+        "```figures\n"
+        "50.61% | derived | (0.1997+0.1311+0.0598+0.0591+0.0564)*100 | "
+        + ";".join(refs)
+        + "\n```"
+    )
+    assert contract.missing_figures(canonical) == ()
