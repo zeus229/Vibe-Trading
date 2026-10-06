@@ -2352,36 +2352,60 @@ class _PolicyMixin:
     ) -> dict[str, Any]:
         """Canonical entity weight replacing a risk-normalized aggregate weight.
 
-        Asistente Casa exposes risk_xray_args.weights as an analysis-normalized
-        aggregate view and holdings_native[*].weight as the canonical portfolio
-        position weight. These are different semantics, so a mismatch must
-        replace both the numeric value and ref rather than pretending the old
-        number was observed at the canonical ref.
+        A bare field path is accepted only when it identifies exactly one source
+        call in this session. The ticker encoded in weights.<TICKER> must
+        agree with the claim entity, and the canonical holding must come from
+        that same call. Selection is semantic, never based on numeric proximity.
         """
-        if not symbol or "::" not in declaration.ref:
-            return {}
-        scope, field = (part.strip() for part in declaration.ref.split("::", 1))
-        folded = field.casefold()
-        if "risk_xray_args.weights." not in folded:
+        if not symbol:
             return {}
 
-        tool_alias = scope.removeprefix("functions.")
+        raw_ref = (declaration.ref or "").strip()
+        if "::" in raw_ref:
+            scope, field = (part.strip() for part in raw_ref.split("::", 1))
+        else:
+            scope, field = "", raw_ref
+        folded = field.casefold()
+        marker = "risk_xray_args.weights."
+        if marker not in folded:
+            return {}
+
+        encoded = field[folded.index(marker) + len(marker):].split(".", 1)[0].strip()
+        encoded_symbol = _normalize_symbol(encoded)
+        if not encoded_symbol or encoded_symbol != symbol:
+            return {}
+
+        source_calls: set[str] = set()
+        for record in self._evidence:
+            if (
+                record.status == "observed"
+                and record.field == field
+                and record.call_id
+            ):
+                if scope:
+                    tool_alias = scope.removeprefix("functions.")
+                    if scope not in {
+                        record.call_id,
+                        record.tool,
+                        f"functions.{record.tool}",
+                    } and tool_alias != record.tool:
+                        continue
+                source_calls.add(str(record.call_id))
+        if len(source_calls) != 1:
+            return {}
+        source_call = next(iter(source_calls))
+
         candidates: list[tuple[str, float]] = []
         for record in self._evidence:
             if (
-                record.status != "observed"
+                record.call_id != source_call
+                or record.status != "observed"
                 or record.value is None
                 or record.symbol != symbol
                 or record.identity_scope != "entity"
                 or "holdings_native" not in record.field.casefold()
                 or not record.field.casefold().endswith(".weight")
             ):
-                continue
-            if scope not in {
-                record.call_id,
-                record.tool,
-                f"functions.{record.tool}",
-            } and tool_alias != record.tool:
                 continue
             ref = self._ref_source(record.call_id, record.field, record.scope)[1]
             candidates.append((ref, float(record.value)))
@@ -2409,6 +2433,110 @@ class _PolicyMixin:
                 f"{replacement_value:.{places}f}" if places else f"{replacement_value:g}"
             ),
             "replacement_entity_symbol": symbol,
+            "replacement_source_call_id": source_call,
+        }
+
+    def _canonical_summary_weight_replacement(
+        self,
+        declaration: Declaration,
+        figure: Figure,
+    ) -> dict[str, Any]:
+        """Canonical Top-N replacement for a sum of risk-normalized weights."""
+        refs = [
+            item.strip()
+            for item in re.split(r"[,;]", declaration.ref or "")
+            if item.strip()
+        ]
+        if len(refs) < 2:
+            return {}
+
+        source_call: str | None = None
+        canonical: list[tuple[str, float]] = []
+        seen_symbols: set[str] = set()
+        for raw_ref in refs:
+            if "::" in raw_ref:
+                scope, field = (part.strip() for part in raw_ref.split("::", 1))
+            else:
+                scope, field = "", raw_ref
+            folded = field.casefold()
+            marker = "risk_xray_args.weights."
+            if marker not in folded:
+                return {}
+            encoded = field[folded.index(marker) + len(marker):].split(".", 1)[0].strip()
+            symbol = _normalize_symbol(encoded)
+            if not symbol or symbol in seen_symbols:
+                return {}
+            seen_symbols.add(symbol)
+
+            calls = {
+                str(record.call_id)
+                for record in self._evidence
+                if record.status == "observed"
+                and record.field == field
+                and record.call_id
+                and (
+                    not scope
+                    or scope in {record.call_id, record.tool, f"functions.{record.tool}"}
+                    or scope.removeprefix("functions.") == record.tool
+                )
+            }
+            if len(calls) != 1:
+                return {}
+            call_id = next(iter(calls))
+            if source_call is None:
+                source_call = call_id
+            elif source_call != call_id:
+                return {}
+
+            matches = [
+                record
+                for record in self._evidence
+                if record.call_id == call_id
+                and record.status == "observed"
+                and record.value is not None
+                and record.symbol == symbol
+                and record.identity_scope == "entity"
+                and "holdings_native" in record.field.casefold()
+                and record.field.casefold().endswith(".weight")
+            ]
+            unique = list(
+                dict.fromkeys(
+                    (
+                        self._ref_source(record.call_id, record.field, record.scope)[1],
+                        float(record.value),
+                    )
+                    for record in matches
+                )
+            )
+            if len(unique) != 1:
+                return {}
+            canonical.append(unique[0])
+
+        raw_total = sum(value for _, value in canonical)
+        replacement_value = raw_total * 100.0 if figure.percent else raw_total
+        places = (
+            len((figure.digits or "").split(".", 1)[1])
+            if "." in (figure.digits or "")
+            else 0
+        )
+        replacement_text = (
+            f"{replacement_value:.{places}f}"
+            if places
+            else f"{replacement_value:g}"
+        ) + ("%" if figure.percent else "")
+        formula = "(" + "+".join(repr(value) for _, value in canonical) + ")"
+        if figure.percent:
+            formula += "*100"
+        return {
+            "replacement_value": replacement_value,
+            "replacement_text": replacement_text,
+            "replacement_digits": (
+                f"{replacement_value:.{places}f}" if places else f"{replacement_value:g}"
+            ),
+            "replacement_role": "derived",
+            "replacement_refs": [ref for ref, _ in canonical],
+            "replacement_formula": formula,
+            "replacement_source_call_id": source_call,
         }
 
     def _check_observed(
@@ -2856,6 +2984,28 @@ class _PolicyMixin:
         records: Sequence[EvidenceRecord],
     ) -> list[dict[str, Any]]:
         """A derived figure must be the arithmetic its note states."""
+        if declaration is not None and figure.symbol:
+            label = re.sub(r"[*_`]+", "", str(figure.symbol)).strip()
+            if label and _SUMMARY_ROW_LABEL_RE.fullmatch(label):
+                canonical_summary = self._canonical_summary_weight_replacement(
+                    declaration, figure
+                )
+                if canonical_summary and abs(
+                    float(canonical_summary["replacement_value"]) - figure.value
+                ) > max(abs(figure.value) * 1e-9, 1e-9):
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "derived",
+                            None,
+                            "derived_summary_needs_canonical_replacement",
+                            "is derived from risk-normalized weights, while the same "
+                            "portfolio call exposes canonical per-position weights; "
+                            "replace the total with the canonical holdings sum supplied below",
+                            **canonical_summary,
+                        )
+                    ]
         derivation = self._derivation(declaration, symbol, records, money=figure.currency)
         if isinstance(derivation, str):
             derive_hint = self._deterministic_derive_metadata(figure)
