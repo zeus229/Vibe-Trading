@@ -90,21 +90,22 @@ def test_contract_hard_preserves_only_repairable_rejected_figures():
 
 
 def test_required_figure_matches_equivalent_numeric_formatting():
-    claim = RequiredFigure.from_text("0.2250%")
-    assert claim is not None
-
     validation = SimpleNamespace(
         passed_figures=(),
         issues=[
             {
                 "value": "0.2250%",
                 "exact_ref_repair_candidate": "call_cer::data.return_pct",
-            }
+            },
+            {
+                "value": "2.93%",
+                "exact_ref_repair_candidate": "call_var::data.var95_pct",
+            },
         ],
     )
     contract = CorrectionContract.from_validation(validation)
 
-    assert contract.missing_figures("CER: 0.225%.") == ()
+    assert contract.missing_figures("CER: 0.225%. VaR 95%: 2.9282666%.") == ()
 
 
 def test_contract_retry_prompt_is_focused():
