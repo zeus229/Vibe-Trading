@@ -230,6 +230,10 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
         parts.append("preserve=true")
     if directive.target_scope:
         parts.append("target_scope=" + directive.target_scope)
+    if directive.derive_formula:
+        parts.append("derive_formula=" + directive.derive_formula)
+    if directive.action.value == "derive" and directive.allowed_refs:
+        parts.append("derive_refs=" + ";".join(directive.allowed_refs))
     return " | ".join(parts)
 
 def _strip_release_markers(content: str) -> str:
