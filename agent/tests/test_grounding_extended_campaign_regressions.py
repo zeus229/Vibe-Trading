@@ -336,3 +336,78 @@ def test_non_ticker_summary_row_may_stay_unscoped_for_unscoped_calc(
     )
 
     assert result.valid is True, result.issues
+
+
+@pytest.mark.parametrize(
+    "label",
+    ["Total", "Subtotal", "Suma", "Total conjunto", "Suma de las cinco"],
+)
+def test_explicit_summary_labels_can_use_unscoped_calc_candidates(
+    tmp_path: Path, label: str
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
+    calc_id = "call_calc|fc_summary"
+    _ingest(
+        ledger,
+        "financial_rigor",
+        {
+            "status": "ok",
+            "command": "calc",
+            "expr": "0.2+0.13+0.06+0.059+0.0565",
+            "result": 0.5055,
+            "result_exact": "0.5055",
+        },
+        calc_id,
+        arguments={"command": "calc", "expr": "0.2+0.13+0.06+0.059+0.0565"},
+    )
+
+    result = ledger.validate_final_answer(
+        "| Ticker | Weight |\n"
+        "|---|---:|\n"
+        f"| {label} | 50.55% |\n\n"
+        "```figures\n"
+        "50.55% | observed | sum returned by calc | financial_rigor::result\n"
+        "```"
+    )
+
+    assert result.valid is False
+    assert len(result.issues) == 1
+    issue = result.issues[0]
+    assert issue.get("reason") == "field_ref_needs_call_id"
+    assert issue.get("symbol") is None
+    assert issue.get("exact_ref_repair_candidate") == f"{calc_id}::result"
+
+
+def test_company_name_row_is_not_treated_as_summary_even_for_unscoped_calc(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
+    calc_id = "call_calc|fc_company"
+    _ingest(
+        ledger,
+        "financial_rigor",
+        {
+            "status": "ok",
+            "command": "calc",
+            "expr": "0.2+0.13+0.06+0.059+0.0565",
+            "result": 0.5055,
+            "result_exact": "0.5055",
+        },
+        calc_id,
+        arguments={"command": "calc", "expr": "0.2+0.13+0.06+0.059+0.0565"},
+    )
+
+    result = ledger.validate_final_answer(
+        "| Ticker | Weight |\n"
+        "|---|---:|\n"
+        "| Acme Corp | 50.55% |\n\n"
+        "```figures\n"
+        f"50.55% | observed | aggregate calc | {calc_id}::result\n"
+        "```"
+    )
+
+    assert result.valid is False
+    assert any(
+        issue.get("reason") in {"not_in_referenced_call", "entity_ref_needs_scoped_claim"}
+        for issue in result.issues
+    )
