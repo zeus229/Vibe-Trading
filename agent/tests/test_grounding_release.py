@@ -2702,6 +2702,22 @@ def test_the_correction_prompt_names_the_figures_to_keep(tmp_path: Path) -> None
     assert "Do not infer that an unlisted figure passed" in prompt
 
 
+def test_correction_prompt_forbids_new_numeric_embellishments(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    validation = ledger.validate_final_answer("562500.SS（Yahoo，CNY）最新收盘价 9.99 元。")
+
+    assert validation.valid is False
+    prompt = ledger.correction_prompt(validation)
+
+    assert "Do NOT add new measured numeric claims" in prompt
+    assert "comparisons, differences, excesses, gaps, or derived figures" in prompt
+    assert "already returned the needed comparison/difference" in prompt
+    assert "declare that figure observed with its exact call_id::field ref" in prompt
+    assert "machine arithmetic only" in prompt
+    assert "ASCII + - * /" in prompt
+    assert "'minus', 'menos', 'plus', 'más'" in prompt
+
+
 def test_the_keep_list_is_absent_when_nothing_passed(tmp_path: Path) -> None:
     """No clean figure, no keep list: the section must not render empty."""
     ledger = _ledger(tmp_path)
