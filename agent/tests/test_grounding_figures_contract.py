@@ -632,7 +632,10 @@ def test_the_correction_prompt_names_each_figure_and_its_reason(
     assert "auto_repair" in prompt
     assert "preserve_rewrite" in prompt
     assert "preserve_options" in prompt
+    assert "derive" in prompt
     assert "recover" in prompt
+    assert "Copy every ref byte-for-byte" in prompt
+    assert "|fc_..." in prompt
     assert "drop" in prompt
 
 

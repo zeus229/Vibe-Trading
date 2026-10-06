@@ -128,6 +128,20 @@ _MAX_INDEXED_REF_CANDIDATES = 12
 _MAX_CONTAINER_REF_CANDIDATES = 5
 _MAX_CALL_REF_CANDIDATES = 5
 
+# Table-row labels that unambiguously describe an aggregate rather than an
+# instrument. This is intentionally narrow: company/name-shaped labels such as
+# "Acme Corp" never qualify merely because their declaration is unscoped.
+_SUMMARY_ROW_LABEL_RE = re.compile(
+    r"^(?:"
+    r"total(?:\s+(?:conjunto|combined|general|portfolio))?|"
+    r"subtotal|"
+    r"sum(?:\s+(?:of\s+the\s+)?(?:top\s+)?\w+)?|"
+    r"suma(?:\s+de\s+(?:las|los)\s+\w+)?|"
+    r"aggregate|agregado|combined|conjunto"
+    r")$",
+    re.IGNORECASE,
+)
+
 
 def _index_normalized(path: str) -> str:
     """Spell dotted collection indices with brackets."""
@@ -642,6 +656,7 @@ class _PolicyMixin:
                     undeclared_entity_hint = self._undeclared_entity_repair_metadata(
                         figure
                     )
+                    derive_hint = self._deterministic_derive_metadata(figure)
                     issues.append(
                         self._figure_issue(
                             "figure_undeclared",
@@ -661,6 +676,7 @@ class _PolicyMixin:
                                 else {}
                             ),
                             **undeclared_entity_hint,
+                            **derive_hint,
                         )
                     )
                     continue
@@ -865,7 +881,65 @@ class _PolicyMixin:
             )
             if declared:
                 return declared
-        return self._written_symbol(content, figure, line_symbols, records) or document_symbol
+        written = self._written_symbol(content, figure, line_symbols, records)
+        if (
+            written
+            and figure.symbol
+            and declaration is not None
+            and self._summary_row_is_unscoped(figure.symbol, declaration, figure)
+        ):
+            written = None
+        return written or document_symbol
+
+    def _summary_row_is_unscoped(
+        self,
+        row_label: str,
+        declaration: Declaration,
+        figure: Figure,
+    ) -> bool:
+        """Whether an explicit aggregate-row label should stay unscoped.
+
+        The label itself must be unmistakably aggregate (Total/Subtotal/Sum,
+        including the Spanish forms used in portfolio tables). This prevents a
+        company/name-shaped row such as ``Acme Corp`` from borrowing aggregate
+        evidence.
+
+        The declaration may already be an exact ref, or it may be a tool-name
+        ref that can be repaired to exact call refs. In either case at least one
+        value-compatible source must resolve exclusively to aggregate/unknown,
+        symbol-less evidence.
+        """
+        label = re.sub(r"[*_`]+", "", str(row_label)).strip()
+        if not label or not _SUMMARY_ROW_LABEL_RE.fullmatch(label):
+            return False
+
+        refs = [declaration.ref]
+        refs.extend(
+            self._tool_field_ref_candidates(declaration.ref, None, figure)
+        )
+
+        for ref in dict.fromkeys(refs):
+            scoped = self._referenced(ref, None, figure)
+            if scoped is None:
+                continue
+            records, metric_values = scoped
+            if metric_values:
+                return True
+            matching = [
+                record
+                for record in records
+                if record.value is not None
+                and not record.symbol
+                and record.identity_scope in {"aggregate", "unknown"}
+                and self._matches_evidence(
+                    figure,
+                    [float(record.value)],
+                    [float(record.value)],
+                )
+            ]
+            if matching:
+                return True
+        return False
 
     @staticmethod
     def _figure_is_market_price(
@@ -1001,6 +1075,7 @@ class _PolicyMixin:
         # when the same analysis field appears in more than one tool call.
         if "::" in key:
             call_id, field = (part.strip() for part in key.split("::", 1))
+            call_id = self._canonical_session_call_id(call_id)
             if not call_id or not field:
                 return [], []
             records, entries = self._field_sources(field, symbol)
@@ -1297,6 +1372,188 @@ class _PolicyMixin:
         }
         return sorted(refs)
 
+    def _canonical_session_call_id(self, token: str) -> str:
+        """Restore a provider suffix only when its pre-pipe token is unique.
+
+        Some provider call ids are shaped `call_X|fc_Y`. A correction model
+        can copy only `call_X`; accepting arbitrary prefixes would be unsafe,
+        so restoration requires exact equality with the complete pre-pipe token
+        of exactly one call id observed in this session.
+        """
+        known = {
+            str(record.call_id)
+            for record in self._evidence
+            if record.call_id
+        } | {
+            str(entry.get("call_id"))
+            for entry in self._analysis_metrics
+            if entry.get("call_id")
+        } | {
+            str(item.get("call_id"))
+            for item in getattr(self, "_deterministic_calcs", [])
+            if item.get("call_id")
+        }
+        if token in known:
+            return token
+        if "|" in token:
+            return token
+        matches = [item for item in known if item.split("|", 1)[0] == token]
+        return matches[0] if len(matches) == 1 else token
+
+    @staticmethod
+    def _strict_written_match(figure: Figure, target: float) -> tuple[bool, bool]:
+        """Match deterministic results at written precision, not the 0.5% band.
+
+        Returns `(matched, scaled_by_100)`. The scaled form covers fraction
+        results rendered as percentages or percentage points.
+        """
+        written = figure.digits or figure.text
+        places = len(written.split(".", 1)[1]) if "." in written else 0
+        half = 0.5 * (10.0 ** -places) if places else max(abs(figure.value) * 1e-9, 1e-9)
+        if abs(figure.value - target) <= max(half * (1 + 1e-9), 1e-9):
+            return True, False
+        scaled_half = half / 100.0
+        if abs((figure.value / 100.0) - target) <= max(scaled_half * (1 + 1e-9), 1e-12):
+            return True, True
+        return False, False
+
+    @staticmethod
+    def _calc_operands(expr: str) -> list[float]:
+        """Numeric data operands in a safe arithmetic expression.
+
+        Structural scaling constants 0, 1 and 100 are excluded. Binary minus
+        does not negate its right operand; explicit unary minus does.
+        """
+        try:
+            root = ast.parse(expr, mode="eval").body
+        except (SyntaxError, ValueError):
+            return []
+
+        def walk(node: ast.AST) -> list[float]:
+            if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+                return [float(node.value)]
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+                values = walk(node.operand)
+                return [(-value if isinstance(node.op, ast.USub) else value) for value in values]
+            if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)):
+                return walk(node.left) + walk(node.right)
+            return []
+
+        values = walk(root)
+        return [value for value in values if abs(value) not in {0.0, 1.0, 100.0}]
+
+    def _deterministic_derive_metadata(self, figure: Figure) -> dict[str, Any]:
+        """Prove an undeclared claim from one exact deterministic calc + operands."""
+        proofs: list[dict[str, Any]] = []
+        for calc in getattr(self, "_deterministic_calcs", []):
+            expr = str(calc.get("expr") or "")
+            result = calc.get("result")
+            if not isinstance(result, (int, float)):
+                continue
+            matched, scaled = self._strict_written_match(figure, float(result))
+            if not matched:
+                continue
+            operands = self._calc_operands(expr)
+            if len(operands) < 2:
+                continue
+            refs: list[str] = []
+            valid = True
+            for operand in operands:
+                candidates = []
+                for record in self._evidence:
+                    if (
+                        record.tool != "financial_rigor"
+                        and record.status == "observed"
+                        and record.value is not None
+                        and abs(float(record.value) - operand)
+                        <= max(abs(operand) * 1e-9, 1e-12)
+                    ):
+                        candidates.append(
+                            self._ref_source(record.call_id, record.field, record.scope)[1]
+                        )
+                candidates = list(dict.fromkeys(candidates))
+                if len(candidates) != 1:
+                    valid = False
+                    break
+                refs.append(candidates[0])
+            if not valid:
+                continue
+            formula = f"({expr}) * 100" if scaled else expr
+            proofs.append(
+                {
+                    "derive_formula": formula,
+                    "derive_operand_refs": list(dict.fromkeys(refs)),
+                    "derive_calc_call_id": str(calc.get("call_id") or ""),
+                }
+            )
+        return proofs[0] if len(proofs) == 1 else {}
+
+    def _same_parent_value_twin_candidates(
+        self, ref: str, figure: Figure, symbol: str | None
+    ) -> list[str]:
+        """Exact numeric siblings for a value leaf excluded only by kind.
+
+        The declared leaf itself must contain the written value. This guard is
+        what prevents a wrong ARS leaf from borrowing a USD/sector sibling that
+        merely happens to be under the same container.
+        """
+        key = (ref or "").strip()
+        if "::" not in key:
+            return []
+        scope, field = (part.strip() for part in key.split("::", 1))
+        if not scope or not field or "." not in field:
+            return []
+        tool_alias = scope.removeprefix("functions.")
+        sources = [
+            record
+            for record in self._evidence
+            if record.status == "observed"
+            and record.value is not None
+            and record.field == field
+            and scope in (record.call_id, record.tool, f"functions.{record.tool}")
+        ]
+        if not sources and tool_alias != scope:
+            sources = [
+                record
+                for record in self._evidence
+                if record.status == "observed"
+                and record.value is not None
+                and record.field == field
+                and record.tool == tool_alias
+            ]
+        sources = [
+            record
+            for record in sources
+            if self._matches_evidence(
+                figure, [float(record.value)], [float(record.value)]
+            )
+            and not self._kind_fits(record, figure)
+        ]
+        if not sources:
+            return []
+
+        parent = field.rsplit(".", 1)[0]
+        found: list[str] = []
+        for source in sources:
+            for record in self._evidence:
+                if (
+                    record.call_id != source.call_id
+                    or record.status != "observed"
+                    or record.value is None
+                    or not record.field.startswith(parent + ".")
+                    or (symbol and record.symbol and record.symbol != symbol)
+                    or record.identity_scope != source.identity_scope
+                    or not self._kind_fits(record, figure)
+                    or not self._matches_evidence(
+                        figure, [float(record.value)], [float(record.value)]
+                    )
+                ):
+                    continue
+                found.append(
+                    self._ref_source(record.call_id, record.field, record.scope)[1]
+                )
+        return list(dict.fromkeys(found))
+
     def _tool_field_ref_candidates(
         self, ref: str, symbol: str | None, figure: Figure | None = None
     ) -> list[str]:
@@ -1590,9 +1847,16 @@ class _PolicyMixin:
                     if record.value is not None
                 ] + metric_values
                 money = bool(figure.currency and not figure.percent)
-                matched = bool(values) and self._matches_evidence(
-                    figure, values, [] if money else values
+                deterministic_result = bool(records) and all(
+                    record.tool == "financial_rigor" and record.field == "result"
+                    for record in records
                 )
+                if deterministic_result and len(values) == 1:
+                    matched = self._strict_written_match(figure, values[0])[0]
+                else:
+                    matched = bool(values) and self._matches_evidence(
+                        figure, values, [] if money else values
+                    )
             if matched:
                 proven.append(candidate)
             if self._aggregate_exact_ref_match(candidate, figure):
@@ -2036,6 +2300,27 @@ class _PolicyMixin:
                 and not scoped_records
                 and not metric_values
             ):
+                twin_candidates = self._same_parent_value_twin_candidates(
+                    declaration.ref, figure, symbol
+                )
+                if twin_candidates:
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "field_ref_needs_numeric_sibling",
+                            f"is declared from {declaration.ref}, whose numeric value matches "
+                            "but whose evidence kind cannot ground this figure; use the exact "
+                            "same-call numeric sibling ref listed below",
+                            source_tool_call_ids=[declaration.ref],
+                            field_ref_candidates=twin_candidates,
+                            **self._exact_repair_metadata(
+                                twin_candidates, figure, symbol
+                            ),
+                        )
+                    ]
                 call_field_candidates = self._tool_field_ref_candidates(
                     declaration.ref, symbol, figure
                 )

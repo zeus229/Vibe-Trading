@@ -125,6 +125,9 @@ class GroundingLedger(
         self._tool_failures: list[dict[str, Any]] = []
         self._analysis_completed: list[dict[str, Any]] = []
         self._analysis_metrics: list[dict[str, Any]] = []
+        # Minimal provenance for deterministic financial_rigor calc calls.
+        # Store only arithmetic expression + numeric result, never arbitrary tool args.
+        self._deterministic_calcs: list[dict[str, Any]] = []
         self._validations: list[dict[str, Any]] = []
         # The one document that actually shipped through the release path, if
         # any. Not a draft, so it stays out of ``validation_count``.
@@ -309,6 +312,20 @@ class GroundingLedger(
             self._pending_recovery = None
         self._track_session_symbols(arguments, result)
         self._note_model_write(tool_name, arguments, payload)
+        if (
+            tool_name == "financial_rigor"
+            and payload is not None
+            and str(arguments.get("command") or "").casefold() == "calc"
+            and isinstance(payload.get("result"), (int, float))
+            and isinstance(arguments.get("expr"), str)
+        ):
+            self._deterministic_calcs.append(
+                {
+                    "call_id": call_id,
+                    "expr": str(arguments["expr"]),
+                    "result": float(payload["result"]),
+                }
+            )
         if tool_name in _ANALYSIS_TOOLS:
             self._ingest_analysis_result(tool_name, arguments, payload, call_id)
         if tool_name == _RESOLVER_TOOL:
@@ -418,6 +435,7 @@ class GroundingLedger(
                 "tool_failures": list(self._tool_failures),
                 "analysis_completed": list(self._analysis_completed),
                 "analysis_evidence": list(self._analysis_metrics),
+                "deterministic_calcs": list(self._deterministic_calcs),
                 "validations": list(self._validations),
                 "released": dict(self._released) if self._released else None,
             }

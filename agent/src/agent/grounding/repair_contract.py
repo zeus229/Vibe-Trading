@@ -20,6 +20,7 @@ class RepairAction(str, Enum):
     AUTO_REPAIR = "auto_repair"
     PRESERVE_REWRITE = "preserve_rewrite"
     PRESERVE_OPTIONS = "preserve_options"
+    DERIVE = "derive"
     RECOVER = "recover"
     DROP = "drop"
 
@@ -33,6 +34,7 @@ class RepairDirective:
     exact_ref: str | None = None
     allowed_refs: tuple[str, ...] = ()
     target_scope: str | None = None
+    derive_formula: str | None = None
 
 
 _RECOVERY_REASONS = frozenset({"no_evidence", "symbol_never_handled", "no_symbol"})
@@ -55,6 +57,20 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
     )
     entity = issue.get("entity_ref_symbol")
     reason = str(issue.get("reason") or "")
+    derive_formula = issue.get("derive_formula")
+    derive_refs = tuple(
+        dict.fromkeys(
+            str(item) for item in issue.get("derive_operand_refs") or []
+        )
+    )
+
+    if derive_formula and len(derive_refs) >= 2:
+        return RepairDirective(
+            RepairAction.DERIVE,
+            preserve=True,
+            allowed_refs=derive_refs,
+            derive_formula=str(derive_formula),
+        )
 
     if len(proven_refs) > 1:
         target_scope = None
@@ -157,7 +173,13 @@ class RequiredFigure:
         )
 
     def matches_declaration(self, declaration: Declaration) -> bool:
-        """Whether one validated declaration carries this required claim."""
+        """Whether one validated declaration carries this required claim.
+
+        The gate may accept a provider call id copied without its pipe suffix
+        by uniquely canonicalizing the pre-pipe token. The contract runs only
+        after grounding validation passes, so it recognizes that same spelling
+        when exactly one allowed ref maps to it. Ambiguous aliases stay rejected.
+        """
 
         if declaration.percent != self.percent or not self._value_matches(declaration.value):
             return False
@@ -168,7 +190,22 @@ class RequiredFigure:
             for part in declaration.ref.split(";")
             if part.strip()
         }
-        return bool(refs.intersection(self.allowed_refs))
+        if refs.intersection(self.allowed_refs):
+            return True
+
+        alias_to_full: dict[str, set[str]] = {}
+        for allowed in self.allowed_refs:
+            if "::" not in allowed:
+                continue
+            call_id, field = allowed.split("::", 1)
+            if "|" not in call_id:
+                continue
+            alias = call_id.split("|", 1)[0] + "::" + field
+            alias_to_full.setdefault(alias, set()).add(allowed)
+        return any(
+            ref in alias_to_full and len(alias_to_full[ref]) == 1
+            for ref in refs
+        )
 
 
 @dataclass(frozen=True)
