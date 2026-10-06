@@ -758,28 +758,59 @@ class _PolicyMixin:
     ) -> dict[tuple[int, int], Declaration | None]:
         """Bind prose figures to declarations without cross-wiring duplicates.
 
-        A single compatible declaration remains reusable for repeated prose.
-        When several declarations share the same numeric value, appearances are
-        bound one-to-one in document/declaration order. Extra appearances fail
-        closed instead of silently borrowing the first declaration.
+        Declarations that are the *only* compatible declaration for any prose
+        figure are reserved first.  Ambiguous figures then prefer compatible
+        declarations that are not already reserved/used.  This prevents a
+        rounded declaration from being borrowed by a later exact figure when
+        that declaration already uniquely belongs to another claim (for
+        example CER 0.2250% followed by cash 0.23%).
+
+        Reuse remains allowed when there is genuinely no alternative, so one
+        declaration can still ground repeated prose mentions of the same claim.
         """
-        resolved: dict[tuple[int, int], Declaration | None] = {}
-        duplicate_offsets: dict[tuple[int, ...], int] = {}
-        for figure in figures:
-            if figure.shape not in ("measured", "bare"):
-                continue
+        relevant = [
+            figure for figure in figures if figure.shape in ("measured", "bare")
+        ]
+        matches_by_span: dict[tuple[int, int], tuple[Declaration, ...]] = {}
+        reserved: set[int] = set()
+
+        for figure in relevant:
             matches = block.compatible_declarations(
                 figure.value, figure.percent, figure.digits
             )
-            if len(matches) <= 1:
-                resolved[(figure.start, figure.end)] = matches[0] if matches else None
+            matches_by_span[(figure.start, figure.end)] = matches
+            if len(matches) == 1:
+                reserved.add(matches[0].index)
+
+        resolved: dict[tuple[int, int], Declaration | None] = {}
+        used_ambiguous: set[int] = set()
+        for figure in relevant:
+            span = (figure.start, figure.end)
+            matches = matches_by_span[span]
+            if not matches:
+                resolved[span] = None
                 continue
-            key = tuple(item.index for item in matches)
-            offset = duplicate_offsets.get(key, 0)
-            resolved[(figure.start, figure.end)] = (
-                matches[offset] if offset < len(matches) else None
-            )
-            duplicate_offsets[key] = offset + 1
+            if len(matches) == 1:
+                resolved[span] = matches[0]
+                continue
+
+            available = [
+                item
+                for item in matches
+                if item.index not in reserved and item.index not in used_ambiguous
+            ]
+            if not available:
+                available = [
+                    item for item in matches if item.index not in used_ambiguous
+                ]
+            if not available:
+                # Reuse is the final fallback for legitimate repeated prose.
+                available = list(matches)
+
+            chosen = available[0]
+            resolved[span] = chosen
+            used_ambiguous.add(chosen.index)
+
         return resolved
 
     @staticmethod
