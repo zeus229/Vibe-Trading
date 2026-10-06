@@ -628,7 +628,11 @@ def test_the_correction_prompt_names_each_figure_and_its_reason(
     # The nearest values are the symbol's closes, not every field of every bar.
     assert "nearest observed 1.04, 0.666" in line
     assert "figures" in prompt
-    assert "DECLARE" in prompt and "REWRITE" in prompt and "REMOVE" in prompt
+    assert "DECLARE" in prompt
+    assert "auto_repair" in prompt
+    assert "preserve_rewrite" in prompt
+    assert "recover" in prompt
+    assert "drop" in prompt
 
 
 def test_a_value_is_called_repeated_only_from_its_second_rejection(
