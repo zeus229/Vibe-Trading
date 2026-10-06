@@ -194,10 +194,21 @@ def _correction_line(issue: dict[str, Any]) -> str:
     if directive.action.value == "replace":
         replacement_text = issue.get("replacement_text")
         replacement_ref = issue.get("replacement_ref_candidate")
+        replacement_refs = list(
+            dict.fromkeys(str(item) for item in issue.get("replacement_refs") or [])
+        )
+        replacement_formula = issue.get("replacement_formula")
+        replacement_role = issue.get("replacement_role")
         if replacement_text:
             evidence += f"; repair replacement_value={replacement_text}"
         if replacement_ref:
             evidence += f"; repair replacement_ref={replacement_ref}"
+        if replacement_refs:
+            evidence += "; repair replacement_refs=" + "; ".join(replacement_refs)
+        if replacement_formula:
+            evidence += f"; repair replacement_formula={replacement_formula}"
+        if replacement_role:
+            evidence += f"; repair replacement_role={replacement_role}"
     if directive.preserve:
         evidence += "; repair preserve=true"
     symbol = issue.get("symbol")
@@ -246,6 +257,15 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
             parts.append("replacement_value=" + str(issue.get("replacement_text")))
         if issue.get("replacement_ref_candidate"):
             parts.append("replacement_ref=" + str(issue.get("replacement_ref_candidate")))
+        replacement_refs = list(
+            dict.fromkeys(str(item) for item in issue.get("replacement_refs") or [])
+        )
+        if replacement_refs:
+            parts.append("replacement_refs=" + ";".join(replacement_refs))
+        if issue.get("replacement_formula"):
+            parts.append("replacement_formula=" + str(issue.get("replacement_formula")))
+        if issue.get("replacement_role"):
+            parts.append("replacement_role=" + str(issue.get("replacement_role")))
     return " | ".join(parts)
 
 def _strip_release_markers(content: str) -> str:
@@ -328,7 +348,7 @@ class _ReleaseMixin:
                     "  preserve_rewrite: KEEP the numeric figure and evidence, DECLARE it with the repaired ref when supplied, and rewrite only the surrounding semantic scope/context to the supplied target_scope.",
                     "  preserve_options: KEEP the numeric figure; several exact refs are proven to contain this written value. DECLARE it with one of the proven repair refs listed on that issue. Do not delete the claim merely because more than one source/cut supports it.",
                     "  derive: KEEP the numeric figure and DECLARE it as derived using exactly the supplied derive_formula and every supplied derive_ref, separated by semicolons. Preserve the unit/shape used in the prose; do not turn percentage points into percent merely because the operands are ratios.",
-                    "  replace: KEEP the semantic claim/entity, but REPLACE the rejected numeric value with the supplied replacement_value and DECLARE it observed with exactly the supplied replacement_ref. Do not preserve the old number.",
+                    "  replace: KEEP the semantic claim, but REPLACE the rejected numeric value with the supplied replacement_value. If replacement_role=observed, DECLARE it observed with exactly replacement_ref. If replacement_role=derived, DECLARE it derived using exactly replacement_formula and every replacement_ref in replacement_refs. Do not preserve the old number or mix old and replacement operands.",
                     "  recover: evidence is missing; never fabricate a replacement value. Recovery is handled by the bounded recovery path, not by inventing text.",
                     "  drop: removal is allowed only because no deterministic safe repair was proven.",
                     "Do NOT add new measured numeric claims, comparisons, differences, excesses, gaps, or derived figures unless they directly replace one rejected figure listed above. Preserve already-passed figures instead of embellishing them with new arithmetic.",
