@@ -70,8 +70,7 @@ def test_candidates_matching_the_value_come_first(tmp_path: Path) -> None:
 
     assert result.valid is False
     candidates = result.issues[0]["field_ref_candidates"]
-    assert candidates[0] == f"b_call::{PATH}"
-    assert set(candidates) == {f"{call}::{PATH}" for call in ("a_call", "b_call", "c_call")}
+    assert candidates == [f"b_call::{PATH}"]
 
 
 def test_candidates_are_capped(tmp_path: Path) -> None:
