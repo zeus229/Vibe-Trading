@@ -117,12 +117,12 @@ class RequiredFigure:
         candidate = figure.value
         if abs(candidate - target) <= max(abs(target) * 1e-9, 1e-9):
             return True
-        digits = figure.digits or ""
-        if "." not in digits:
+        required_digits = self.digits or ""
+        if "." not in required_digits:
             return False
-        places = len(digits.split(".", 1)[1])
+        places = len(required_digits.split(".", 1)[1])
         half_unit = 0.5 * 10.0 ** (-places)
-        relative = abs(target) * 0.005
+        relative = abs(candidate) * 0.005
         return abs(candidate - target) <= max(
             min(relative, half_unit * (1 + 1e-9)), 1e-9
         )
@@ -170,9 +170,10 @@ class CorrectionContract:
 
         block = parse_figures_block(content)
         body = strip_figures_block(content, block)
+        body_block = parse_figures_block(body)
         present = [
             figure
-            for figure in scan_figures(body, block)
+            for figure in scan_figures(body, body_block)
             if figure.shape == "measured"
         ]
         return tuple(
