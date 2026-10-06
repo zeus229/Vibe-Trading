@@ -1853,6 +1853,43 @@ class _PolicyMixin:
         values = [float(record.value) for record in aggregate_records if record.value is not None]
         return bool(values) and self._matches_evidence(figure, values, values)
 
+    def _entity_exact_ref_match(
+        self,
+        ref: str,
+        figure: Figure,
+    ) -> str | None:
+        """Return the one entity an exact ref/value belongs to, if any.
+
+        This is correction metadata only.  Validation still uses the entity
+        resolved from the answer text and therefore remains fail-closed.  The
+        helper detects the narrower case where an exact call_id::field ref
+        contains the written value for one entity, but nearby prose caused the
+        figure to be attributed to another entity.
+        """
+        keys = [key.strip() for key in re.split(r"[,;]", ref or "") if key.strip()]
+        if len(keys) != 1 or "::" not in keys[0]:
+            return None
+        scoped = self._referenced(keys[0], None, figure)
+        if scoped is None:
+            return None
+        records, metric_values = scoped
+        if metric_values or not records:
+            return None
+        matching = [
+            record
+            for record in records
+            if record.identity_scope == "entity"
+            and record.symbol
+            and record.value is not None
+            and self._matches_evidence(
+                figure,
+                [float(record.value)],
+                [float(record.value)],
+            )
+        ]
+        symbols = {str(record.symbol) for record in matching}
+        return next(iter(symbols)) if len(symbols) == 1 else None
+
     def _check_observed(
         self,
         figure: Figure,
@@ -1891,6 +1928,26 @@ class _PolicyMixin:
                             f"is declared from exact aggregate evidence at {declaration.ref}, "
                             f"but the answer attaches that portfolio-level metric to {symbol}",
                             source_tool_call_ids=[declaration.ref],
+                        )
+                    ]
+                entity_ref_symbol = (
+                    self._entity_exact_ref_match(declaration.ref, figure)
+                    if symbol and declaration is not None
+                    else None
+                )
+                if entity_ref_symbol and entity_ref_symbol != symbol:
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "entity_ref_needs_scoped_claim",
+                            f"is declared from exact entity evidence at {declaration.ref} "
+                            f"for {entity_ref_symbol}, but the answer context attributes "
+                            f"the figure to {symbol}",
+                            source_tool_call_ids=[declaration.ref],
+                            entity_ref_symbol=entity_ref_symbol,
                         )
                     ]
                 if call_field_candidates:
