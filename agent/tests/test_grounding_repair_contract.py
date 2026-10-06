@@ -257,3 +257,91 @@ def test_same_numeric_value_with_wrong_ref_does_not_satisfy_contract():
         "```"
     )
     assert contract.missing_figures(draft) == ("50,61%",)
+
+
+def test_multiple_proven_refs_are_preserved_as_options():
+    issue = {
+        "value": "221963026.08",
+        "figure_value": 221963026.08,
+        "figure_percent": False,
+        "figure_currency": True,
+        "figure_digits": "221963026.08",
+        "reason": "field_ref_needs_call_id",
+        "field_ref_candidates": [
+            "call_snapshot_a::data.total_value",
+            "call_snapshot_b::data.total_value",
+        ],
+        "proven_ref_repair_candidates": [
+            "call_snapshot_a::data.total_value",
+            "call_snapshot_b::data.total_value",
+        ],
+    }
+
+    directive = directive_for_issue(issue)
+
+    assert directive.action is RepairAction.PRESERVE_OPTIONS
+    assert directive.preserve is True
+    assert directive.exact_ref is None
+    assert directive.allowed_refs == (
+        "call_snapshot_a::data.total_value",
+        "call_snapshot_b::data.total_value",
+    )
+
+
+def test_preserve_options_contract_accepts_any_proven_ref_but_not_other_refs():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "221963026.08",
+                "figure_value": 221963026.08,
+                "figure_percent": False,
+                "figure_currency": True,
+                "figure_digits": "221963026.08",
+                "reason": "field_ref_needs_call_id",
+                "proven_ref_repair_candidates": [
+                    "call_snapshot_a::data.total_value",
+                    "call_snapshot_b::data.total_value",
+                ],
+            }
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
+
+    with_first = (
+        "Valor actual ARS 221963026.08.\n\n"
+        "```figures\n"
+        "221963026.08 | observed | current value | call_snapshot_a::data.total_value\n"
+        "```"
+    )
+    with_second = (
+        "Valor actual ARS 221963026.08.\n\n"
+        "```figures\n"
+        "221963026.08 | observed | current value | call_snapshot_b::data.total_value\n"
+        "```"
+    )
+    with_wrong = (
+        "Valor actual ARS 221963026.08.\n\n"
+        "```figures\n"
+        "221963026.08 | observed | current value | call_other::data.total_value\n"
+        "```"
+    )
+
+    assert contract.missing_figures(with_first) == ()
+    assert contract.missing_figures(with_second) == ()
+    assert contract.missing_figures(with_wrong) == ("221963026.08",)
+
+
+def test_multiple_candidate_hints_without_proof_remain_droppable():
+    directive = directive_for_issue(
+        {
+            "reason": "field_ref_needs_call_id",
+            "field_ref_candidates": [
+                "call_a::data.metric",
+                "call_b::data.metric",
+            ],
+        }
+    )
+
+    assert directive.action is RepairAction.DROP
+    assert directive.preserve is False
