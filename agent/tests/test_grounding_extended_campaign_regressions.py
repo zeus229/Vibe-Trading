@@ -272,3 +272,67 @@ def test_calc_only_matching_under_broad_relative_tolerance_is_not_proven(
 
     assert metadata["proven_ref_repair_candidates"] == ["call_new|fc_calc::result"]
     assert metadata["exact_ref_repair_candidate"] == "call_new|fc_calc::result"
+
+
+@pytest.mark.parametrize("label", ["AAPL", "TSLA", "ZZZZ", "Acme Corp"])
+def test_unknown_entity_like_row_label_still_blocks_cross_entity_borrow(
+    tmp_path: Path, label: str
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="show holdings")
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {
+            "positions": [
+                {"symbol": "YPFD", "weight": 0.20},
+            ]
+        },
+        "call_summary|fc_holdings",
+    )
+
+    result = ledger.validate_final_answer(
+        "| Ticker | Weight |\n"
+        "|---|---:|\n"
+        f"| {label} | 20.00% |\n\n"
+        "```figures\n"
+        "20.00% | observed | weight | "
+        "call_summary|fc_holdings::positions[0].weight\n"
+        "```"
+    )
+
+    assert result.valid is False
+    assert any(
+        issue.get("reason") == "entity_ref_needs_scoped_claim"
+        for issue in result.issues
+    ), result.issues
+
+
+def test_non_ticker_summary_row_may_stay_unscoped_for_unscoped_calc(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
+    calc_id = "call_calc|fc_sum"
+    _ingest(
+        ledger,
+        "financial_rigor",
+        {
+            "status": "ok",
+            "command": "calc",
+            "expr": "0.2+0.13+0.06+0.059+0.0565",
+            "result": 0.5055,
+            "result_exact": "0.5055",
+        },
+        calc_id,
+        arguments={"command": "calc", "expr": "0.2+0.13+0.06+0.059+0.0565"},
+    )
+
+    result = ledger.validate_final_answer(
+        "| Ticker | Weight |\n"
+        "|---|---:|\n"
+        "| Total conjunto | 50.55% |\n\n"
+        "```figures\n"
+        f"50.55% | observed | sum returned by calc | {calc_id}::result\n"
+        "```"
+    )
+
+    assert result.valid is True, result.issues
