@@ -925,6 +925,19 @@ class _PolicyMixin:
         if not label or not _SUMMARY_ROW_LABEL_RE.fullmatch(label):
             return False
 
+        if declaration.role == "derived":
+            derivation = self._derivation(
+                declaration, None, self._evidence, money=figure.currency
+            )
+            if (
+                not isinstance(derivation, str)
+                and derivation is not None
+                and self._result_matches(figure, derivation[0], declaration.note)
+            ):
+                return True
+            if self._deterministic_derive_metadata(figure):
+                return True
+
         refs = [declaration.ref]
         refs.extend(
             self._tool_field_ref_candidates(declaration.ref, None, figure)
@@ -2331,6 +2344,73 @@ class _PolicyMixin:
             "entity_ref_symbol": symbol,
         }
 
+    def _canonical_position_weight_replacement(
+        self,
+        declaration: Declaration,
+        figure: Figure,
+        symbol: str | None,
+    ) -> dict[str, Any]:
+        """Canonical entity weight replacing a risk-normalized aggregate weight.
+
+        Asistente Casa exposes risk_xray_args.weights as an analysis-normalized
+        aggregate view and holdings_native[*].weight as the canonical portfolio
+        position weight. These are different semantics, so a mismatch must
+        replace both the numeric value and ref rather than pretending the old
+        number was observed at the canonical ref.
+        """
+        if not symbol or "::" not in declaration.ref:
+            return {}
+        scope, field = (part.strip() for part in declaration.ref.split("::", 1))
+        folded = field.casefold()
+        if "risk_xray_args.weights." not in folded:
+            return {}
+
+        tool_alias = scope.removeprefix("functions.")
+        candidates: list[tuple[str, float]] = []
+        for record in self._evidence:
+            if (
+                record.status != "observed"
+                or record.value is None
+                or record.symbol != symbol
+                or record.identity_scope != "entity"
+                or "holdings_native" not in record.field.casefold()
+                or not record.field.casefold().endswith(".weight")
+            ):
+                continue
+            if scope not in {
+                record.call_id,
+                record.tool,
+                f"functions.{record.tool}",
+            } and tool_alias != record.tool:
+                continue
+            ref = self._ref_source(record.call_id, record.field, record.scope)[1]
+            candidates.append((ref, float(record.value)))
+
+        unique = list(dict.fromkeys(candidates))
+        if len(unique) != 1:
+            return {}
+        ref, raw_value = unique[0]
+        replacement_value = raw_value * 100.0 if figure.percent else raw_value
+        places = (
+            len((figure.digits or "").split(".", 1)[1])
+            if "." in (figure.digits or "")
+            else 0
+        )
+        replacement_text = (
+            f"{replacement_value:.{places}f}"
+            if places
+            else f"{replacement_value:g}"
+        ) + ("%" if figure.percent else "")
+        return {
+            "replacement_ref_candidate": ref,
+            "replacement_value": replacement_value,
+            "replacement_text": replacement_text,
+            "replacement_digits": (
+                f"{replacement_value:.{places}f}" if places else f"{replacement_value:g}"
+            ),
+            "replacement_entity_symbol": symbol,
+        }
+
     def _check_observed(
         self,
         figure: Figure,
@@ -2370,6 +2450,28 @@ class _PolicyMixin:
                             **self._exact_repair_metadata(
                                 twin_candidates, figure, symbol
                             ),
+                        )
+                    ]
+                canonical_replacement = self._canonical_position_weight_replacement(
+                    declaration, figure, symbol
+                )
+                if canonical_replacement:
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "entity_value_needs_canonical_replacement",
+                            "is declared from a risk-normalized aggregate weight, but "
+                            "this entity has one canonical portfolio-position weight; "
+                            "replace both the written number and the ref with the "
+                            "canonical entity value supplied below",
+                            source_tool_call_ids=[declaration.ref],
+                            field_ref_candidates=[
+                                str(canonical_replacement["replacement_ref_candidate"])
+                            ],
+                            **canonical_replacement,
                         )
                     ]
                 call_field_candidates = self._tool_field_ref_candidates(
@@ -2776,6 +2878,37 @@ class _PolicyMixin:
             ]
         result, _ = derivation
         if self._result_matches(figure, result, declaration.note):
+            derive_hint = self._deterministic_derive_metadata(figure)
+            expected_refs = {
+                str(item)
+                for item in derive_hint.get("derive_operand_refs") or []
+            }
+            if expected_refs:
+                declared_refs: set[str] = set()
+                for item in re.split(r"[,;]", declaration.ref or ""):
+                    ref = item.strip()
+                    if not ref or "::" not in ref:
+                        continue
+                    call_id, field = ref.split("::", 1)
+                    declared_refs.add(
+                        self._canonical_session_call_id(call_id.strip())
+                        + "::"
+                        + field.strip()
+                    )
+                if not expected_refs.issubset(declared_refs):
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "derived",
+                            symbol,
+                            "derived_refs_incomplete",
+                            "is numerically correct, but its declaration omits one or "
+                            "more exact operand refs proven by the deterministic calc",
+                            missing_derive_refs=sorted(expected_refs - declared_refs),
+                            **derive_hint,
+                        )
+                    ]
             return []
         # Reported in the figure's own units, as ``_result_matches`` compares it.
         scaled = result * 100.0 if figure.percent else result
