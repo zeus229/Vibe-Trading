@@ -113,6 +113,7 @@ _CORRECTION_REASONS = {
     "symbol_mismatch": "it is declared for one instrument but the sentence writes it about another",
     "aggregate_ref_needs_unscoped_claim": "the exact ref is aggregate/unscoped evidence; " + _AGGREGATE_SPATIAL_REWRITE,
     "entity_ref_needs_scoped_claim": "the exact ref/value belongs to one entity, but the surrounding answer context attributes the figure to a different entity",
+    "field_ref_needs_numeric_sibling": "the declared field holds the value but not the required evidence kind; use the exact same-call numeric sibling listed below",
     "citation_not_visible": "its source is not named on the figure's own line, and the note is stripped before the user reads the answer",
 }
 
@@ -186,6 +187,10 @@ def _correction_line(issue: dict[str, Any]) -> str:
     action = directive.action.value
     if directive.target_scope:
         evidence += f"; repair target_scope={directive.target_scope}"
+    if directive.derive_formula:
+        evidence += f"; repair derive_formula={directive.derive_formula}"
+    if directive.action.value == "derive" and directive.allowed_refs:
+        evidence += "; repair derive_refs=" + "; ".join(directive.allowed_refs)
     if directive.preserve:
         evidence += "; repair preserve=true"
     symbol = issue.get("symbol")
@@ -306,6 +311,7 @@ class _ReleaseMixin:
                     "  auto_repair: KEEP the numeric figure, DECLARE it with the exact repaired ref supplied, and do not delete or rephrase it away.",
                     "  preserve_rewrite: KEEP the numeric figure and evidence, DECLARE it with the repaired ref when supplied, and rewrite only the surrounding semantic scope/context to the supplied target_scope.",
                     "  preserve_options: KEEP the numeric figure; several exact refs are proven to contain this written value. DECLARE it with one of the proven repair refs listed on that issue. Do not delete the claim merely because more than one source/cut supports it.",
+                    "  derive: KEEP the numeric figure and DECLARE it as derived using exactly the supplied derive_formula and every supplied derive_ref, separated by semicolons. Preserve the unit/shape used in the prose; do not turn percentage points into percent merely because the operands are ratios.",
                     "  recover: evidence is missing; never fabricate a replacement value. Recovery is handled by the bounded recovery path, not by inventing text.",
                     "  drop: removal is allowed only because no deterministic safe repair was proven.",
                     "Do NOT add new measured numeric claims, comparisons, differences, excesses, gaps, or derived figures unless they directly replace one rejected figure listed above. Preserve already-passed figures instead of embellishing them with new arithmetic.",
@@ -351,7 +357,9 @@ class _ReleaseMixin:
                 "it derived. Use its exact `call_id::full.field.path` ref. For a real "
                 "derivation, show the formula and exact source call_id::field.path refs.",
                 "For field refs, use ONLY `call_id::full.field.path` from the exact call "
-                "in this session. Never use a bare tool name, decorated tool name, or "
+                "in this session. Copy every ref byte-for-byte. A literal `|fc_...` inside "
+                "a call_id is part of the call id and MUST be retained; it is not a figures-column delimiter. "
+                "Never use a bare tool name, decorated tool name, or "
                 "`tool_name(args)::field.path`; do not append labels, scopes, parentheses "
                 "or prose to a ref. Return the "
                 "FULL revised answer, not just corrected prose. Preserve or rebuild the "
