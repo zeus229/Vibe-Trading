@@ -19,6 +19,7 @@ class RepairAction(str, Enum):
 
     AUTO_REPAIR = "auto_repair"
     PRESERVE_REWRITE = "preserve_rewrite"
+    PRESERVE_OPTIONS = "preserve_options"
     RECOVER = "recover"
     DROP = "drop"
 
@@ -29,7 +30,8 @@ class RepairDirective:
 
     action: RepairAction
     preserve: bool
-    exact_ref: str | None = None
+    allowed_refs: tuple[str, ...] = ()
+    allowed_refs: tuple[str, ...] = ()
     target_scope: str | None = None
 
 
@@ -39,16 +41,40 @@ _RECOVERY_REASONS = frozenset({"no_evidence", "symbol_never_handled", "no_symbol
 def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
     """Classify an issue without changing the gate's verdict."""
 
+    proven_refs = tuple(
+        dict.fromkeys(
+            str(item) for item in issue.get("proven_ref_repair_candidates") or []
+        )
+    )
     exact_ref = issue.get("exact_ref_repair_candidate")
     aggregate_ref = issue.get("aggregate_ref_candidate")
+    aggregate_refs = tuple(
+        dict.fromkeys(
+            str(item) for item in issue.get("aggregate_ref_candidates") or []
+        )
+    )
     entity = issue.get("entity_ref_symbol")
     reason = str(issue.get("reason") or "")
+
+    if len(proven_refs) > 1:
+        target_scope = None
+        if aggregate_refs and set(aggregate_refs) == set(proven_refs):
+            target_scope = "aggregate"
+        elif entity:
+            target_scope = f"entity:{entity}"
+        return RepairDirective(
+            RepairAction.PRESERVE_OPTIONS,
+            preserve=True,
+            allowed_refs=proven_refs,
+            target_scope=target_scope,
+        )
 
     if aggregate_ref:
         return RepairDirective(
             RepairAction.PRESERVE_REWRITE,
             preserve=True,
             exact_ref=str(aggregate_ref),
+            allowed_refs=(str(aggregate_ref),),
             target_scope="aggregate",
         )
     if entity:
@@ -56,10 +82,12 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
             dict.fromkeys(str(item) for item in issue.get("field_ref_candidates") or [])
         )
         entity_ref = exact_ref or (candidates[0] if len(candidates) == 1 else None)
+        allowed = (str(entity_ref),) if entity_ref else ()
         return RepairDirective(
             RepairAction.PRESERVE_REWRITE,
             preserve=True,
             exact_ref=str(entity_ref) if entity_ref else None,
+            allowed_refs=allowed,
             target_scope=f"entity:{entity}",
         )
     if exact_ref:
@@ -67,6 +95,7 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
             RepairAction.AUTO_REPAIR,
             preserve=True,
             exact_ref=str(exact_ref),
+            allowed_refs=(str(exact_ref),),
         )
     if reason in _RECOVERY_REASONS:
         # Missing evidence is a recovery obligation, not a claim-preservation
@@ -108,7 +137,9 @@ class RequiredFigure:
             value=float(value),
             percent=percent,
             digits=str(digits or ""),
-            exact_ref=directive.exact_ref,
+            allowed_refs=directive.allowed_refs or (
+                (directive.exact_ref,) if directive.exact_ref else ()
+            ),
         )
 
     def _value_matches(self, value: float) -> bool:
@@ -130,14 +161,14 @@ class RequiredFigure:
 
         if declaration.percent != self.percent or not self._value_matches(declaration.value):
             return False
-        if not self.exact_ref:
+        if not self.allowed_refs:
             return True
         refs = {
             part.strip()
             for part in declaration.ref.split(";")
             if part.strip()
         }
-        return self.exact_ref in refs
+        return bool(refs.intersection(self.allowed_refs))
 
 
 @dataclass(frozen=True)
@@ -169,7 +200,7 @@ class CorrectionContract:
             claim = RequiredFigure.from_issue(issue, directive)
             if claim is not None and not any(
                 existing.percent == claim.percent
-                and existing.exact_ref == claim.exact_ref
+                and existing.allowed_refs == claim.allowed_refs
                 and abs(existing.value - claim.value)
                 <= max(abs(claim.value) * 1e-9, 1e-9)
                 for existing in required
