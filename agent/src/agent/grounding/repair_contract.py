@@ -11,12 +11,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Iterable
 
-from src.agent.grounding.figures import (
-    Figure,
-    parse_figures_block,
-    scan_figures,
-    strip_figures_block,
-)
+from src.agent.grounding.figures import Declaration, parse_figures_block
 
 
 class RepairAction(str, Enum):
@@ -57,10 +52,14 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
             target_scope="aggregate",
         )
     if entity:
+        candidates = list(
+            dict.fromkeys(str(item) for item in issue.get("field_ref_candidates") or [])
+        )
+        entity_ref = exact_ref or (candidates[0] if len(candidates) == 1 else None)
         return RepairDirective(
             RepairAction.PRESERVE_REWRITE,
             preserve=True,
-            exact_ref=str(exact_ref) if exact_ref else None,
+            exact_ref=str(entity_ref) if entity_ref else None,
             target_scope=f"entity:{entity}",
         )
     if exact_ref:
@@ -78,54 +77,67 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
 
 @dataclass(frozen=True)
 class RequiredFigure:
-    """Semantic identity of one rejected-but-repairable measured figure."""
+    """Semantic identity of one rejected-but-repairable measured claim.
+
+    Presence is checked against the corrected draft's validated figures block,
+    not against presentation context in prose. This makes the contract stable
+    across harmless rewrites such as currency labels moving around the number,
+    while still binding the claim to its proven exact evidence ref when known.
+    """
 
     text: str
     value: float
     percent: bool
-    currency: bool
     digits: str
+    exact_ref: str | None = None
 
     @classmethod
-    def from_issue(cls, issue: dict[str, Any]) -> "RequiredFigure | None":
+    def from_issue(
+        cls, issue: dict[str, Any], directive: RepairDirective
+    ) -> "RequiredFigure | None":
         text = str(issue.get("value") or "")
         value = issue.get("figure_value")
         percent = issue.get("figure_percent")
-        currency = issue.get("figure_currency")
         digits = issue.get("figure_digits")
         if not text or not isinstance(value, (int, float)):
             return None
-        if not isinstance(percent, bool) or not isinstance(currency, bool):
+        if not isinstance(percent, bool):
             return None
         return cls(
             text=text,
             value=float(value),
             percent=percent,
-            currency=currency,
             digits=str(digits or ""),
+            exact_ref=directive.exact_ref,
         )
 
-    def matches(self, figure: Figure) -> bool:
-        """Whether revised prose carries the same measured claim.
-
-        Formatting may change (for example 0.2250% -> 0.225%). The contract is
-        about claim survival, not spelling survival.
-        """
-        if figure.percent != self.percent or figure.currency != self.currency:
-            return False
+    def _value_matches(self, value: float) -> bool:
         target = self.value
-        candidate = figure.value
-        if abs(candidate - target) <= max(abs(target) * 1e-9, 1e-9):
+        if abs(value - target) <= max(abs(target) * 1e-9, 1e-9):
             return True
         required_digits = self.digits or ""
         if "." not in required_digits:
             return False
         places = len(required_digits.split(".", 1)[1])
         half_unit = 0.5 * 10.0 ** (-places)
-        relative = abs(candidate) * 0.005
-        return abs(candidate - target) <= max(
+        relative = abs(value) * 0.005
+        return abs(value - target) <= max(
             min(relative, half_unit * (1 + 1e-9)), 1e-9
         )
+
+    def matches_declaration(self, declaration: Declaration) -> bool:
+        """Whether one validated declaration carries this required claim."""
+
+        if declaration.percent != self.percent or not self._value_matches(declaration.value):
+            return False
+        if not self.exact_ref:
+            return True
+        refs = {
+            part.strip()
+            for part in declaration.ref.split(";")
+            if part.strip()
+        }
+        return self.exact_ref in refs
 
 
 @dataclass(frozen=True)
@@ -154,10 +166,10 @@ class CorrectionContract:
             directives.append((text, directive))
             if not directive.preserve:
                 continue
-            claim = RequiredFigure.from_issue(issue)
+            claim = RequiredFigure.from_issue(issue, directive)
             if claim is not None and not any(
                 existing.percent == claim.percent
-                and existing.currency == claim.currency
+                and existing.exact_ref == claim.exact_ref
                 and abs(existing.value - claim.value)
                 <= max(abs(claim.value) * 1e-9, 1e-9)
                 for existing in required
@@ -166,20 +178,16 @@ class CorrectionContract:
         return cls(tuple(required), tuple(directives))
 
     def missing_figures(self, content: str) -> tuple[str, ...]:
-        """Required repairable claims missing semantically from revised prose."""
+        """Required repairable claims absent from the validated figures block."""
 
         block = parse_figures_block(content)
-        body = strip_figures_block(content, block)
-        body_block = parse_figures_block(body)
-        present = [
-            figure
-            for figure in scan_figures(body, body_block)
-            if figure.shape == "measured"
-        ]
         return tuple(
             required.text
             for required in self.required_figures
-            if not any(required.matches(figure) for figure in present)
+            if not any(
+                required.matches_declaration(declaration)
+                for declaration in block.declarations
+            )
         )
 
     def violation_prompt(self, missing: Iterable[str]) -> str:
