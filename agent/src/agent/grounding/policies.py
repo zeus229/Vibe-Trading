@@ -128,6 +128,20 @@ _MAX_INDEXED_REF_CANDIDATES = 12
 _MAX_CONTAINER_REF_CANDIDATES = 5
 _MAX_CALL_REF_CANDIDATES = 5
 
+# Table-row labels that unambiguously describe an aggregate rather than an
+# instrument. This is intentionally narrow: company/name-shaped labels such as
+# "Acme Corp" never qualify merely because their declaration is unscoped.
+_SUMMARY_ROW_LABEL_RE = re.compile(
+    r"^(?:"
+    r"total(?:\s+(?:conjunto|combined|general|portfolio))?|"
+    r"subtotal|"
+    r"sum(?:\s+(?:of\s+the\s+)?(?:top\s+)?\w+)?|"
+    r"suma(?:\s+de\s+(?:las|los)\s+\w+)?|"
+    r"aggregate|agregado|combined|conjunto"
+    r")$",
+    re.IGNORECASE,
+)
+
 
 def _index_normalized(path: str) -> str:
     """Spell dotted collection indices with brackets."""
@@ -883,29 +897,49 @@ class _PolicyMixin:
         declaration: Declaration,
         figure: Figure,
     ) -> bool:
-        """Whether a non-ticker summary-row label should stay unscoped.
+        """Whether an explicit aggregate-row label should stay unscoped.
 
-        Bare ticker-shaped labels remain entities even when unknown, preserving
-        fail-closed isolation (AAPL/TSLA/ZZZZ). Only labels that are plainly not
-        ticker-shaped may be suppressed, and only when the declaration itself
-        resolves exclusively to unscoped/aggregate evidence.
+        The label itself must be unmistakably aggregate (Total/Subtotal/Sum,
+        including the Spanish forms used in portfolio tables). This prevents a
+        company/name-shaped row such as ``Acme Corp`` from borrowing aggregate
+        evidence.
+
+        The declaration may already be an exact ref, or it may be a tool-name
+        ref that can be repaired to exact call refs. In either case at least one
+        value-compatible source must resolve exclusively to aggregate/unknown,
+        symbol-less evidence.
         """
         label = re.sub(r"[*_`]+", "", str(row_label)).strip()
-        if not label or re.fullmatch(r"[A-Za-z0-9&.-]{1,20}", label):
+        if not label or not _SUMMARY_ROW_LABEL_RE.fullmatch(label):
             return False
-        scoped = self._referenced(declaration.ref, None, figure)
-        if scoped is None:
-            return False
-        records, metric_values = scoped
-        if metric_values:
-            return True
-        if not records:
-            return False
-        return all(
-            not record.symbol
-            and record.identity_scope in {"aggregate", "unknown"}
-            for record in records
+
+        refs = [declaration.ref]
+        refs.extend(
+            self._tool_field_ref_candidates(declaration.ref, None, figure)
         )
+
+        for ref in dict.fromkeys(refs):
+            scoped = self._referenced(ref, None, figure)
+            if scoped is None:
+                continue
+            records, metric_values = scoped
+            if metric_values:
+                return True
+            matching = [
+                record
+                for record in records
+                if record.value is not None
+                and not record.symbol
+                and record.identity_scope in {"aggregate", "unknown"}
+                and self._matches_evidence(
+                    figure,
+                    [float(record.value)],
+                    [float(record.value)],
+                )
+            ]
+            if matching:
+                return True
+        return False
 
     @staticmethod
     def _figure_is_market_price(
