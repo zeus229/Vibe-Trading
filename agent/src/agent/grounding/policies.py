@@ -1527,16 +1527,34 @@ class _PolicyMixin:
         matching = [label for label in ranked if label in compatible]
         return (matching or ranked)[:_MAX_CALL_REF_CANDIDATES]
 
-    def _aggregate_repair_metadata(
-        self, candidates: Sequence[str], figure: Figure
+    def _exact_repair_metadata(
+        self,
+        candidates: Sequence[str],
+        figure: Figure,
+        symbol: str | None,
     ) -> dict[str, str]:
-        """Correction-only metadata for one exact aggregate repair candidate."""
+        """Correction metadata only for a candidate proven to hold the figure."""
         if len(candidates) != 1:
             return {}
         candidate = candidates[0]
-        if not self._aggregate_exact_ref_match(candidate, figure):
-            return {}
-        return {"aggregate_ref_candidate": candidate}
+        metadata: dict[str, str] = {}
+        scoped = self._referenced(candidate, symbol, figure)
+        if scoped is not None:
+            records, metric_values = scoped
+            values = [
+                float(record.value)
+                for record in records
+                if record.value is not None
+            ] + metric_values
+            money = bool(figure.currency and not figure.percent)
+            if values and self._matches_evidence(
+                figure, values, [] if money else values
+            ):
+                metadata["exact_ref_repair_candidate"] = candidate
+        if self._aggregate_exact_ref_match(candidate, figure):
+            metadata["aggregate_ref_candidate"] = candidate
+            metadata["exact_ref_repair_candidate"] = candidate
+        return metadata
 
     def _names_session_source(self, name: str) -> bool:
         """Whether ``name`` is a call id, tool name or backtest run of this session."""
@@ -2013,7 +2031,7 @@ class _PolicyMixin:
                             source_tool_call_ids=[declaration.ref],
                             ambiguous_sources=call_field_candidates,
                             field_ref_candidates=call_field_candidates,
-                            **self._aggregate_repair_metadata(call_field_candidates, figure),
+                            **self._exact_repair_metadata(call_field_candidates, figure, symbol),
                         )
                     ]
                 session_scope_candidates = self._session_scope_field_ref_candidates(
@@ -2032,8 +2050,8 @@ class _PolicyMixin:
                             "this scalar",
                             source_tool_call_ids=[declaration.ref],
                             field_ref_candidates=session_scope_candidates,
-                            **self._aggregate_repair_metadata(
-                                session_scope_candidates, figure
+                            **self._exact_repair_metadata(
+                                session_scope_candidates, figure, symbol
                             ),
                         )
                     ]
@@ -2052,8 +2070,8 @@ class _PolicyMixin:
                             "is not a call id, tool or run of this session",
                             source_tool_call_ids=[declaration.ref],
                             field_ref_candidates=unknown_scope_candidates,
-                            **self._aggregate_repair_metadata(
-                                unknown_scope_candidates, figure
+                            **self._exact_repair_metadata(
+                                unknown_scope_candidates, figure, symbol
                             ),
                         )
                     ]
