@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import ast
 import json
+from decimal import Decimal, ROUND_HALF_UP
 import math
 import os
 from dataclasses import dataclass, field
@@ -593,11 +594,40 @@ class _PolicyMixin:
             if evaluated is not None
             for operand in evaluated[1]
         ]
+        # Resolve duplicate numeric declarations by document order. A single
+        # compatible declaration may still ground repeated prose occurrences,
+        # preserving the historical contract. When two or more declarations
+        # share the same numeric spelling, however, silently reusing the first
+        # ref cross-wires distinct claims (for example CER and cash both at
+        # 0.23%). Assign those duplicate declarations one-to-one in declaration
+        # order; any extra occurrence fails closed instead of borrowing a ref.
+        declaration_by_span: dict[tuple[int, int], Declaration | None] = {}
+        duplicate_offsets: dict[tuple[int, ...], int] = {}
+        for candidate_figure in figures:
+            if candidate_figure.shape not in ("measured", "bare"):
+                continue
+            matches = block.matching_declarations(
+                candidate_figure.value,
+                candidate_figure.percent,
+                candidate_figure.digits,
+            )
+            if len(matches) <= 1:
+                declaration_by_span[(candidate_figure.start, candidate_figure.end)] = (
+                    matches[0] if matches else None
+                )
+                continue
+            key = tuple(item.index for item in matches)
+            offset = duplicate_offsets.get(key, 0)
+            declaration_by_span[(candidate_figure.start, candidate_figure.end)] = (
+                matches[offset] if offset < len(matches) else None
+            )
+            duplicate_offsets[key] = offset + 1
+
         checked_price = False
         for figure in figures:
             if figure.shape not in ("measured", "bare"):
                 continue
-            declaration = block.match(figure.value, figure.percent, figure.digits)
+            declaration = declaration_by_span.get((figure.start, figure.end))
             symbol = self._figure_symbol(
                 content,
                 figure,
@@ -736,7 +766,7 @@ class _PolicyMixin:
             figure = figures_by_span.get((span[0], span[1]))
             if figure is None:
                 continue
-            declaration = block.match(figure.value, figure.percent, figure.digits)
+            declaration = declaration_by_span.get((figure.start, figure.end))
             issue.update(
                 percent=figure.percent,
                 currency=figure.currency,
@@ -1770,7 +1800,27 @@ class _PolicyMixin:
         written = figure.digits or figure.text
         band = abs(target) * (ROUNDED_BAND if "." in written else _TOLERANCE)
         if "." in written:
-            band = min(band, _written_half_unit(written) * unit * (1 + 1e-9))
+            half_unit = _written_half_unit(written) * unit
+            band = min(band, half_unit * (1 + 1e-9))
+            gap = abs(candidate - target)
+            if gap <= max(band, 1e-9):
+                return True
+
+            # Preserve the 0.5% cap for ordinary coarse rounding, but allow an
+            # exact decimal half-way case when ROUND_HALF_UP produces precisely
+            # the written figure. This distinguishes 0.225 -> 0.23 (valid) from
+            # 0.225 -> 0.22 and keeps 0.82467 -> 0.82 rejected.
+            if unit and abs(gap - half_unit) <= max(half_unit * 1e-9, 1e-12):
+                places = len(written.split(".", 1)[1])
+                quant = Decimal(1).scaleb(-places)
+                rounded_target = (Decimal(str(target)) / Decimal(str(unit))).quantize(
+                    quant, rounding=ROUND_HALF_UP
+                )
+                written_candidate = (Decimal(str(candidate)) / Decimal(str(unit))).quantize(
+                    quant
+                )
+                return rounded_target == written_candidate
+            return False
         return abs(candidate - target) <= max(band, 1e-9)
 
     def _aggregate_exact_ref_match(
