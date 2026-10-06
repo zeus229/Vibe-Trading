@@ -345,3 +345,64 @@ def test_multiple_candidate_hints_without_proof_remain_droppable():
 
     assert directive.action is RepairAction.DROP
     assert directive.preserve is False
+
+
+def test_contract_accepts_unique_pre_pipe_alias_for_allowed_ref():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "35.81%",
+                "figure_value": 35.81,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "35.81",
+                "reason": "field_ref_needs_call_id",
+                "proven_ref_repair_candidates": [
+                    "call_alpha|fc_beta::data.volatility.annualized_vol"
+                ],
+            }
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
+
+    draft = (
+        "Volatility is 35.81%.\n\n"
+        "```figures\n"
+        "35.81% | observed | annualized volatility | "
+        "call_alpha::data.volatility.annualized_vol\n"
+        "```"
+    )
+
+    assert contract.missing_figures(draft) == ()
+
+
+def test_contract_rejects_ambiguous_pre_pipe_alias_across_allowed_refs():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "35.81%",
+                "figure_value": 35.81,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "35.81",
+                "reason": "field_ref_needs_call_id",
+                "proven_ref_repair_candidates": [
+                    "call_alpha|fc_one::data.volatility.annualized_vol",
+                    "call_alpha|fc_two::data.volatility.annualized_vol",
+                ],
+            }
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
+
+    draft = (
+        "Volatility is 35.81%.\n\n"
+        "```figures\n"
+        "35.81% | observed | annualized volatility | "
+        "call_alpha::data.volatility.annualized_vol\n"
+        "```"
+    )
+
+    assert contract.missing_figures(draft) == ("35.81%",)
