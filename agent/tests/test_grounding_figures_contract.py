@@ -631,6 +631,7 @@ def test_the_correction_prompt_names_each_figure_and_its_reason(
     assert "DECLARE" in prompt
     assert "auto_repair" in prompt
     assert "preserve_rewrite" in prompt
+    assert "preserve_options" in prompt
     assert "recover" in prompt
     assert "drop" in prompt
 
