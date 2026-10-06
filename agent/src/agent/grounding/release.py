@@ -75,6 +75,13 @@ _AGGREGATE_SPATIAL_REWRITE = (
     "to a separate paragraph or table row"
 )
 
+_ENTITY_SPATIAL_REWRITE = (
+    "keep the exact value/ref but rewrite the figure in a line, table cell, or paragraph "
+    "whose numeric claim is scoped only to entity {entity}; do not mix another ticker, "
+    "benchmark, or entity into that same numeric cell/line; move multi-entity comparisons "
+    "to separate cells, rows, or sentences"
+)
+
 _CORRECTION_REASONS = {
     "undeclared": "it is not declared at all",
     "no_evidence": "this session holds no evidence of that kind to check it against",
@@ -100,6 +107,7 @@ _CORRECTION_REASONS = {
     "proposed_not_a_price": "a proposed level is a price, not a percentage; state the price it implies",
     "symbol_mismatch": "it is declared for one instrument but the sentence writes it about another",
     "aggregate_ref_needs_unscoped_claim": "the exact ref is aggregate/unscoped evidence; " + _AGGREGATE_SPATIAL_REWRITE,
+    "entity_ref_needs_scoped_claim": "the exact ref/value belongs to one entity, but the surrounding answer context attributes the figure to a different entity",
     "citation_not_visible": "its source is not named on the figure's own line, and the note is stripped before the user reads the answer",
 }
 
@@ -156,6 +164,9 @@ def _correction_line(issue: dict[str, Any]) -> str:
         evidence += "; keep the written value and replace only the incorrect ref with the exact ref listed above"
     if issue.get("aggregate_ref_candidate"):
         evidence += "; " + _AGGREGATE_SPATIAL_REWRITE
+    entity_ref_symbol = issue.get("entity_ref_symbol")
+    if entity_ref_symbol:
+        evidence += "; " + _ENTITY_SPATIAL_REWRITE.format(entity=entity_ref_symbol)
     nearest = issue.get("observed_nearest") or []
     if nearest:
         evidence += "; nearest observed " + ", ".join(_format_price(float(item)) for item in nearest)
@@ -182,6 +193,14 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
     aggregate_candidate = issue.get("aggregate_ref_candidate")
     if aggregate_candidate or reason == "aggregate_ref_needs_unscoped_claim":
         parts.append("aggregate=" + _AGGREGATE_SPATIAL_REWRITE)
+    entity_ref_symbol = issue.get("entity_ref_symbol")
+    if entity_ref_symbol or reason == "entity_ref_needs_scoped_claim":
+        parts.append(
+            "entity="
+            + _ENTITY_SPATIAL_REWRITE.format(
+                entity=entity_ref_symbol or "the entity named by the exact ref"
+            )
+        )
     return " | ".join(parts)
 
 def _strip_release_markers(content: str) -> str:
