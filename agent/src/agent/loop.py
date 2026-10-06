@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional
 
 from src.agent.context import ContextBuilder
 from src.agent.grounding import GroundingLedger
+from src.agent.grounding.policies import ValidationResult
 from src.agent.grounding.release import MAX_GROUNDING_REVISIONS
 from src.agent.memory import WorkspaceMemory
 from src.agent.progress import HeartbeatTimer, ProgressEvent, _set_emitter
@@ -1209,6 +1210,8 @@ class AgentLoop:
         # keeps tools available; ordinary correction turns do not.
         grounding_correction_text_only = False
         pending_grounding_draft = ""
+        pending_grounding_contract = None
+        correction_contract_retries = 0
         llm_usage_summary = _new_llm_usage_summary(self.llm)
         last_response_model: str | None = None
         goal_continuations = 0
@@ -1750,6 +1753,63 @@ class AgentLoop:
                                     )
                                     final_content = repaired
                                     validation = recheck
+                        if validation.valid and pending_grounding_contract is not None:
+                            missing = self._grounding.correction_contract_missing(
+                                final_content, pending_grounding_contract
+                            )
+                            if missing:
+                                trace.write(
+                                    {
+                                        "type": "grounding_correction_contract_violation",
+                                        "iter": current_iter,
+                                        "missing_figures": list(missing),
+                                    }
+                                )
+                                react_trace.append(
+                                    {
+                                        "type": "grounding_correction_contract_violation",
+                                        "missing_figures": list(missing),
+                                    }
+                                )
+                                if (
+                                    not forced_grounding_release
+                                    and correction_contract_retries < 1
+                                    and iteration < self.max_iterations
+                                ):
+                                    messages.append(
+                                        {"role": "assistant", "content": final_content}
+                                    )
+                                    messages.append(
+                                        {
+                                            "role": "user",
+                                            "content": (
+                                                "<system>"
+                                                + pending_grounding_contract.violation_prompt(missing)
+                                                + "</system>"
+                                            ),
+                                        }
+                                    )
+                                    correction_contract_retries += 1
+                                    grounding_correction_text_only = True
+                                    final_content = ""
+                                    continue
+                                validation = ValidationResult(
+                                    valid=False,
+                                    issues=[
+                                        {
+                                            "code": "correction_contract_violation",
+                                            "reason": "required_figure_removed",
+                                            "message": (
+                                                "the correction removed required measured figure(s): "
+                                                + ", ".join(missing)
+                                            ),
+                                        }
+                                    ],
+                                    released_text="",
+                                    passed_figures=validation.passed_figures,
+                                )
+                            else:
+                                pending_grounding_contract = None
                         if validation.valid:
                             # A validated answer can still be a stub that declines
                             # the explicit recovery tool call and silently drops
@@ -1876,6 +1936,10 @@ class AgentLoop:
                                 final_content = ""
                                 continue
                             if not forced_grounding_release:
+                                pending_grounding_contract = self._grounding.correction_contract(
+                                    validation
+                                )
+                                correction_contract_retries = 0
                                 messages.append(
                                     {
                                         "role": "user",
@@ -1986,6 +2050,8 @@ class AgentLoop:
                     # research turn and must regain its normal tool access.
                     grounding_correction_text_only = False
                     pending_grounding_draft = ""
+                    pending_grounding_contract = None
+                    correction_contract_retries = 0
                     should_continue_goal = False
                     continuation_snapshot = None
                     _max_cont = _goal_max_continuations()
