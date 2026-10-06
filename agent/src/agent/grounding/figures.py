@@ -18,7 +18,7 @@ import re
 import string
 import unicodedata
 from dataclasses import dataclass
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 from typing import Iterable, Sequence
 
 from src.agent.grounding.identity import _CANONICAL_SYMBOL_RE
@@ -168,44 +168,66 @@ class FiguresBlock:
     malformed: tuple[tuple[int, str], ...]
     spans: tuple[tuple[int, int], ...] = ()
 
+    def matching_declarations(
+        self, value: float, percent: bool, digits: str | None = None
+    ) -> tuple[Declaration, ...]:
+        """Return every declaration compatible with one prose figure.
+
+        Exact numeric matches win. Decimal prose may also match a more precise
+        declaration when it is within both the written half-unit and the
+        relative rounding band. One explicit decimal half-way case is also
+        accepted when ROUND_HALF_UP produces exactly the prose value; this keeps
+        0.225 -> 0.23 valid without admitting coarse values such as
+        0.82467 -> 0.82.
+        """
+        candidates = [item for item in self.declarations if item.percent == percent]
+        exact = tuple(
+            item
+            for item in candidates
+            if abs(item.value - value) <= max(abs(value) * 1e-9, 1e-9)
+        )
+        if exact:
+            return exact
+        if not digits or "." not in digits:
+            return ()
+        places = len(digits.split(".", 1)[1])
+        half_unit = 0.5 * 10.0 ** -places
+        quant = Decimal(1).scaleb(-places)
+        written = Decimal(str(value)).quantize(quant)
+        rounded: list[tuple[float, Declaration]] = []
+        for item in candidates:
+            gap = abs(item.value - value)
+            within_relative_band = gap <= abs(item.value) * ROUNDED_BAND
+            tie_rounds_to_written = (
+                abs(gap - half_unit) <= max(half_unit * 1e-9, 1e-12)
+                and Decimal(str(item.value)).quantize(
+                    quant, rounding=ROUND_HALF_UP
+                )
+                == written
+            )
+            if gap <= half_unit * (1 + 1e-9) and (
+                within_relative_band or tie_rounds_to_written
+            ):
+                rounded.append((gap, item))
+        if not rounded:
+            return ()
+        nearest = min(gap for gap, _ in rounded)
+        return tuple(
+            item
+            for gap, item in rounded
+            if abs(gap - nearest) <= max(nearest * 1e-9, 1e-12)
+        )
+
     def match(
         self, value: float, percent: bool, digits: str | None = None
     ) -> Declaration | None:
-        """Return the declaration covering ``value``, or None.
+        """Return the first declaration compatible with ``value``, or None.
 
-        Matching is numeric and percent-ness must agree: ``37%`` and ``0.37`` are
-        different assertions. An exact value (tolerance 1e-9) always wins. Failing
-        that, a figure written with decimals ("38,68") covers a declaration holding
-        the precise observation ("38.68005857871268") when it is that value correctly
-        rounded to the digits written: within half a unit of its last decimal, and
-        never further than :data:`ROUNDED_BAND` of the declared value. A figure written
-        without decimals is only ever an exact match, so a coarse "39" cannot borrow
-        38.68's declaration.
-
-        Args:
-            value: The prose figure's numeric value.
-            percent: Whether the prose figure carries a percent sign.
-            digits: The prose figure's normalized digits ("38.68"), or None to
-                require an exact match.
-
-        Returns:
-            The matching declaration (the nearest one when several round to the
-            same figure), or None.
+        Callers that need to distinguish duplicate declarations with the same
+        numeric spelling should use :meth:`matching_declarations`.
         """
-        candidates = [item for item in self.declarations if item.percent == percent]
-        for declaration in candidates:
-            if abs(declaration.value - value) <= max(abs(value) * 1e-9, 1e-9):
-                return declaration
-        if not digits or "." not in digits:
-            return None
-        half_unit = 0.5 * 10.0 ** -len(digits.split(".", 1)[1])
-        rounded = [
-            (abs(item.value - value), item)
-            for item in candidates
-            if abs(item.value - value) <= half_unit * (1 + 1e-9)
-            and abs(item.value - value) <= abs(item.value) * ROUNDED_BAND
-        ]
-        return min(rounded, key=lambda pair: pair[0])[1] if rounded else None
+        matches = self.matching_declarations(value, percent, digits)
+        return matches[0] if matches else None
 
 
 @dataclass(frozen=True)
