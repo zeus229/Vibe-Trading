@@ -804,8 +804,10 @@ class _PolicyMixin:
                     item for item in matches if item.index not in used_ambiguous
                 ]
             if not available:
-                # Reuse is the final fallback for legitimate repeated prose.
-                available = list(matches)
+                # Multiple-compatible occurrences are one-to-one. Reuse is
+                # only safe in the single-compatible case handled above.
+                resolved[span] = None
+                continue
 
             chosen = available[0]
             resolved[span] = chosen
