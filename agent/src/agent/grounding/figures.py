@@ -168,35 +168,34 @@ class FiguresBlock:
     malformed: tuple[tuple[int, str], ...]
     spans: tuple[tuple[int, int], ...] = ()
 
-    def matching_declarations(
+    def compatible_declarations(
         self, value: float, percent: bool, digits: str | None = None
     ) -> tuple[Declaration, ...]:
-        """Return every declaration compatible with one prose figure.
+        """Return all declarations compatible with one prose figure, in block order.
 
-        Exact numeric matches win. Decimal prose may also match a more precise
-        declaration when it is within both the written half-unit and the
-        relative rounding band. One explicit decimal half-way case is also
-        accepted when ROUND_HALF_UP produces exactly the prose value; this keeps
-        0.225 -> 0.23 valid without admitting coarse values such as
-        0.82467 -> 0.82.
+        Compatibility includes exact equality and allowed decimal rounding.
+        Unlike :meth:`match`, this method deliberately keeps both kinds: duplicate
+        prose figures may need one rounded declaration and one exact declaration
+        with the same displayed text (for example CER 0.225 -> 0.23% and cash
+        already equal to 0.23%).
         """
         candidates = [item for item in self.declarations if item.percent == percent]
-        exact = tuple(
-            item
-            for item in candidates
-            if abs(item.value - value) <= max(abs(value) * 1e-9, 1e-9)
-        )
-        if exact:
-            return exact
         if not digits or "." not in digits:
-            return ()
+            return tuple(
+                item
+                for item in candidates
+                if abs(item.value - value) <= max(abs(value) * 1e-9, 1e-9)
+            )
         places = len(digits.split(".", 1)[1])
         half_unit = 0.5 * 10.0 ** -places
         quant = Decimal(1).scaleb(-places)
         written = Decimal(str(value)).quantize(quant)
-        rounded: list[tuple[float, Declaration]] = []
+        compatible: list[Declaration] = []
         for item in candidates:
             gap = abs(item.value - value)
+            if gap <= max(abs(value) * 1e-9, 1e-9):
+                compatible.append(item)
+                continue
             within_relative_band = gap <= abs(item.value) * ROUNDED_BAND
             tie_rounds_to_written = (
                 abs(gap - half_unit) <= max(half_unit * 1e-9, 1e-12)
@@ -208,26 +207,28 @@ class FiguresBlock:
             if gap <= half_unit * (1 + 1e-9) and (
                 within_relative_band or tie_rounds_to_written
             ):
-                rounded.append((gap, item))
-        if not rounded:
-            return ()
-        nearest = min(gap for gap, _ in rounded)
-        return tuple(
-            item
-            for gap, item in rounded
-            if abs(gap - nearest) <= max(nearest * 1e-9, 1e-12)
-        )
+                compatible.append(item)
+        return tuple(compatible)
 
     def match(
         self, value: float, percent: bool, digits: str | None = None
     ) -> Declaration | None:
-        """Return the first declaration compatible with ``value``, or None.
+        """Return the best declaration covering ``value``, or None.
 
-        Callers that need to distinguish duplicate declarations with the same
-        numeric spelling should use :meth:`matching_declarations`.
+        Exact numeric matches keep priority for backward compatibility. If none
+        exists, use the nearest compatible rounded declaration.
         """
-        matches = self.matching_declarations(value, percent, digits)
-        return matches[0] if matches else None
+        compatible = self.compatible_declarations(value, percent, digits)
+        if not compatible:
+            return None
+        exact = [
+            item
+            for item in compatible
+            if abs(item.value - value) <= max(abs(value) * 1e-9, 1e-9)
+        ]
+        if exact:
+            return exact[0]
+        return min(compatible, key=lambda item: abs(item.value - value))
 
 
 @dataclass(frozen=True)
