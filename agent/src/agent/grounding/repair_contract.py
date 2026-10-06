@@ -1,8 +1,8 @@
 """Declared post-failure actions for grounding issues.
 
-Validation says what is wrong.  This module says what a correction is allowed
-or required to do next.  Keeping that distinction explicit prevents the
-correction prompt from inferring action semantics from issue wording.
+Validation says what is wrong. This module says what a correction is allowed
+or required to do next. Finding and repair semantics deliberately stay
+separate.
 """
 
 from __future__ import annotations
@@ -11,7 +11,12 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Iterable
 
-from src.agent.grounding.figures import parse_figures_block, scan_figures, strip_figures_block
+from src.agent.grounding.figures import (
+    Figure,
+    parse_figures_block,
+    scan_figures,
+    strip_figures_block,
+)
 
 
 class RepairAction(str, Enum):
@@ -65,25 +70,80 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
             exact_ref=str(exact_ref),
         )
     if reason in _RECOVERY_REASONS:
-        return RepairDirective(RepairAction.RECOVER, preserve=True)
+        # Missing evidence is a recovery obligation, not a claim-preservation
+        # obligation. The figure is not trusted until recovery succeeds.
+        return RepairDirective(RepairAction.RECOVER, preserve=False)
     return RepairDirective(RepairAction.DROP, preserve=False)
 
 
 @dataclass(frozen=True)
-class CorrectionContract:
-    """Invariants that a text-only correction must preserve."""
+class RequiredFigure:
+    """Semantic identity of one rejected-but-repairable measured figure."""
 
-    required_figures: tuple[str, ...]
+    text: str
+    value: float
+    percent: bool
+    currency: bool
+    digits: str
+
+    @classmethod
+    def from_text(cls, text: str) -> "RequiredFigure | None":
+        block = parse_figures_block(text)
+        figures = [
+            figure
+            for figure in scan_figures(strip_figures_block(text, block), block)
+            if figure.shape == "measured"
+        ]
+        if len(figures) != 1:
+            return None
+        figure = figures[0]
+        return cls(
+            text=text,
+            value=figure.value,
+            percent=figure.percent,
+            currency=figure.currency,
+            digits=figure.digits,
+        )
+
+    def matches(self, figure: Figure) -> bool:
+        """Whether revised prose carries the same measured claim.
+
+        Formatting may change (for example 0.2250% -> 0.225%). The contract is
+        about claim survival, not spelling survival.
+        """
+        if figure.percent != self.percent or figure.currency != self.currency:
+            return False
+        target = self.value
+        candidate = figure.value
+        if abs(candidate - target) <= max(abs(target) * 1e-9, 1e-9):
+            return True
+        digits = figure.digits or ""
+        if "." not in digits:
+            return False
+        places = len(digits.split(".", 1)[1])
+        half_unit = 0.5 * 10.0 ** (-places)
+        relative = abs(target) * 0.005
+        return abs(candidate - target) <= max(
+            min(relative, half_unit * (1 + 1e-9)), 1e-9
+        )
+
+
+@dataclass(frozen=True)
+class CorrectionContract:
+    """Hard invariants for rejected figures with deterministic repairs.
+
+    Clean figures from #1702 remain soft prompt guidance. They are not hard
+    contract members because a correction may legitimately reformat or omit a
+    non-required clean detail. Only rejected figures whose repair directive
+    explicitly says preserve are mandatory here.
+    """
+
+    required_figures: tuple[RequiredFigure, ...]
     directives: tuple[tuple[str, RepairDirective], ...]
 
     @classmethod
     def from_validation(cls, validation: Any) -> "CorrectionContract":
-        required: list[str] = []
-        for value in validation.passed_figures:
-            text = str(value)
-            if text not in required:
-                required.append(text)
-
+        required: list[RequiredFigure] = []
         directives: list[tuple[str, RepairDirective]] = []
         for issue in validation.issues:
             value = issue.get("value")
@@ -92,22 +152,34 @@ class CorrectionContract:
             directive = directive_for_issue(issue)
             text = str(value)
             directives.append((text, directive))
-            if directive.preserve and text not in required:
-                required.append(text)
-
+            if not directive.preserve:
+                continue
+            claim = RequiredFigure.from_text(text)
+            if claim is not None and not any(
+                existing.percent == claim.percent
+                and existing.currency == claim.currency
+                and abs(existing.value - claim.value)
+                <= max(abs(claim.value) * 1e-9, 1e-9)
+                for existing in required
+            ):
+                required.append(claim)
         return cls(tuple(required), tuple(directives))
 
     def missing_figures(self, content: str) -> tuple[str, ...]:
-        """Required measured figures missing from the revised prose."""
+        """Required repairable claims missing semantically from revised prose."""
 
-        body = strip_figures_block(content)
         block = parse_figures_block(content)
-        present = {
-            figure.text
+        body = strip_figures_block(content, block)
+        present = [
+            figure
             for figure in scan_figures(body, block)
-            if figure.shape in {"measured", "bare"}
-        }
-        return tuple(value for value in self.required_figures if value not in present)
+            if figure.shape == "measured"
+        ]
+        return tuple(
+            required.text
+            for required in self.required_figures
+            if not any(required.matches(figure) for figure in present)
+        )
 
     def violation_prompt(self, missing: Iterable[str]) -> str:
         """Focused feedback for a correction that silently dropped content."""
@@ -115,8 +187,8 @@ class CorrectionContract:
         values = ", ".join(dict.fromkeys(str(value) for value in missing))
         return (
             "[GROUNDING CORRECTION CONTRACT] The revised draft is grounded, but it "
-            "silently removed measured figure(s) that the previous validation required "
-            f"to survive: {values}. Restore those exact numeric figures and apply their "
-            "listed repair directives. Do not add unrelated numeric claims. Return the "
-            "full revised answer with its figures block."
+            "silently removed measured claim(s) with deterministic repair directives: "
+            f"{values}. Restore those numeric claims and apply their listed repair "
+            "directives. Equivalent numeric formatting is allowed. Do not add unrelated "
+            "numeric claims. Return the full revised answer with its figures block."
         )
