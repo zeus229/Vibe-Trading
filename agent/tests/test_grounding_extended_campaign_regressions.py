@@ -408,6 +408,11 @@ def test_company_name_row_is_not_treated_as_summary_even_for_unscoped_calc(
 
     assert result.valid is False
     assert any(
-        issue.get("reason") in {"not_in_referenced_call", "entity_ref_needs_scoped_claim"}
+        issue.get("reason")
+        in {
+            "not_in_referenced_call",
+            "entity_ref_needs_scoped_claim",
+            "aggregate_ref_needs_unscoped_claim",
+        }
         for issue in result.issues
     )
