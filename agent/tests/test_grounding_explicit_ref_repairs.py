@@ -276,6 +276,24 @@ def test_detailed_entity_ref_mismatch_requires_spatial_separation():
     assert "separate cells, rows, or sentences" in line
 
 
+def test_multiple_proven_candidates_are_prescriptive_options():
+    refs = ["call_a::data.total_value", "call_b::data.total_value"]
+    line = _correction_line(
+        {
+            "code": "numeric_claim_conflict",
+            "value": "221963026.08",
+            "role": "observed",
+            "reason": "field_ref_needs_call_id",
+            "field_ref_candidates": refs,
+            "proven_ref_repair_candidates": refs,
+        }
+    )
+
+    assert "action=preserve_options" in line
+    assert "repair preserve=true" in line
+    assert "proven repair refs: call_a::data.total_value, call_b::data.total_value" in line
+
+
 def test_multiple_candidates_remain_non_prescriptive():
     line = _correction_line(
         {
