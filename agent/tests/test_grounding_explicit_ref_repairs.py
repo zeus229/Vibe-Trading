@@ -55,6 +55,101 @@ def test_exact_aggregate_ref_stays_invalid_when_claim_is_symbol_scoped(tmp_path:
     ) is True
 
 
+def test_undeclared_entity_value_gets_exact_ref_and_spatial_hint(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="benchmark comparison")
+    ledger._evidence = [
+        EvidenceRecord(
+            call_id="call_spy",
+            tool="asistente_casa_portfolio_performance",
+            symbol="SPY",
+            source="asistente_casa",
+            timestamp=None,
+            field="data.references.SPY_ARS.excess_return_pct",
+            value=1.79,
+            status="observed",
+            unit="ratio",
+            identity_scope="entity",
+        )
+    ]
+    figure = _percent_figure(1.79)
+
+    hint = ledger._undeclared_entity_repair_metadata(figure)
+
+    assert hint == {
+        "field_ref_candidates": [
+            "call_spy::data.references.SPY_ARS.excess_return_pct"
+        ],
+        "entity_ref_symbol": "SPY",
+    }
+
+
+def test_undeclared_entity_hint_stays_empty_when_value_is_ambiguous(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="benchmark comparison")
+    ledger._evidence = [
+        EvidenceRecord(
+            call_id="call_spy",
+            tool="asistente_casa_portfolio_performance",
+            symbol="SPY",
+            source="asistente_casa",
+            timestamp=None,
+            field="data.references.SPY_ARS.excess_return_pct",
+            value=1.79,
+            status="observed",
+            unit="ratio",
+            identity_scope="entity",
+        ),
+        EvidenceRecord(
+            call_id="call_other",
+            tool="asistente_casa_portfolio_performance",
+            symbol="OTHER",
+            source="asistente_casa",
+            timestamp=None,
+            field="data.references.OTHER.excess_return_pct",
+            value=1.79,
+            status="observed",
+            unit="ratio",
+            identity_scope="entity",
+        ),
+    ]
+
+    assert ledger._undeclared_entity_repair_metadata(_percent_figure(1.79)) == {}
+
+
+def test_undeclared_entity_issue_carries_hint_into_correction(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="benchmark comparison")
+    ledger._evidence = [
+        EvidenceRecord(
+            call_id="call_spy",
+            tool="asistente_casa_portfolio_performance",
+            symbol="SPY",
+            source="asistente_casa",
+            timestamp=None,
+            field="data.references.SPY_ARS.excess_return_pct",
+            value=1.79,
+            status="observed",
+            unit="ratio",
+            identity_scope="entity",
+        )
+    ]
+    issue = {
+        "code": "figure_undeclared",
+        "value": "+1.79",
+        "role": None,
+        "reason": "undeclared",
+        "symbol": "CCL",
+        "field_ref_candidates": [
+            "call_spy::data.references.SPY_ARS.excess_return_pct"
+        ],
+        "entity_ref_symbol": "SPY",
+    }
+
+    line = _correction_line(issue)
+
+    assert "valid field refs: call_spy::data.references.SPY_ARS.excess_return_pct" in line
+    assert "scoped only to entity SPY" in line
+    assert "do not mix another ticker, benchmark, or entity" in line
+
+
 def test_exact_entity_ref_mismatch_surfaces_spatial_repair_metadata(tmp_path: Path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="benchmark comparison")
     ledger._evidence = [
