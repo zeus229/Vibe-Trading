@@ -68,6 +68,13 @@ def _format_price(value: float) -> str:
 
 #: What the evidence says about a figure, keyed on the validator's reason: a
 #: state of the check, never a word read from the answer.
+_AGGREGATE_SPATIAL_REWRITE = (
+    "keep the value/ref aggregate and rewrite it as aggregate/unscoped; "
+    "do not mention any ticker or instrument anywhere on the same line or in the same paragraph "
+    "as this figure; if you need to compare with an individual position, move that comparison "
+    "to a separate paragraph or table row"
+)
+
 _CORRECTION_REASONS = {
     "undeclared": "it is not declared at all",
     "no_evidence": "this session holds no evidence of that kind to check it against",
@@ -92,7 +99,7 @@ _CORRECTION_REASONS = {
     "role_in_price_column": "it sits in a price column, which holds only observed prints",
     "proposed_not_a_price": "a proposed level is a price, not a percentage; state the price it implies",
     "symbol_mismatch": "it is declared for one instrument but the sentence writes it about another",
-    "aggregate_ref_needs_unscoped_claim": "the exact ref is aggregate/unscoped evidence; keep the value and ref, but rewrite the claim so the metric is not attributed to an instrument",
+    "aggregate_ref_needs_unscoped_claim": "the exact ref is aggregate/unscoped evidence; " + _AGGREGATE_SPATIAL_REWRITE,
     "citation_not_visible": "its source is not named on the figure's own line, and the note is stripped before the user reads the answer",
 }
 
@@ -147,6 +154,8 @@ def _correction_line(issue: dict[str, Any]) -> str:
         and len(candidates) == 1
     ):
         evidence += "; keep the written value and replace only the incorrect ref with the exact ref listed above"
+    if issue.get("aggregate_ref_candidate"):
+        evidence += "; " + _AGGREGATE_SPATIAL_REWRITE
     nearest = issue.get("observed_nearest") or []
     if nearest:
         evidence += "; nearest observed " + ", ".join(_format_price(float(item)) for item in nearest)
@@ -171,14 +180,8 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
     if candidates:
         parts.append("refs=" + ",".join(candidates))
     aggregate_candidate = issue.get("aggregate_ref_candidate")
-    if aggregate_candidate:
-        parts.append(
-            "aggregate=keep value/ref but rewrite as aggregate/unscoped; do not attach to an instrument"
-        )
-    elif reason == "aggregate_ref_needs_unscoped_claim":
-        parts.append(
-            "aggregate=keep value/ref but rewrite as aggregate/unscoped; do not attach to an instrument"
-        )
+    if aggregate_candidate or reason == "aggregate_ref_needs_unscoped_claim":
+        parts.append("aggregate=" + _AGGREGATE_SPATIAL_REWRITE)
     return " | ".join(parts)
 
 def _strip_release_markers(content: str) -> str:
