@@ -86,6 +86,21 @@ def test_duplicate_numeric_declarations_bind_in_document_order(tmp_path: Path):
     assert resolved[(second.start, second.end)] is cash
 
 
+
+def test_rounded_and_exact_duplicate_bind_in_declaration_order(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="report")
+    cer = _decl(1, 0.225, "call_cer::data.cer_mtd")
+    cash = _decl(2, 0.23, "call_cash::data.cash_pct")
+    first = _figure(0.23, 10)
+    second = _figure(0.23, 30)
+
+    compatible = _block(cer, cash).compatible_declarations(0.23, True, "0.23")
+    resolved = ledger._declarations_by_span(_block(cer, cash), [first, second])
+
+    assert compatible == (cer, cash)
+    assert resolved[(first.start, first.end)] is cer
+    assert resolved[(second.start, second.end)] is cash
+
 def test_extra_duplicate_occurrence_fails_closed(tmp_path: Path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="report")
     cer = _decl(1, 0.23, "call_cer::data.cer_mtd")
