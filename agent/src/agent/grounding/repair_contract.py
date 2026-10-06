@@ -34,7 +34,6 @@ class RepairDirective:
     preserve: bool
     exact_ref: str | None = None
     allowed_refs: tuple[str, ...] = ()
-    require_all_refs: bool = False
     target_scope: str | None = None
     derive_formula: str | None = None
     replacement_value: float | None = None
@@ -154,6 +153,7 @@ class RequiredFigure:
     percent: bool
     digits: str
     allowed_refs: tuple[str, ...] = ()
+    require_all_refs: bool = False
 
     @classmethod
     def from_issue(
