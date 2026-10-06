@@ -3,6 +3,7 @@ from types import SimpleNamespace
 from src.agent.grounding.repair_contract import (
     CorrectionContract,
     RepairAction,
+    RequiredFigure,
     directive_for_issue,
 )
 
@@ -51,9 +52,16 @@ def test_unproven_candidate_remains_droppable():
     assert directive.preserve is False
 
 
-def test_contract_preserves_clean_and_repairable_figures():
+def test_recover_is_not_a_claim_preservation_obligation():
+    directive = directive_for_issue({"reason": "no_evidence"})
+
+    assert directive.action is RepairAction.RECOVER
+    assert directive.preserve is False
+
+
+def test_contract_hard_preserves_only_repairable_rejected_figures():
     validation = SimpleNamespace(
-        passed_figures=("3.15%", "12.06%"),
+        passed_figures=("3.15%", "12.06%", "3%", "2%"),
         issues=[
             {
                 "value": "50.61%",
@@ -63,12 +71,16 @@ def test_contract_preserves_clean_and_repairable_figures():
                 "value": "99.99%",
                 "reason": "value_mismatch",
             },
+            {
+                "value": "2.93%",
+                "reason": "no_evidence",
+            },
         ],
     )
 
     contract = CorrectionContract.from_validation(validation)
 
-    assert contract.required_figures == ("3.15%", "12.06%", "50.61%")
+    assert [claim.text for claim in contract.required_figures] == ["50.61%"]
     assert contract.missing_figures(
         "Cartera 3.15% YTD 12.06%. Top 5 agregado: 50.61%."
     ) == ()
@@ -77,11 +89,39 @@ def test_contract_preserves_clean_and_repairable_figures():
     ) == ("50.61%",)
 
 
+def test_required_figure_matches_equivalent_numeric_formatting():
+    claim = RequiredFigure.from_text("0.2250%")
+    assert claim is not None
+
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "0.2250%",
+                "exact_ref_repair_candidate": "call_cer::data.return_pct",
+            }
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
+
+    assert contract.missing_figures("CER: 0.225%.") == ()
+
+
 def test_contract_retry_prompt_is_focused():
-    contract = CorrectionContract(("50.61%",), ())
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "50.61%",
+                "aggregate_ref_candidate": "call_p::data.concentration.top5_pct",
+            }
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
     prompt = contract.violation_prompt(("50.61%",))
 
     assert "silently removed" in prompt
     assert "50.61%" in prompt
-    assert "Restore those exact numeric figures" in prompt
+    assert "Restore those numeric claims" in prompt
+    assert "Equivalent numeric formatting is allowed" in prompt
     assert "Do not add unrelated numeric claims" in prompt
