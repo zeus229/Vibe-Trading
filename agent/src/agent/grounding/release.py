@@ -162,6 +162,13 @@ def _correction_line(issue: dict[str, Any]) -> str:
     sources = list(dict.fromkeys(str(item) for item in issue.get("ambiguous_sources") or []))
     if candidates and not ("{sources}" in template and candidates == sources):
         evidence += "; valid field refs: " + ", ".join(candidates)
+    proven_refs = list(
+        dict.fromkeys(
+            str(item) for item in issue.get("proven_ref_repair_candidates") or []
+        )
+    )
+    if len(proven_refs) > 1:
+        evidence += "; proven repair refs: " + ", ".join(proven_refs)
     if (
         reason in {"field_ref_needs_call_id", "not_in_referenced_call"}
         and len(candidates) == 1
@@ -298,6 +305,7 @@ class _ReleaseMixin:
                     "Follow the declared action on EVERY rejected figure. Finding and repair action are separate contracts:",
                     "  auto_repair: KEEP the numeric figure, DECLARE it with the exact repaired ref supplied, and do not delete or rephrase it away.",
                     "  preserve_rewrite: KEEP the numeric figure and evidence, DECLARE it with the repaired ref when supplied, and rewrite only the surrounding semantic scope/context to the supplied target_scope.",
+                    "  preserve_options: KEEP the numeric figure; several exact refs are proven to contain this written value. DECLARE it with one of the proven repair refs listed on that issue. Do not delete the claim merely because more than one source/cut supports it.",
                     "  recover: evidence is missing; never fabricate a replacement value. Recovery is handled by the bounded recovery path, not by inventing text.",
                     "  drop: removal is allowed only because no deterministic safe repair was proven.",
                     "Do NOT add new measured numeric claims, comparisons, differences, excesses, gaps, or derived figures unless they directly replace one rejected figure listed above. Preserve already-passed figures instead of embellishing them with new arithmetic.",
