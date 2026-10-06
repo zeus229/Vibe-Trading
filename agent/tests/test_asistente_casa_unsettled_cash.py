@@ -3,13 +3,32 @@ from __future__ import annotations
 from decimal import Decimal
 
 from src.portfolio.config import PortfolioSettingsStore
+from src.portfolio import service as portfolio_service
 from src.portfolio.service import PortfolioService
 from src.portfolio.store import PortfolioStore
+from src.trading.types import TradingProfile
 
 
-def test_native_account_separates_unsettled_cash(tmp_path):
+def test_native_account_separates_unsettled_cash(tmp_path, monkeypatch):
+    profile = TradingProfile(
+        id="asistente-casa-live-readonly",
+        connector="asistente-casa",
+        label="Asistente Casa",
+        environment="live",
+        transport="local_plugin",
+        capabilities=("account.read", "positions.read"),
+        readonly=True,
+    )
+    monkeypatch.setattr(
+        portfolio_service,
+        "profile_by_id",
+        lambda profile_id: profile
+        if profile_id == profile.id
+        else (_ for _ in ()).throw(ValueError(profile_id)),
+    )
+
     settings = PortfolioSettingsStore(tmp_path / "portfolio.json")
-    settings.connection_store.ensure("ars", "alpaca-live-sdk-readonly", "ARS")
+    settings.connection_store.ensure("ars", profile.id, "ARS")
     settings.save({
         "display_currency": "ARS",
         "sources": [{
