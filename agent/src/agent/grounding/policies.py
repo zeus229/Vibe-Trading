@@ -639,6 +639,9 @@ class _PolicyMixin:
                     # two are different assertions — but say so, or the model
                     # reads "not declared" as a lie and repeats the draft.
                     other_unit = _declared_in_other_unit(block, figure)
+                    undeclared_entity_hint = self._undeclared_entity_repair_metadata(
+                        figure
+                    )
                     issues.append(
                         self._figure_issue(
                             "figure_undeclared",
@@ -657,6 +660,7 @@ class _PolicyMixin:
                                 if other_unit
                                 else {}
                             ),
+                            **undeclared_entity_hint,
                         )
                     )
                     continue
@@ -1889,6 +1893,52 @@ class _PolicyMixin:
         ]
         symbols = {str(record.symbol) for record in matching}
         return next(iter(symbols)) if len(symbols) == 1 else None
+
+    def _undeclared_entity_repair_metadata(
+        self,
+        figure: Figure,
+    ) -> dict[str, Any]:
+        """Exact ref/entity hint for one undeclared entity-scoped value.
+
+        The hint is emitted only when the written value and kind identify one
+        exact observed ref belonging to one entity. It authorizes nothing: the
+        current draft remains undeclared/invalid and must be rewritten with the
+        exact ref in a context scoped to that entity.
+        """
+        matches: list[tuple[str, str]] = []
+        for record in self._evidence:
+            if (
+                record.status != "observed"
+                or record.value is None
+                or record.identity_scope != "entity"
+                or not record.symbol
+                or not record.call_id
+                or not record.field
+                or not self._kind_fits(record, figure)
+                or not self._matches_evidence(
+                    figure,
+                    [float(record.value)],
+                    [float(record.value)],
+                )
+            ):
+                continue
+            matches.append(
+                (
+                    self._ref_source(record.call_id, record.field, record.scope)[1],
+                    str(record.symbol),
+                )
+            )
+        unique = list(dict.fromkeys(matches))
+        refs = {ref for ref, _ in unique}
+        symbols = {symbol for _, symbol in unique}
+        if len(refs) != 1 or len(symbols) != 1:
+            return {}
+        ref = next(iter(refs))
+        symbol = next(iter(symbols))
+        return {
+            "field_ref_candidates": [ref],
+            "entity_ref_symbol": symbol,
+        }
 
     def _check_observed(
         self,
