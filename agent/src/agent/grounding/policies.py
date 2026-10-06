@@ -594,34 +594,7 @@ class _PolicyMixin:
             if evaluated is not None
             for operand in evaluated[1]
         ]
-        # Resolve duplicate numeric declarations by document order. A single
-        # compatible declaration may still ground repeated prose occurrences,
-        # preserving the historical contract. When two or more declarations
-        # share the same numeric spelling, however, silently reusing the first
-        # ref cross-wires distinct claims (for example CER and cash both at
-        # 0.23%). Assign those duplicate declarations one-to-one in declaration
-        # order; any extra occurrence fails closed instead of borrowing a ref.
-        declaration_by_span: dict[tuple[int, int], Declaration | None] = {}
-        duplicate_offsets: dict[tuple[int, ...], int] = {}
-        for candidate_figure in figures:
-            if candidate_figure.shape not in ("measured", "bare"):
-                continue
-            matches = block.matching_declarations(
-                candidate_figure.value,
-                candidate_figure.percent,
-                candidate_figure.digits,
-            )
-            if len(matches) <= 1:
-                declaration_by_span[(candidate_figure.start, candidate_figure.end)] = (
-                    matches[0] if matches else None
-                )
-                continue
-            key = tuple(item.index for item in matches)
-            offset = duplicate_offsets.get(key, 0)
-            declaration_by_span[(candidate_figure.start, candidate_figure.end)] = (
-                matches[offset] if offset < len(matches) else None
-            )
-            duplicate_offsets[key] = offset + 1
+        declaration_by_span = self._declarations_by_span(block, figures)
 
         checked_price = False
         for figure in figures:
@@ -773,6 +746,37 @@ class _PolicyMixin:
                 market_price=self._figure_is_market_price(content, figure, declaration),
             )
         return issues
+
+    @staticmethod
+    def _declarations_by_span(
+        block: FiguresBlock,
+        figures: Sequence[Figure],
+    ) -> dict[tuple[int, int], Declaration | None]:
+        """Bind prose figures to declarations without cross-wiring duplicates.
+
+        A single compatible declaration remains reusable for repeated prose.
+        When several declarations share the same numeric value, appearances are
+        bound one-to-one in document/declaration order. Extra appearances fail
+        closed instead of silently borrowing the first declaration.
+        """
+        resolved: dict[tuple[int, int], Declaration | None] = {}
+        duplicate_offsets: dict[tuple[int, ...], int] = {}
+        for figure in figures:
+            if figure.shape not in ("measured", "bare"):
+                continue
+            matches = block.matching_declarations(
+                figure.value, figure.percent, figure.digits
+            )
+            if len(matches) <= 1:
+                resolved[(figure.start, figure.end)] = matches[0] if matches else None
+                continue
+            key = tuple(item.index for item in matches)
+            offset = duplicate_offsets.get(key, 0)
+            resolved[(figure.start, figure.end)] = (
+                matches[offset] if offset < len(matches) else None
+            )
+            duplicate_offsets[key] = offset + 1
+        return resolved
 
     @staticmethod
     def _figure_issue(
