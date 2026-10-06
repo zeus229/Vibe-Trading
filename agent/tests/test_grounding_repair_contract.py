@@ -65,14 +65,26 @@ def test_contract_hard_preserves_only_repairable_rejected_figures():
         issues=[
             {
                 "value": "50.61%",
+                "figure_value": 50.61,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "50.61",
                 "aggregate_ref_candidate": "call_p::data.concentration.top5_pct",
             },
             {
                 "value": "99.99%",
+                "figure_value": 99.99,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "99.99",
                 "reason": "value_mismatch",
             },
             {
                 "value": "2.93%",
+                "figure_value": 2.93,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "2.93",
                 "reason": "no_evidence",
             },
         ],
@@ -95,10 +107,18 @@ def test_required_figure_matches_equivalent_numeric_formatting():
         issues=[
             {
                 "value": "0.2250%",
+                "figure_value": 0.225,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "0.2250",
                 "exact_ref_repair_candidate": "call_cer::data.return_pct",
             },
             {
                 "value": "2.93%",
+                "figure_value": 2.93,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "2.93",
                 "exact_ref_repair_candidate": "call_var::data.var95_pct",
             },
         ],
@@ -114,6 +134,10 @@ def test_contract_retry_prompt_is_focused():
         issues=[
             {
                 "value": "50.61%",
+                "figure_value": 50.61,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "50.61",
                 "aggregate_ref_candidate": "call_p::data.concentration.top5_pct",
             }
         ],
@@ -126,3 +150,33 @@ def test_contract_retry_prompt_is_focused():
     assert "Restore those numeric claims" in prompt
     assert "Equivalent numeric formatting is allowed" in prompt
     assert "Do not add unrelated numeric claims" in prompt
+
+
+def test_contract_preserves_decimal_comma_without_percent_from_issue_metadata():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "+1,79",
+                "figure_value": 1.79,
+                "figure_percent": False,
+                "figure_currency": False,
+                "figure_digits": "1.79",
+                "entity_ref_symbol": "SPY",
+                "exact_ref_repair_candidate": "call_spy::data.excess_return_pct",
+            },
+            {
+                "value": "4,39",
+                "figure_value": 4.39,
+                "figure_percent": False,
+                "figure_currency": False,
+                "figure_digits": "4.39",
+                "exact_ref_repair_candidate": "call_risk::data.effective_n",
+            },
+        ],
+    )
+
+    contract = CorrectionContract.from_validation(validation)
+
+    assert [claim.text for claim in contract.required_figures] == ["+1,79", "4,39"]
+    assert contract.missing_figures("SPY +1.79 pp. Effective N 4.39.") == ()
