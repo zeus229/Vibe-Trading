@@ -551,3 +551,166 @@ def test_same_entity_derived_refs_do_not_ignore_incidental_other_ticker(
         issue.get("symbol") == "JPM"
         for issue in validation.issues
     ), validation.issues
+
+
+
+def test_risk_normalized_weight_gets_canonical_entity_replacement(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
+    call_id = "call_summary|fc_weights"
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {
+            "context": {
+                "holdings_native": {
+                    "ARS": [
+                        {"symbol": "YPFD", "weight": 0.1997},
+                        {"symbol": "PAMP", "weight": 0.1311},
+                    ]
+                },
+                "risk_xray_args": {
+                    "weights": {"YPFD": 0.2001, "PAMP": 0.1315}
+                },
+            }
+        },
+        call_id,
+    )
+
+    validation = ledger.validate_final_answer(
+        "| Ticker | Peso |\n"
+        "|---|---:|\n"
+        "| YPFD | 20.01% |\n\n"
+        "```figures\n"
+        "20.01% | observed | portfolio weight | "
+        "functions.portfolio_summary::context.risk_xray_args.weights.YPFD\n"
+        "```"
+    )
+
+    assert validation.valid is False
+    issue = next(
+        item for item in validation.issues
+        if item.get("reason") == "entity_value_needs_canonical_replacement"
+    )
+    assert issue["replacement_text"] == "19.97%"
+    assert issue["replacement_value"] == pytest.approx(19.97)
+    assert issue["replacement_entity_symbol"] == "YPFD"
+    assert issue["replacement_ref_candidate"] == (
+        f"{call_id}::context.holdings_native.ARS[0].weight"
+    )
+
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.REPLACE
+    assert directive.preserve is True
+    assert directive.replacement_value == pytest.approx(19.97)
+    assert directive.exact_ref == issue["replacement_ref_candidate"]
+
+
+def test_derived_summary_row_does_not_need_total_to_match_one_operand(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
+    call_id = "call_summary|fc_aggregate_weights"
+    weights = [0.1997, 0.1311, 0.0598, 0.0591, 0.0565]
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {
+            "context": {
+                "risk_xray_args": {
+                    "weights": {
+                        "YPFD": weights[0],
+                        "PAMP": weights[1],
+                        "GGAL": weights[2],
+                        "TGSU2": weights[3],
+                        "EWZ": weights[4],
+                    }
+                }
+            }
+        },
+        call_id,
+    )
+    total = sum(weights) * 100
+    refs = ";".join(
+        [
+            f"{call_id}::context.risk_xray_args.weights.YPFD",
+            f"{call_id}::context.risk_xray_args.weights.PAMP",
+            f"{call_id}::context.risk_xray_args.weights.GGAL",
+            f"{call_id}::context.risk_xray_args.weights.TGSU2",
+            f"{call_id}::context.risk_xray_args.weights.EWZ",
+        ]
+    )
+    formula = "+".join(str(value) for value in weights) + "*100"
+
+    validation = ledger.validate_final_answer(
+        "| Ticker | Peso |\n"
+        "|---|---:|\n"
+        f"| **Total conjunto** | {total:.2f}% |\n\n"
+        "```figures\n"
+        f"{total:.2f}% | derived | {formula} | {refs}\n"
+        "```"
+    )
+
+    assert validation.valid is True, validation.issues
+
+
+def test_deterministic_derive_requires_every_proven_operand_ref(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="risk difference")
+    left_id = "call_left|fc_risk"
+    right_id = "call_right|fc_risk"
+    left = 0.3581
+    right = 0.2308
+    _ingest(
+        ledger,
+        "portfolio_risk",
+        {"data": {"volatility": {"annualized_vol": left}}},
+        left_id,
+    )
+    _ingest(
+        ledger,
+        "portfolio_risk",
+        {"data": {"volatility": {"annualized_vol": right}}},
+        right_id,
+    )
+    expr = f"{left}-{right}"
+    _ingest(
+        ledger,
+        "financial_rigor",
+        {
+            "status": "ok",
+            "command": "calc",
+            "expr": expr,
+            "result": left - right,
+        },
+        "call_calc|fc_diff",
+        arguments={"command": "calc", "expr": expr},
+    )
+
+    validation = ledger.validate_final_answer(
+        "La diferencia es 12.73%.\n\n"
+        "```figures\n"
+        "12.73% | derived | 0.3581-0.2308 | "
+        f"{left_id}::data.volatility.annualized_vol\n"
+        "```"
+    )
+
+    assert validation.valid is False
+    issue = next(
+        item for item in validation.issues
+        if item.get("reason") == "derived_refs_incomplete"
+    )
+    expected = {
+        f"{left_id}::data.volatility.annualized_vol",
+        f"{right_id}::data.volatility.annualized_vol",
+    }
+    assert set(issue["derive_operand_refs"]) == expected
+    assert set(issue["missing_derive_refs"]) == {
+        f"{right_id}::data.volatility.annualized_vol"
+    }
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.DERIVE
+    assert directive.preserve is True
+    assert set(directive.allowed_refs) == expected
