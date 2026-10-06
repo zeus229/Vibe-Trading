@@ -882,13 +882,25 @@ class _PolicyMixin:
             if declared:
                 return declared
         written = self._written_symbol(content, figure, line_symbols, records)
-        if (
-            written
-            and figure.symbol
-            and declaration is not None
-            and self._summary_row_is_unscoped(figure.symbol, declaration, figure)
-        ):
-            written = None
+        derived_multi_entity = bool(
+            declaration is not None
+            and self._derived_multi_entity_refs_are_unscoped(
+                declaration, figure
+            )
+        )
+        if declaration is not None:
+            if (
+                written
+                and figure.symbol
+                and self._summary_row_is_unscoped(
+                    figure.symbol, declaration, figure
+                )
+            ):
+                written = None
+            elif written and derived_multi_entity:
+                written = None
+        if derived_multi_entity:
+            return None
         return written or document_symbol
 
     def _summary_row_is_unscoped(
@@ -940,6 +952,45 @@ class _PolicyMixin:
             if matching:
                 return True
         return False
+
+    def _derived_multi_entity_refs_are_unscoped(
+        self,
+        declaration: Declaration,
+        figure: Figure,
+    ) -> bool:
+        """Whether a derived declaration is intrinsically multi-entity.
+
+        Every exact source ref must resolve, and the resolved evidence must
+        contain at least two distinct entity symbols. In that case the derived
+        claim cannot inherit one incidental ticker merely because that ticker
+        appears elsewhere on the same prose line.
+        """
+        if declaration.role != "derived":
+            return False
+        refs = [
+            part.strip()
+            for part in re.split(r"[,;]", declaration.ref or "")
+            if part.strip()
+        ]
+        if len(refs) < 2:
+            return False
+
+        symbols: set[str] = set()
+        for ref in refs:
+            scoped = self._referenced(ref, None, figure)
+            if scoped is None:
+                return False
+            records, metric_values = scoped
+            if metric_values and not records:
+                # A symbol-less metric ref does not prove multi-entity scope.
+                return False
+            if not records:
+                return False
+            ref_symbols = {record.symbol for record in records if record.symbol}
+            if not ref_symbols:
+                return False
+            symbols.update(str(symbol) for symbol in ref_symbols)
+        return len(symbols) >= 2
 
     @staticmethod
     def _figure_is_market_price(
@@ -1443,7 +1494,7 @@ class _PolicyMixin:
         return [value for value in values if abs(value) not in {0.0, 1.0, 100.0}]
 
     def _deterministic_derive_metadata(self, figure: Figure) -> dict[str, Any]:
-        """Prove an undeclared claim from one exact deterministic calc + operands."""
+        """Prove a claim from one exact deterministic calc + observed operands."""
         proofs: list[dict[str, Any]] = []
         for calc in getattr(self, "_deterministic_calcs", []):
             expr = str(calc.get("expr") or "")
@@ -2705,6 +2756,7 @@ class _PolicyMixin:
         """A derived figure must be the arithmetic its note states."""
         derivation = self._derivation(declaration, symbol, records, money=figure.currency)
         if isinstance(derivation, str):
+            derive_hint = self._deterministic_derive_metadata(figure)
             return [
                 self._figure_issue(
                     "numeric_claim_conflict"
@@ -2719,6 +2771,7 @@ class _PolicyMixin:
                     if derivation == "additive_operand_not_observed"
                     else "is declared derived, but its note is not arithmetic over at "
                     "least two operands with one of them observed in this session",
+                    **derive_hint,
                 )
             ]
         result, _ = derivation
