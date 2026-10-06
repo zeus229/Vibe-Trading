@@ -87,22 +87,22 @@ class RequiredFigure:
     digits: str
 
     @classmethod
-    def from_text(cls, text: str) -> "RequiredFigure | None":
-        block = parse_figures_block(text)
-        figures = [
-            figure
-            for figure in scan_figures(strip_figures_block(text, block), block)
-            if figure.shape == "measured"
-        ]
-        if len(figures) != 1:
+    def from_issue(cls, issue: dict[str, Any]) -> "RequiredFigure | None":
+        text = str(issue.get("value") or "")
+        value = issue.get("figure_value")
+        percent = issue.get("figure_percent")
+        currency = issue.get("figure_currency")
+        digits = issue.get("figure_digits")
+        if not text or not isinstance(value, (int, float)):
             return None
-        figure = figures[0]
+        if not isinstance(percent, bool) or not isinstance(currency, bool):
+            return None
         return cls(
             text=text,
-            value=figure.value,
-            percent=figure.percent,
-            currency=figure.currency,
-            digits=figure.digits,
+            value=float(value),
+            percent=percent,
+            currency=currency,
+            digits=str(digits or ""),
         )
 
     def matches(self, figure: Figure) -> bool:
@@ -154,7 +154,7 @@ class CorrectionContract:
             directives.append((text, directive))
             if not directive.preserve:
                 continue
-            claim = RequiredFigure.from_text(text)
+            claim = RequiredFigure.from_issue(issue)
             if claim is not None and not any(
                 existing.percent == claim.percent
                 and existing.currency == claim.currency
