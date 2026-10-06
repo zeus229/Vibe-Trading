@@ -101,6 +101,56 @@ def test_rounded_and_exact_duplicate_bind_in_declaration_order(tmp_path: Path):
     assert resolved[(first.start, first.end)] is cer
     assert resolved[(second.start, second.end)] is cash
 
+def test_unique_rounded_declaration_is_reserved_before_later_ambiguous_exact_value(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="report")
+    cer = _decl(1, 0.225, "call_cer::data.cer_mtd")
+    cash = _decl(2, 0.23, "call_cash::data.cash_pct")
+    cer_prose = Figure(
+        text="0.2250%",
+        value=0.225,
+        percent=True,
+        start=10,
+        end=17,
+        line=0,
+        shape="measured",
+        digits="0.2250",
+    )
+    cash_prose = _figure(0.23, 30)
+
+    resolved = ledger._declarations_by_span(
+        _block(cer, cash), [cer_prose, cash_prose]
+    )
+
+    assert resolved[(cer_prose.start, cer_prose.end)] is cer
+    assert resolved[(cash_prose.start, cash_prose.end)] is cash
+
+
+def test_unique_exact_declaration_is_not_reborrowed_by_later_rounded_ambiguity(
+    tmp_path: Path,
+):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="report")
+    first_decl = _decl(1, 0.225, "call_first::data.metric")
+    second_decl = _decl(2, 0.23, "call_second::data.metric")
+    first = Figure(
+        text="0.225%",
+        value=0.225,
+        percent=True,
+        start=10,
+        end=16,
+        line=0,
+        shape="measured",
+        digits="0.225",
+    )
+    second = _figure(0.23, 30)
+
+    resolved = ledger._declarations_by_span(
+        _block(first_decl, second_decl), [first, second]
+    )
+
+    assert resolved[(first.start, first.end)] is first_decl
+    assert resolved[(second.start, second.end)] is second_decl
+
+
 def test_extra_duplicate_occurrence_fails_closed(tmp_path: Path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="report")
     cer = _decl(1, 0.23, "call_cer::data.cer_mtd")
