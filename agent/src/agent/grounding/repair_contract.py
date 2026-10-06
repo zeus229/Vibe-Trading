@@ -30,7 +30,7 @@ class RepairDirective:
 
     action: RepairAction
     preserve: bool
-    allowed_refs: tuple[str, ...] = ()
+    exact_ref: str | None = None
     allowed_refs: tuple[str, ...] = ()
     target_scope: str | None = None
 
@@ -118,7 +118,7 @@ class RequiredFigure:
     value: float
     percent: bool
     digits: str
-    exact_ref: str | None = None
+    allowed_refs: tuple[str, ...] = ()
 
     @classmethod
     def from_issue(
