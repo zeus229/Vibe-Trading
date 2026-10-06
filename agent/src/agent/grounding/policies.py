@@ -802,6 +802,10 @@ class _PolicyMixin:
             "reason": reason,
             "claim": figure.text,
             "message": f"{figure.text} {message}.",
+            "figure_value": figure.value,
+            "figure_percent": figure.percent,
+            "figure_currency": figure.currency,
+            "figure_digits": figure.digits,
         }
         issue.update(extra)
         return issue
