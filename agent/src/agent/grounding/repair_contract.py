@@ -20,6 +20,7 @@ class RepairAction(str, Enum):
     AUTO_REPAIR = "auto_repair"
     PRESERVE_REWRITE = "preserve_rewrite"
     PRESERVE_OPTIONS = "preserve_options"
+    DERIVE = "derive"
     RECOVER = "recover"
     DROP = "drop"
 
@@ -33,6 +34,7 @@ class RepairDirective:
     exact_ref: str | None = None
     allowed_refs: tuple[str, ...] = ()
     target_scope: str | None = None
+    derive_formula: str | None = None
 
 
 _RECOVERY_REASONS = frozenset({"no_evidence", "symbol_never_handled", "no_symbol"})
@@ -55,6 +57,20 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
     )
     entity = issue.get("entity_ref_symbol")
     reason = str(issue.get("reason") or "")
+    derive_formula = issue.get("derive_formula")
+    derive_refs = tuple(
+        dict.fromkeys(
+            str(item) for item in issue.get("derive_operand_refs") or []
+        )
+    )
+
+    if derive_formula and len(derive_refs) >= 2:
+        return RepairDirective(
+            RepairAction.DERIVE,
+            preserve=True,
+            allowed_refs=derive_refs,
+            derive_formula=str(derive_formula),
+        )
 
     if len(proven_refs) > 1:
         target_scope = None
