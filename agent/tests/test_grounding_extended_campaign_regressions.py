@@ -416,3 +416,138 @@ def test_company_name_row_is_not_treated_as_summary_even_for_unscoped_calc(
         }
         for issue in result.issues
     )
+
+
+
+def test_declared_derived_no_evidence_gets_deterministic_derive_repair(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
+
+    weights = [
+        ("YPFD", 0.19968844),
+        ("PAMP", 0.1311),
+        ("GGAL", 0.0598),
+        ("TGSU2", 0.0591),
+        ("EWZ", 0.0564519),
+    ]
+    for index, (symbol, weight) in enumerate(weights):
+        _ingest(
+            ledger,
+            "portfolio_summary",
+            {"position": {"symbol": symbol, "weight": weight}},
+            f"call_pos_{index}|fc_weight",
+        )
+
+    expr = "+".join(str(weight) for _, weight in weights)
+    result_value = sum(weight for _, weight in weights) * 100.0
+    _ingest(
+        ledger,
+        "financial_rigor",
+        {
+            "status": "ok",
+            "command": "calc",
+            "expr": expr,
+            "result": result_value,
+            "result_exact": str(result_value),
+        },
+        "call_calc|fc_top5",
+        arguments={"command": "calc", "expr": expr},
+    )
+
+    answer = (
+        f"Las cinco posiciones suman {result_value:.6f}%.\n\n"
+        "```figures\n"
+        f"{result_value:.6f}% | derived | "
+        + " + ".join(str(weight) for _, weight in weights)
+        + " | financial_rigor::result\n"
+        "```"
+    )
+
+    validation = ledger.validate_final_answer(answer)
+    assert validation.valid is False
+    assert len(validation.issues) == 1
+    issue = validation.issues[0]
+    assert issue.get("reason") == "no_evidence"
+    assert issue.get("derive_formula")
+    assert len(issue.get("derive_operand_refs") or []) == 5
+
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.DERIVE
+    assert directive.preserve is True
+    assert len(directive.allowed_refs) == 5
+
+
+def test_multi_entity_derived_refs_ignore_incidental_ticker_on_same_line(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
+
+    positions = [
+        {"symbol": "YPFD", "weight": 0.1997},
+        {"symbol": "PAMP", "weight": 0.1311},
+        {"symbol": "GGAL", "weight": 0.0598},
+        {"symbol": "TGSU2", "weight": 0.0591},
+        {"symbol": "EWZ", "weight": 0.0565},
+        {"symbol": "JPM", "weight": 0.0296},
+    ]
+    call_id = "call_summary|fc_positions"
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {"positions": positions},
+        call_id,
+    )
+
+    refs = ";".join(
+        f"{call_id}::positions[{index}].weight"
+        for index in range(5)
+    )
+    formula = "0.1997+0.1311+0.0598+0.0591+0.0565"
+    total = 50.62
+
+    answer = (
+        f"**En conjunto suman {total:.2f}% de la cartera.** "
+        "JPM ya figura en el snapshot actualizado, pero no integra las cinco "
+        "posiciones principales.\n\n"
+        "```figures\n"
+        f"{total:.2f}% | derived | {formula} | {refs}\n"
+        "```"
+    )
+
+    validation = ledger.validate_final_answer(answer)
+    assert validation.valid is True, validation.issues
+
+
+def test_same_entity_derived_refs_do_not_ignore_incidental_other_ticker(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="compare holdings")
+
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {
+            "positions": [
+                {"symbol": "YPFD", "weight": 0.20, "return_pct": 0.10},
+                {"symbol": "JPM", "weight": 0.03, "return_pct": 0.02},
+            ]
+        },
+        "call_summary|fc_same_entity",
+    )
+
+    answer = (
+        "El agregado es 30.00%. JPM aparece también en el snapshot.\n\n"
+        "```figures\n"
+        "30.00% | derived | (0.20 + 0.10) * 100 | "
+        "call_summary|fc_same_entity::positions[0].weight;"
+        "call_summary|fc_same_entity::positions[0].return_pct\n"
+        "```"
+    )
+
+    validation = ledger.validate_final_answer(answer)
+    assert validation.valid is False
+    assert any(
+        issue.get("symbol") == "JPM"
+        for issue in validation.issues
+    ), validation.issues
