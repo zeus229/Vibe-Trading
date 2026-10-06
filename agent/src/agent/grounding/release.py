@@ -22,6 +22,11 @@ from src.agent.grounding.figures import (
     strip_figures_block,
 )
 from src.agent.grounding.policies import ValidationResult
+from src.agent.grounding.repair_contract import (
+    CorrectionContract,
+    RepairAction,
+    directive_for_issue,
+)
 
 # Bounded read-only recovery (#1081) through `search_symbol` / `get_market_data`,
 # budgeted separately from rejected drafts so real progress is never cut off.
@@ -170,9 +175,17 @@ def _correction_line(issue: dict[str, Any]) -> str:
     nearest = issue.get("observed_nearest") or []
     if nearest:
         evidence += "; nearest observed " + ", ".join(_format_price(float(item)) for item in nearest)
+    directive = directive_for_issue(issue)
+    action = directive.action.value
+    if directive.exact_ref:
+        evidence += f"; repair exact_ref={directive.exact_ref}"
+    if directive.target_scope:
+        evidence += f"; repair target_scope={directive.target_scope}"
+    if directive.preserve:
+        evidence += "; repair preserve=true"
     symbol = issue.get("symbol")
     subject = f"{issue.get('value')} ({symbol})" if symbol else str(issue.get("value"))
-    return f"{subject} | {declared} | {evidence}"
+    return f"{subject} | {declared} | action={action} | {evidence}"
 
 
 
@@ -201,6 +214,14 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
                 entity=entity_ref_symbol or "the entity named by the exact ref"
             )
         )
+    directive = directive_for_issue(issue)
+    parts.append("action=" + directive.action.value)
+    if directive.preserve:
+        parts.append("preserve=true")
+    if directive.exact_ref:
+        parts.append("exact_ref=" + directive.exact_ref)
+    if directive.target_scope:
+        parts.append("target_scope=" + directive.target_scope)
     return " | ".join(parts)
 
 def _strip_release_markers(content: str) -> str:
@@ -225,6 +246,18 @@ def _strip_release_markers(content: str) -> str:
 
 class _ReleaseMixin:
     """Release behaviour of :class:`GroundingLedger`."""
+
+    @staticmethod
+    def correction_contract(validation: ValidationResult) -> CorrectionContract:
+        """Freeze figures that a text-only correction is required to preserve."""
+        return CorrectionContract.from_validation(validation)
+
+    @staticmethod
+    def correction_contract_missing(
+        content: str, contract: CorrectionContract
+    ) -> tuple[str, ...]:
+        """Measured figures a grounded correction silently dropped."""
+        return contract.missing_figures(content)
 
     def correction_prompt(self, validation: ValidationResult) -> str:
         """Build per-figure feedback for one rejected model draft (spec 6).
@@ -266,11 +299,11 @@ class _ReleaseMixin:
         if figures:
             lines.extend(
                 [
-                    "Fix EVERY rejected figure in both the detailed list and compact repair queue in one of exactly three ways:",
-                    "  (1) DECLARE it with the role it really has, in the figures block;",
-                    "  (2) REWRITE it to a value this session's tools actually returned;",
-                    "  (3) REMOVE it from the answer.",
-                    "Restating a rejected value in another format is none of the three and fails again.",
+                    "Follow the declared action on EVERY rejected figure. Finding and repair action are separate contracts:",
+                    "  auto_repair: KEEP the numeric figure and apply the exact ref repair supplied; do not delete or rephrase it away.",
+                    "  preserve_rewrite: KEEP the numeric figure and evidence; rewrite only the surrounding semantic scope/context to the supplied target_scope.",
+                    "  recover: evidence is missing; never fabricate a replacement value. Recovery is handled by the bounded recovery path, not by inventing text.",
+                    "  drop: removal is allowed only because no deterministic safe repair was proven.",
                     "Do NOT add new measured numeric claims, comparisons, differences, excesses, gaps, or derived figures unless they directly replace one rejected figure listed above. Preserve already-passed figures instead of embellishing them with new arithmetic.",
                     "If a tool already returned the needed comparison/difference, declare that figure observed with its exact call_id::field ref instead of recomputing it.",
                     "If a rejected figure truly must be derived, its figures-block note must be machine arithmetic only: numeric operands plus ASCII + - * / and parentheses. Do not write operator words (for example 'minus', 'menos', 'plus', 'más'), labels, policy prose, or units inside the formula note.",
