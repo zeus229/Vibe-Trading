@@ -94,10 +94,16 @@ def test_contract_hard_preserves_only_repairable_rejected_figures():
 
     assert [claim.text for claim in contract.required_figures] == ["50.61%"]
     assert contract.missing_figures(
-        "Cartera 3.15% YTD 12.06%. Top 5 agregado: 50.61%."
+        "Cartera 3.15% YTD 12.06%. Top 5 agregado: 50.61%.\n\n"
+        "```figures\n"
+        "50.61% | observed | top5 | call_p::data.concentration.top5_pct\n"
+        "```"
     ) == ()
     assert contract.missing_figures(
-        "Cartera 3.15% YTD 12.06%. Se omite el agregado."
+        "Cartera 3.15% YTD 12.06%. Se omite el agregado.\n\n"
+        "```figures\n"
+        "3.15% | observed | portfolio | call_perf::data.return_pct\n"
+        "```"
     ) == ("50.61%",)
 
 
@@ -125,7 +131,13 @@ def test_required_figure_matches_equivalent_numeric_formatting():
     )
     contract = CorrectionContract.from_validation(validation)
 
-    assert contract.missing_figures("CER: 0.225%. VaR 95%: 2.9282666%.") == ()
+    assert contract.missing_figures(
+        "CER: 0.225%. VaR 95%: 2.9282666%.\n\n"
+        "```figures\n"
+        "0.225% | observed | CER | call_cer::data.return_pct\n"
+        "2.9282666% | observed | VaR | call_var::data.var95_pct\n"
+        "```"
+    ) == ()
 
 
 def test_contract_retry_prompt_is_focused():
@@ -179,4 +191,69 @@ def test_contract_preserves_decimal_comma_without_percent_from_issue_metadata():
     contract = CorrectionContract.from_validation(validation)
 
     assert [claim.text for claim in contract.required_figures] == ["+1,79", "4,39"]
-    assert contract.missing_figures("SPY +1.79 pp. Effective N 4.39.") == ()
+    assert contract.missing_figures(
+        "SPY +1.79 pp. Effective N 4.39.\n\n"
+        "```figures\n"
+        "1.79 | observed | SPY gap | call_spy::data.excess_return_pct\n"
+        "4.39 | observed | Effective N | call_risk::data.effective_n\n"
+        "```"
+    ) == ()
+
+
+def test_contract_ignores_currency_label_position_when_ref_and_value_survive():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "57,81%",
+                "figure_value": 57.81,
+                "figure_percent": True,
+                "figure_currency": True,
+                "figure_digits": "57.81",
+                "aggregate_ref_candidate": "call_fx::data.currency_exposure.ARS",
+            },
+            {
+                "value": "42,19%",
+                "figure_value": 42.19,
+                "figure_percent": True,
+                "figure_currency": True,
+                "figure_digits": "42.19",
+                "aggregate_ref_candidate": "call_fx::data.currency_exposure.USD",
+            },
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
+
+    draft = (
+        "La distribución monetaria es 57,81% en ARS y 42,19% en USD.\n\n"
+        "```figures\n"
+        "57.81% | observed | ARS exposure | call_fx::data.currency_exposure.ARS\n"
+        "42.19% | observed | USD exposure | call_fx::data.currency_exposure.USD\n"
+        "```"
+    )
+    assert contract.missing_figures(draft) == ()
+
+
+def test_same_numeric_value_with_wrong_ref_does_not_satisfy_contract():
+    validation = SimpleNamespace(
+        passed_figures=(),
+        issues=[
+            {
+                "value": "50,61%",
+                "figure_value": 50.61,
+                "figure_percent": True,
+                "figure_currency": False,
+                "figure_digits": "50.61",
+                "aggregate_ref_candidate": "call_p::data.concentration.top5_pct",
+            }
+        ],
+    )
+    contract = CorrectionContract.from_validation(validation)
+
+    draft = (
+        "Otra métrica también vale 50,61%.\n\n"
+        "```figures\n"
+        "50.61% | observed | other metric | call_other::data.metric\n"
+        "```"
+    )
+    assert contract.missing_figures(draft) == ("50,61%",)
