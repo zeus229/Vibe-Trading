@@ -464,7 +464,8 @@ def test_non_price_symbol_resolution_keeps_other_symbols_evidence_isolated(
         )
     )
 
-    assert _reasons(result) == ["not_in_referenced_call"]
+    assert _reasons(result) == ["entity_ref_needs_scoped_claim"]
+    assert result.issues[0]["entity_ref_symbol"] == "AAPL.US"
 
 
 def test_a_symbol_the_declaration_names_outranks_the_prose(tmp_path: Path) -> None:
