@@ -584,7 +584,7 @@ def test_risk_normalized_weight_gets_canonical_entity_replacement(
         "| YPFD | 20.01% |\n\n"
         "```figures\n"
         "20.01% | observed | portfolio weight | "
-        "functions.portfolio_summary::context.risk_xray_args.weights.YPFD\n"
+        "context.risk_xray_args.weights.YPFD\n"
         "```"
     )
 
@@ -607,52 +607,76 @@ def test_risk_normalized_weight_gets_canonical_entity_replacement(
     assert directive.exact_ref == issue["replacement_ref_candidate"]
 
 
-def test_derived_summary_row_does_not_need_total_to_match_one_operand(
+def test_derived_summary_from_risk_weights_replaces_with_canonical_holdings_sum(
     tmp_path: Path,
 ) -> None:
     ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
     call_id = "call_summary|fc_aggregate_weights"
-    weights = [0.1997, 0.1311, 0.0598, 0.0591, 0.0565]
+    holdings = [
+        ("YPFD", 0.19968844),
+        ("PAMP", 0.1310551),
+        ("GGAL", 0.0598),
+        ("TGSU2", 0.0591),
+        ("EWZ", 0.05652953),
+    ]
+    risk_weights = {
+        "YPFD": 0.2001,
+        "PAMP": 0.1314,
+        "GGAL": 0.0599,
+        "TGSU2": 0.0592,
+        "EWZ": 0.0567,
+    }
     _ingest(
         ledger,
         "portfolio_summary",
         {
             "context": {
-                "risk_xray_args": {
-                    "weights": {
-                        "YPFD": weights[0],
-                        "PAMP": weights[1],
-                        "GGAL": weights[2],
-                        "TGSU2": weights[3],
-                        "EWZ": weights[4],
-                    }
-                }
+                "holdings_native": {
+                    "ARS": [
+                        {"symbol": symbol, "weight": weight}
+                        for symbol, weight in holdings
+                    ]
+                },
+                "risk_xray_args": {"weights": risk_weights},
             }
         },
         call_id,
     )
-    total = sum(weights) * 100
+
+    risk_total = sum(risk_weights.values()) * 100
     refs = ";".join(
-        [
-            f"{call_id}::context.risk_xray_args.weights.YPFD",
-            f"{call_id}::context.risk_xray_args.weights.PAMP",
-            f"{call_id}::context.risk_xray_args.weights.GGAL",
-            f"{call_id}::context.risk_xray_args.weights.TGSU2",
-            f"{call_id}::context.risk_xray_args.weights.EWZ",
-        ]
+        f"context.risk_xray_args.weights.{symbol}"
+        for symbol in risk_weights
     )
-    formula = "(" + "+".join(str(value) for value in weights) + ")*100"
+    formula = "(" + "+".join(str(value) for value in risk_weights.values()) + ")*100"
 
     validation = ledger.validate_final_answer(
         "| Ticker | Peso |\n"
         "|---|---:|\n"
-        f"| **Total conjunto** | {total:.2f}% |\n\n"
+        f"| **Total conjunto** | {risk_total:.2f}% |\n\n"
         "```figures\n"
-        f"{total:.2f}% | derived | {formula} | {refs}\n"
+        f"{risk_total:.2f}% | derived | {formula} | {refs}\n"
         "```"
     )
 
-    assert validation.valid is True, validation.issues
+    assert validation.valid is False
+    issue = next(
+        item for item in validation.issues
+        if item.get("reason") == "derived_summary_needs_canonical_replacement"
+    )
+    canonical_total = sum(weight for _, weight in holdings) * 100
+    assert issue["replacement_value"] == pytest.approx(canonical_total)
+    assert issue["replacement_text"] == f"{canonical_total:.2f}%"
+    assert issue["replacement_role"] == "derived"
+    assert len(issue["replacement_refs"]) == 5
+    assert all("holdings_native" in ref for ref in issue["replacement_refs"])
+
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.REPLACE
+    assert directive.preserve is True
+    assert directive.replacement_value == pytest.approx(canonical_total)
+    assert directive.replacement_formula == issue["replacement_formula"]
+    assert set(directive.allowed_refs) == set(issue["replacement_refs"])
 
 
 def test_deterministic_derive_requires_every_proven_operand_ref(
@@ -700,17 +724,98 @@ def test_deterministic_derive_requires_every_proven_operand_ref(
     assert validation.valid is False
     issue = next(
         item for item in validation.issues
-        if item.get("reason") == "derived_refs_incomplete"
+        if item.get("reason") in {
+            "derived_refs_incomplete",
+            "additive_operand_not_observed",
+        }
+        and item.get("derive_operand_refs")
     )
     expected = {
         f"{left_id}::data.volatility.annualized_vol",
         f"{right_id}::data.volatility.annualized_vol",
     }
     assert set(issue["derive_operand_refs"]) == expected
-    assert set(issue["missing_derive_refs"]) == {
-        f"{right_id}::data.volatility.annualized_vol"
-    }
+    if issue.get("reason") == "derived_refs_incomplete":
+        assert set(issue["missing_derive_refs"]) == {
+            f"{right_id}::data.volatility.annualized_vol"
+        }
     directive = directive_for_issue(issue)
     assert directive.action is RepairAction.DERIVE
     assert directive.preserve is True
     assert set(directive.allowed_refs) == expected
+
+
+
+def test_bare_risk_weight_ref_must_match_claim_ticker_for_replacement(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top holdings")
+    call_id = "call_summary|fc_mismatch"
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {
+            "context": {
+                "holdings_native": {
+                    "ARS": [
+                        {"symbol": "YPFD", "weight": 0.1997},
+                        {"symbol": "PAMP", "weight": 0.1311},
+                    ]
+                },
+                "risk_xray_args": {
+                    "weights": {"YPFD": 0.2001, "PAMP": 0.1314}
+                },
+            }
+        },
+        call_id,
+    )
+
+    result = ledger.validate_final_answer(
+        "| Ticker | Peso |\n"
+        "|---|---:|\n"
+        "| PAMP | 20.01% |\n\n"
+        "```figures\n"
+        "20.01% | observed | weight | context.risk_xray_args.weights.YPFD\n"
+        "```"
+    )
+
+    assert result.valid is False
+    assert not any(
+        issue.get("reason") == "entity_value_needs_canonical_replacement"
+        for issue in result.issues
+    )
+
+
+def test_bare_risk_weight_ref_requires_unique_source_call(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top holdings")
+    for suffix, holding in (("one", 0.1997), ("two", 0.1988)):
+        _ingest(
+            ledger,
+            "portfolio_summary",
+            {
+                "context": {
+                    "holdings_native": {
+                        "ARS": [{"symbol": "YPFD", "weight": holding}]
+                    },
+                    "risk_xray_args": {"weights": {"YPFD": 0.2001}},
+                }
+            },
+            f"call_summary|fc_{suffix}",
+        )
+
+    result = ledger.validate_final_answer(
+        "| Ticker | Peso |\n"
+        "|---|---:|\n"
+        "| YPFD | 20.01% |\n\n"
+        "```figures\n"
+        "20.01% | observed | weight | context.risk_xray_args.weights.YPFD\n"
+        "```"
+    )
+
+    assert result.valid is False
+    assert not any(
+        issue.get("reason") == "entity_value_needs_canonical_replacement"
+        for issue in result.issues
+    )
