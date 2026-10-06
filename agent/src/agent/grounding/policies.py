@@ -867,7 +867,45 @@ class _PolicyMixin:
             )
             if declared:
                 return declared
-        return self._written_symbol(content, figure, line_symbols, records) or document_symbol
+        written = self._written_symbol(content, figure, line_symbols, records)
+        if (
+            written
+            and figure.symbol
+            and declaration is not None
+            and self._summary_row_is_unscoped(figure.symbol, declaration, figure)
+        ):
+            written = None
+        return written or document_symbol
+
+    def _summary_row_is_unscoped(
+        self,
+        row_label: str,
+        declaration: Declaration,
+        figure: Figure,
+    ) -> bool:
+        """Whether a non-ticker summary-row label should stay unscoped.
+
+        Bare ticker-shaped labels remain entities even when unknown, preserving
+        fail-closed isolation (AAPL/TSLA/ZZZZ). Only labels that are plainly not
+        ticker-shaped may be suppressed, and only when the declaration itself
+        resolves exclusively to unscoped/aggregate evidence.
+        """
+        label = re.sub(r"[*_`]+", "", str(row_label)).strip()
+        if not label or re.fullmatch(r"[A-Za-z0-9&.-]{1,20}", label):
+            return False
+        scoped = self._referenced(declaration.ref, None, figure)
+        if scoped is None:
+            return False
+        records, metric_values = scoped
+        if metric_values:
+            return True
+        if not records:
+            return False
+        return all(
+            not record.symbol
+            and record.identity_scope in {"aggregate", "unknown"}
+            for record in records
+        )
 
     @staticmethod
     def _figure_is_market_price(
@@ -898,21 +936,11 @@ class _PolicyMixin:
         """
         if figure.symbol:
             # "000001.SZ 平安银行": the cell names its instrument beside a name.
-            # A summary-row label under a Ticker/Symbol header ("Total", "Sum")
-            # is not an entity merely because the table column is symbol-shaped.
             written = _scan_symbols(figure.symbol)
             if len(written) == 1:
                 return next(iter(written))
             normalized = _normalize_symbol(figure.symbol)
-            known = {
-                str(record.symbol)
-                for record in records
-                if record.symbol
-            } | set(getattr(self, "_session_symbols", set()))
-            if normalized and (
-                _CANONICAL_SYMBOL_RE.fullmatch(normalized)
-                or normalized in known
-            ):
+            if normalized:
                 return normalized
         left, right = segment_bounds(content, figure.start, figure.end)
         segment_symbol = self._symbol_for_claim(content[left:right], records)
