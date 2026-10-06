@@ -191,6 +191,13 @@ def _correction_line(issue: dict[str, Any]) -> str:
         evidence += f"; repair derive_formula={directive.derive_formula}"
     if directive.action.value == "derive" and directive.allowed_refs:
         evidence += "; repair derive_refs=" + "; ".join(directive.allowed_refs)
+    if directive.action.value == "replace":
+        replacement_text = issue.get("replacement_text")
+        replacement_ref = issue.get("replacement_ref_candidate")
+        if replacement_text:
+            evidence += f"; repair replacement_value={replacement_text}"
+        if replacement_ref:
+            evidence += f"; repair replacement_ref={replacement_ref}"
     if directive.preserve:
         evidence += "; repair preserve=true"
     symbol = issue.get("symbol")
@@ -234,6 +241,11 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
         parts.append("derive_formula=" + directive.derive_formula)
     if directive.action.value == "derive" and directive.allowed_refs:
         parts.append("derive_refs=" + ";".join(directive.allowed_refs))
+    if directive.action.value == "replace":
+        if issue.get("replacement_text"):
+            parts.append("replacement_value=" + str(issue.get("replacement_text")))
+        if issue.get("replacement_ref_candidate"):
+            parts.append("replacement_ref=" + str(issue.get("replacement_ref_candidate")))
     return " | ".join(parts)
 
 def _strip_release_markers(content: str) -> str:
@@ -316,6 +328,7 @@ class _ReleaseMixin:
                     "  preserve_rewrite: KEEP the numeric figure and evidence, DECLARE it with the repaired ref when supplied, and rewrite only the surrounding semantic scope/context to the supplied target_scope.",
                     "  preserve_options: KEEP the numeric figure; several exact refs are proven to contain this written value. DECLARE it with one of the proven repair refs listed on that issue. Do not delete the claim merely because more than one source/cut supports it.",
                     "  derive: KEEP the numeric figure and DECLARE it as derived using exactly the supplied derive_formula and every supplied derive_ref, separated by semicolons. Preserve the unit/shape used in the prose; do not turn percentage points into percent merely because the operands are ratios.",
+                    "  replace: KEEP the semantic claim/entity, but REPLACE the rejected numeric value with the supplied replacement_value and DECLARE it observed with exactly the supplied replacement_ref. Do not preserve the old number.",
                     "  recover: evidence is missing; never fabricate a replacement value. Recovery is handled by the bounded recovery path, not by inventing text.",
                     "  drop: removal is allowed only because no deterministic safe repair was proven.",
                     "Do NOT add new measured numeric claims, comparisons, differences, excesses, gaps, or derived figures unless they directly replace one rejected figure listed above. Preserve already-passed figures instead of embellishing them with new arithmetic.",
