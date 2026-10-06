@@ -2433,6 +2433,7 @@ class _PolicyMixin:
                 f"{replacement_value:.{places}f}" if places else f"{replacement_value:g}"
             ),
             "replacement_entity_symbol": symbol,
+            "replacement_role": "observed",
             "replacement_source_call_id": source_call,
         }
 
