@@ -318,7 +318,7 @@ class _ReleaseMixin:
                 lines.append(
                     "These value(s) have now been rejected across more than one draft: "
                     + ", ".join(repeated)
-                    + ". Take option (2) or (3) for them."
+                    + ". Follow each figure's declared repair action; a preserve=true figure must not be deleted."
                 )
         passed = list(validation.passed_figures)
         if passed:
