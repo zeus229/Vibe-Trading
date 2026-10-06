@@ -252,6 +252,9 @@ class _ReleaseMixin:
                     "  (2) REWRITE it to a value this session's tools actually returned;",
                     "  (3) REMOVE it from the answer.",
                     "Restating a rejected value in another format is none of the three and fails again.",
+                    "Do NOT add new measured numeric claims, comparisons, differences, excesses, gaps, or derived figures unless they directly replace one rejected figure listed above. Preserve already-passed figures instead of embellishing them with new arithmetic.",
+                    "If a tool already returned the needed comparison/difference, declare that figure observed with its exact call_id::field ref instead of recomputing it.",
+                    "If a rejected figure truly must be derived, its figures-block note must be machine arithmetic only: numeric operands plus ASCII + - * / and parentheses. Do not write operator words (for example 'minus', 'menos', 'plus', 'más'), labels, policy prose, or units inside the formula note.",
                 ]
             )
             repeated = self._repeatedly_rejected(figures)
