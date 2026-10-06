@@ -177,8 +177,6 @@ def _correction_line(issue: dict[str, Any]) -> str:
         evidence += "; nearest observed " + ", ".join(_format_price(float(item)) for item in nearest)
     directive = directive_for_issue(issue)
     action = directive.action.value
-    if directive.exact_ref:
-        evidence += f"; repair exact_ref={directive.exact_ref}"
     if directive.target_scope:
         evidence += f"; repair target_scope={directive.target_scope}"
     if directive.preserve:
@@ -218,8 +216,6 @@ def _compact_correction_line(issue: dict[str, Any]) -> str:
     parts.append("action=" + directive.action.value)
     if directive.preserve:
         parts.append("preserve=true")
-    if directive.exact_ref:
-        parts.append("exact_ref=" + directive.exact_ref)
     if directive.target_scope:
         parts.append("target_scope=" + directive.target_scope)
     return " | ".join(parts)
@@ -300,8 +296,8 @@ class _ReleaseMixin:
             lines.extend(
                 [
                     "Follow the declared action on EVERY rejected figure. Finding and repair action are separate contracts:",
-                    "  auto_repair: KEEP the numeric figure and apply the exact ref repair supplied; do not delete or rephrase it away.",
-                    "  preserve_rewrite: KEEP the numeric figure and evidence; rewrite only the surrounding semantic scope/context to the supplied target_scope.",
+                    "  auto_repair: KEEP the numeric figure, DECLARE it with the exact repaired ref supplied, and do not delete or rephrase it away.",
+                    "  preserve_rewrite: KEEP the numeric figure and evidence, DECLARE it with the repaired ref when supplied, and rewrite only the surrounding semantic scope/context to the supplied target_scope.",
                     "  recover: evidence is missing; never fabricate a replacement value. Recovery is handled by the bounded recovery path, not by inventing text.",
                     "  drop: removal is allowed only because no deterministic safe repair was proven.",
                     "Do NOT add new measured numeric claims, comparisons, differences, excesses, gaps, or derived figures unless they directly replace one rejected figure listed above. Preserve already-passed figures instead of embellishing them with new arithmetic.",
