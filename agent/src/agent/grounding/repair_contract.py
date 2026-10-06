@@ -37,6 +37,7 @@ class RepairDirective:
     target_scope: str | None = None
     derive_formula: str | None = None
     replacement_value: float | None = None
+    replacement_formula: str | None = None
 
 
 _RECOVERY_REASONS = frozenset({"no_evidence", "symbol_never_handled", "no_symbol"})
@@ -75,19 +76,33 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
         )
 
     replacement_ref = issue.get("replacement_ref_candidate")
+    replacement_refs = tuple(
+        dict.fromkeys(str(item) for item in issue.get("replacement_refs") or [])
+    )
     replacement_value = issue.get("replacement_value")
-    if replacement_ref and isinstance(replacement_value, (int, float)):
+    replacement_formula = issue.get("replacement_formula")
+    if (replacement_ref or replacement_refs) and isinstance(replacement_value, (int, float)):
+        allowed = (
+            replacement_refs
+            if replacement_refs
+            else (str(replacement_ref),)
+        )
         return RepairDirective(
             RepairAction.REPLACE,
             preserve=True,
-            exact_ref=str(replacement_ref),
-            allowed_refs=(str(replacement_ref),),
+            exact_ref=str(replacement_ref) if replacement_ref else None,
+            allowed_refs=allowed,
             target_scope=(
                 f"entity:{issue.get('replacement_entity_symbol')}"
                 if issue.get("replacement_entity_symbol")
+                else "aggregate"
+                if issue.get("replacement_role") == "derived"
                 else None
             ),
             replacement_value=float(replacement_value),
+            replacement_formula=(
+                str(replacement_formula) if replacement_formula else None
+            ),
         )
 
     if len(proven_refs) > 1:
@@ -179,7 +194,13 @@ class RequiredFigure:
             allowed_refs=directive.allowed_refs or (
                 (directive.exact_ref,) if directive.exact_ref else ()
             ),
-            require_all_refs=directive.action is RepairAction.DERIVE,
+            require_all_refs=(
+                directive.action is RepairAction.DERIVE
+                or (
+                    directive.action is RepairAction.REPLACE
+                    and len(directive.allowed_refs) > 1
+                )
+            ),
         )
 
     def _value_matches(self, value: float) -> bool:
