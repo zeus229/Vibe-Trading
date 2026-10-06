@@ -882,6 +882,12 @@ class _PolicyMixin:
             if declared:
                 return declared
         written = self._written_symbol(content, figure, line_symbols, records)
+        derived_multi_entity = bool(
+            declaration is not None
+            and self._derived_multi_entity_refs_are_unscoped(
+                declaration, figure
+            )
+        )
         if declaration is not None:
             if (
                 written
@@ -891,13 +897,10 @@ class _PolicyMixin:
                 )
             ):
                 written = None
-            elif (
-                written
-                and self._derived_multi_entity_refs_are_unscoped(
-                    declaration, figure
-                )
-            ):
+            elif written and derived_multi_entity:
                 written = None
+        if derived_multi_entity:
+            return None
         return written or document_symbol
 
     def _summary_row_is_unscoped(
