@@ -55,6 +55,77 @@ def test_exact_aggregate_ref_stays_invalid_when_claim_is_symbol_scoped(tmp_path:
     ) is True
 
 
+def test_exact_entity_ref_mismatch_surfaces_spatial_repair_metadata(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="benchmark comparison")
+    ledger._evidence = [
+        EvidenceRecord(
+            call_id="call_spy",
+            tool="asistente_casa_portfolio_performance",
+            symbol="SPY",
+            source="asistente_casa",
+            timestamp=None,
+            field="data.references.SPY_ARS.excess_return_pct",
+            value=1.79,
+            status="observed",
+            unit="ratio",
+            identity_scope="entity",
+        )
+    ]
+    figure = _percent_figure(1.79)
+    declaration = Declaration(
+        index=0,
+        value_text=figure.text,
+        value=figure.value,
+        percent=True,
+        role="observed",
+        note="portfolio excess return versus benchmark",
+        ref="call_spy::data.references.SPY_ARS.excess_return_pct",
+    )
+
+    issues = ledger._check_observed(figure, declaration, "CCL", ledger._evidence)
+
+    assert len(issues) == 1
+    assert issues[0]["reason"] == "entity_ref_needs_scoped_claim"
+    assert issues[0]["entity_ref_symbol"] == "SPY"
+    assert issues[0]["source_tool_call_ids"] == [
+        "call_spy::data.references.SPY_ARS.excess_return_pct"
+    ]
+
+
+def test_exact_entity_ref_spatial_repair_keeps_gate_fail_closed(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="benchmark comparison")
+    ledger._evidence = [
+        EvidenceRecord(
+            call_id="call_spy",
+            tool="asistente_casa_portfolio_performance",
+            symbol="SPY",
+            source="asistente_casa",
+            timestamp=None,
+            field="data.references.SPY_ARS.excess_return_pct",
+            value=1.79,
+            status="observed",
+            unit="ratio",
+            identity_scope="entity",
+        )
+    ]
+    figure = _percent_figure(1.79)
+
+    wrong_records, _ = ledger._referenced_one(
+        "call_spy::data.references.SPY_ARS.excess_return_pct",
+        "CCL",
+        figure,
+    )
+    right_records, _ = ledger._referenced_one(
+        "call_spy::data.references.SPY_ARS.excess_return_pct",
+        "SPY",
+        figure,
+    )
+
+    assert wrong_records == []
+    assert len(right_records) == 1
+    assert right_records[0].symbol == "SPY"
+
+
 def test_exact_field_ref_still_rejects_other_entity(tmp_path: Path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
     ledger._evidence = [_record(symbol="JPM", identity_scope="entity")]
@@ -88,6 +159,26 @@ def test_unique_wrong_call_candidate_tells_correction_to_replace_only_ref():
     assert "valid field refs: call_acciones::data.volatility.annualized_vol" in line
     assert line.count("call_acciones::data.volatility.annualized_vol") == 1
     assert "keep the written value and replace only the incorrect ref" in line
+
+
+def test_detailed_entity_ref_mismatch_requires_spatial_separation():
+    line = _correction_line(
+        {
+            "code": "numeric_claim_conflict",
+            "value": "+1.79",
+            "role": "observed",
+            "reason": "entity_ref_needs_scoped_claim",
+            "symbol": "CCL",
+            "source_tool_call_ids": [
+                "call_spy::data.references.SPY_ARS.excess_return_pct"
+            ],
+            "entity_ref_symbol": "SPY",
+        }
+    )
+
+    assert "scoped only to entity SPY" in line
+    assert "do not mix another ticker, benchmark, or entity" in line
+    assert "separate cells, rows, or sentences" in line
 
 
 def test_multiple_candidates_remain_non_prescriptive():
@@ -236,6 +327,42 @@ def test_compact_queue_surfaces_rejected_issues_beyond_detailed_cap(tmp_path: Pa
     assert "aggregate=keep the value/ref aggregate and rewrite it as aggregate/unscoped" in prompt
     assert "do not mention any ticker or instrument anywhere on the same line or in the same paragraph" in prompt
     assert "EVERY remaining issue below is also rejected" in prompt
+
+
+def test_compact_entity_ref_mismatch_requires_spatial_separation(tmp_path: Path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="benchmark comparison")
+    issues = [
+        {
+            "code": "numeric_claim_conflict",
+            "value": f"{index}.00%",
+            "role": "observed",
+            "reason": "not_in_referenced_call",
+            "source_tool_call_ids": ["wrong::field"],
+        }
+        for index in range(24)
+    ]
+    issues.append(
+        {
+            "code": "numeric_claim_conflict",
+            "value": "+1.79",
+            "role": "observed",
+            "reason": "entity_ref_needs_scoped_claim",
+            "symbol": "CCL",
+            "source_tool_call_ids": [
+                "call_spy::data.references.SPY_ARS.excess_return_pct"
+            ],
+            "entity_ref_symbol": "SPY",
+        }
+    )
+    from src.agent.grounding.policies import ValidationResult
+
+    prompt = ledger.correction_prompt(
+        ValidationResult(valid=False, issues=issues, released_text="", passed_figures=())
+    )
+
+    assert "entity=keep the exact value/ref" in prompt
+    assert "scoped only to entity SPY" in prompt
+    assert "do not mix another ticker, benchmark, or entity" in prompt
 
 
 def test_prompt_never_says_unlisted_rejected_figures_checked_clean(tmp_path: Path):
