@@ -167,6 +167,33 @@ def test_unique_first_pass_candidate_is_prescriptive():
     assert "keep the written value and replace only the incorrect ref" in line
 
 
+def test_detailed_aggregate_candidate_requires_spatial_separation():
+    line = _correction_line(
+        {
+            "code": "numeric_claim_conflict",
+            "value": "20.18%",
+            "role": "observed",
+            "reason": "field_ref_needs_call_id",
+            "source_tool_call_ids": [
+                "portfolio_summary::data.concentration.top1_pct"
+            ],
+            "field_ref_candidates": [
+                "call_portfolio::data.concentration.top1_pct"
+            ],
+            "aggregate_ref_candidate": (
+                "call_portfolio::data.concentration.top1_pct"
+            ),
+        }
+    )
+
+    assert "keep the value/ref aggregate and rewrite it as aggregate/unscoped" in line
+    assert (
+        "do not mention any ticker or instrument anywhere on the same line "
+        "or in the same paragraph" in line
+    )
+    assert "move that comparison to a separate paragraph or table row" in line
+
+
 def test_aggregate_scope_feedback_preserves_fail_closed_and_explains_rewrite(tmp_path: Path):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio report")
     ledger._evidence = [_record()]
@@ -206,7 +233,8 @@ def test_compact_queue_surfaces_rejected_issues_beyond_detailed_cap(tmp_path: Pa
 
     assert "There are 30 rejected issue(s) total" in prompt
     assert "call_29::data.metric" in prompt
-    assert "aggregate=keep value/ref but rewrite as aggregate/unscoped" in prompt
+    assert "aggregate=keep the value/ref aggregate and rewrite it as aggregate/unscoped" in prompt
+    assert "do not mention any ticker or instrument anywhere on the same line or in the same paragraph" in prompt
     assert "EVERY remaining issue below is also rejected" in prompt
 
 
