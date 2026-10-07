@@ -534,3 +534,62 @@ def test_gate_uses_exact_normal_form_after_float_cancellation(generic_operand_ga
                   'call::positions[0].market_value\n```')
         result = generic_operand_gate.validate_final_answer(answer)
         assert result.valid == valid, result.issues
+
+
+@pytest.mark.parametrize('expr', [
+    '7/10000', '7/100/100', '7*(1/10000)', '7*0.0001',
+    '7*(1/100)*(1/100)', '(7/100)/100', '7*((1/100)/100)',
+    '7/((100)*(100))', '-(-7/(100*100))',
+])
+def test_hidden_constant_denominators_share_exact_rejection(generic_operand_gate, expr):
+    from fractions import Fraction
+
+    proof, reason, result = _generic_proof(generic_operand_gate, expr)
+    assert list(proof.values()) == [Fraction(1, 10000)]
+    assert reason == 'scalar_subtree_out_of_range'
+    assert not result.valid
+
+
+@pytest.mark.parametrize('expr,coefficient,accepted', [
+    ('7*.25', '1/4', True),
+    ('7*.50', '1/2', True),
+    ('7*.01', '1/100', True),
+    ('7/100', '1/100', True),
+    ('7*(1-.99)', '1/100', True),
+    ('7*(1-.99)*100', '1', True),
+    ('7*(1-.99)*100*100', '100', True),
+    ('7*100', '100', True),
+    ('7*.00999999999999999999999', '999999999999999999999/100000000000000000000000', False),
+    ('7*100.000000000000000000001', '100000000000000000000001/1000000000000000000000', False),
+    ('-7*.01', '-1/100', True),
+    ('-7*.00999999999999999999999', '-999999999999999999999/100000000000000000000000', False),
+])
+def test_bilateral_boundary_is_exact_and_inclusive(generic_operand_gate, expr, coefficient, accepted):
+    from fractions import Fraction
+
+    proof, reason, result = _generic_proof(generic_operand_gate, expr)
+    assert list(proof.values()) == [Fraction(coefficient)]
+    assert reason == (None if accepted else 'scalar_subtree_out_of_range')
+    assert result.valid == accepted
+
+
+@pytest.mark.parametrize('expr,coefficient', [
+    ('7/1000', 1), ('7/1000*100', 100), ('(7+11)/1000*100', 100),
+])
+def test_observed_denominator_value_is_not_a_constant_scale(generic_operand_gate, expr, coefficient):
+    paths = ['positions[0].market_value', 'totals.market_value']
+    if '11' in expr:
+        paths.append('positions[1].market_value')
+    proof, reason, result = _generic_proof(generic_operand_gate, expr, paths)
+    assert set(proof.values()) == {coefficient}
+    assert all(key[1] == ('call', 'totals.market_value', None) for key in proof)
+    assert reason is None
+    assert result.valid
+
+
+@pytest.mark.parametrize('expr', ['7-7', '7*.0001-7*.0001', '7/200*200'])
+def test_bilateral_scale_is_checked_after_complete_normalization(generic_operand_gate, expr):
+    proof, reason, result = _generic_proof(generic_operand_gate, expr)
+    assert list(proof.values()) == [1 if expr == '7/200*200' else 0]
+    assert reason is None
+    assert result.valid

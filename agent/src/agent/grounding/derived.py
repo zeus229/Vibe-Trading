@@ -81,7 +81,6 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
     if any(r.unit not in {'money', 'ratio'} or (r.unit == 'money' and not r.currency) for r in records):
         return 'operand_unit_unavailable'
     used: set[int] = set()
-    unobserved_divisor = False
 
     def reference(record: EvidenceRecord) -> RefKey:
         return record.call_id, record.field, record.scope
@@ -105,7 +104,6 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
         return _FinancialForm('scalar', scalar=exact)
 
     def visit(node: ast.AST) -> _FinancialForm:
-        nonlocal unobserved_divisor
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
             literal = getattr(node, "_grounding_literal", None)
             if literal is None:
@@ -153,10 +151,6 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
             raise ValueError('operand_unit_conflict')
         if isinstance(node.op, ast.Div):
             if right.unit == 'scalar':
-                # A large unreferenced financial denominator must not become
-                # an innocuous small coefficient. Keep the existing boundary
-                # on constant-only divisors, after exact subtree normalization.
-                unobserved_divisor |= abs(right.scalar) > 100
                 return left.scaled(Fraction(1) / right.scalar)
             if left.unit == 'scalar' or (left.unit, left.currency) != (right.unit, right.currency):
                 raise ValueError('operand_unit_conflict')
@@ -176,14 +170,15 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
         form = visit(tree.body)
         if money and form.unit != 'money':
             return 'operand_unit_conflict'
-        if unobserved_divisor or form.unit == 'scalar' or len(used) != len(records):
+        if form.unit == 'scalar' or len(used) != len(records):
             return 'financial_operand_not_observed'
         if coefficient_proof is not None:
             coefficient_proof.update(form.coefficients)
-        # Apply the cap to the complete normalized expression, not a branch's
-        # maximum: repeated refs add, distinct refs remain distinct, and signed
-        # cancellation happens before the effective coefficient is checked.
-        if any(abs(value) > 100 for value in form.coefficients.values()):
+        # Bound the complete nonzero coefficient bilaterally after cancellation,
+        # so reciprocals or distributed divisors cannot hide unreferenced money.
+        # Observed denominator values are refs, not constant-only coefficients.
+        if any(value != 0 and not Fraction(1, 100) <= abs(value) <= 100
+               for value in form.coefficients.values()):
             return 'scalar_subtree_out_of_range'
         # Evaluate the proven normal form, not a float expression whose
         # cancellation may disagree with its exact coefficient semantics.
