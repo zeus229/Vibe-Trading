@@ -1557,43 +1557,44 @@ class _PolicyMixin:
     ) -> list[str]:
         """Exact numeric siblings for a value leaf excluded only by kind.
 
-        The declared leaf itself must contain the written value. This guard is
-        what prevents a wrong ARS leaf from borrowing a USD/sector sibling that
-        merely happens to be under the same container.
+        A bare field path is accepted only when the written value identifies
+        exactly one source call. Sibling candidates are then restricted to
+        that same call, same parent container, same identity scope and value.
+        This keeps bare refs fail-closed when multiple calls could own them.
         """
         key = (ref or "").strip()
-        if "::" not in key:
+        if not key:
             return []
-        scope, field = (part.strip() for part in key.split("::", 1))
-        if not scope or not field or "." not in field:
+        if "::" in key:
+            scope, field = (part.strip() for part in key.split("::", 1))
+        else:
+            scope, field = "", key
+        if not field or "." not in field:
             return []
-        tool_alias = scope.removeprefix("functions.")
+
+        tool_alias = scope.removeprefix("functions.") if scope else ""
         sources = [
             record
             for record in self._evidence
             if record.status == "observed"
             and record.value is not None
             and record.field == field
-            and scope in (record.call_id, record.tool, f"functions.{record.tool}")
-        ]
-        if not sources and tool_alias != scope:
-            sources = [
-                record
-                for record in self._evidence
-                if record.status == "observed"
-                and record.value is not None
-                and record.field == field
-                and record.tool == tool_alias
-            ]
-        sources = [
-            record
-            for record in sources
-            if self._matches_evidence(
+            and (
+                not scope
+                or scope in (record.call_id, record.tool, f"functions.{record.tool}")
+                or (tool_alias and record.tool == tool_alias)
+            )
+            and self._matches_evidence(
                 figure, [float(record.value)], [float(record.value)]
             )
             and not self._kind_fits(record, figure)
+            and (not symbol or not record.symbol or record.symbol == symbol)
         ]
         if not sources:
+            return []
+
+        source_calls = {record.call_id for record in sources if record.call_id}
+        if not scope and len(source_calls) != 1:
             return []
 
         parent = field.rsplit(".", 1)[0]
@@ -1617,6 +1618,45 @@ class _PolicyMixin:
                     self._ref_source(record.call_id, record.field, record.scope)[1]
                 )
         return list(dict.fromkeys(found))
+
+    def _bare_field_ref_candidates(
+        self, ref: str, symbol: str | None, figure: Figure
+    ) -> list[str]:
+        """Exact call refs for one bare scalar field path.
+
+        Candidates must carry the written value with a compatible evidence
+        kind and entity. Multiple compatible calls are returned as explicit
+        preserve-options ambiguity; no call is selected by recency.
+        """
+        field = (ref or "").strip()
+        if not field or "::" in field:
+            return []
+        records, entries = self._field_sources(field, symbol)
+        money = bool(figure.currency and not figure.percent)
+        found: dict[str, list[float]] = {}
+        for record in records:
+            if (
+                record.call_id
+                and record.field
+                and self._kind_fits(record, figure)
+                and (not symbol or not record.symbol or record.symbol == symbol)
+            ):
+                label = self._ref_source(record.call_id, record.field, record.scope)[1]
+                found.setdefault(label, []).append(float(record.value))
+        for entry in entries if not (money or figure.column) else ():
+            if entry.get("call_id") and entry.get("field"):
+                label = self._ref_source(
+                    str(entry["call_id"]), str(entry["field"]), None
+                )[1]
+                found.setdefault(label, []).append(float(entry["value"]))
+        compatible = [
+            label
+            for label, values in found.items()
+            if self._matches_evidence(
+                figure, values, [] if money else values
+            )
+        ]
+        return sorted(dict.fromkeys(compatible))[:_MAX_CALL_REF_CANDIDATES]
 
     def _tool_field_ref_candidates(
         self, ref: str, symbol: str | None, figure: Figure | None = None
@@ -2578,6 +2618,26 @@ class _PolicyMixin:
                             field_ref_candidates=twin_candidates,
                             **self._exact_repair_metadata(
                                 twin_candidates, figure, symbol
+                            ),
+                        )
+                    ]
+                bare_field_candidates = self._bare_field_ref_candidates(
+                    declaration.ref, symbol, figure
+                )
+                if bare_field_candidates:
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "field_ref_needs_call_id",
+                            f"is declared observed from bare field {declaration.ref}; "
+                            "use one exact session call ref proven to contain this value",
+                            source_tool_call_ids=[declaration.ref],
+                            field_ref_candidates=bare_field_candidates,
+                            **self._exact_repair_metadata(
+                                bare_field_candidates, figure, symbol
                             ),
                         )
                     ]
