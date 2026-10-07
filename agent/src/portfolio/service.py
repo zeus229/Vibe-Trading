@@ -331,13 +331,24 @@ class PortfolioService:
                             currency=native_currency,
                         ),
                     )
+                    nested_account = (
+                        (result.get("account") or {}).get("account", {})
+                        if isinstance((result.get("account") or {}).get("account"), dict)
+                        else {}
+                    )
+                    unsettled_cash = min(
+                        max(Decimal("0"), _decimal(nested_account.get("unsettled_cash"))),
+                        max(Decimal("0"), account_total - cash_total),
+                    )
                     if not source.include_cash:
                         account_total = max(
-                            Decimal("0"), account_total - cash_total
+                            Decimal("0"), account_total - cash_total - unsettled_cash
                         )
                         cash_total = Decimal("0")
+                        unsettled_cash = Decimal("0")
                     unpriced_or_other = max(
-                        Decimal("0"), account_total - priced_total - cash_total
+                        Decimal("0"),
+                        account_total - priced_total - cash_total - unsettled_cash,
                     )
                     priced_count = sum(
                         1 for row in broker_positions if row.get("priced")
@@ -360,6 +371,7 @@ class PortfolioService:
                         "total_native": _number(account_total),
                         "priced_value_native": _number(priced_total),
                         "cash_native": _number(cash_total),
+                        "unsettled_cash_native": _number(unsettled_cash),
                         "unpriced_or_other_native": _number(unpriced_or_other),
                         "daily_change": (
                             (result.get("account") or {})
@@ -501,11 +513,13 @@ class PortfolioService:
                 {
                     "priced": Decimal("0"),
                     "cash": Decimal("0"),
+                    "unsettled_cash": Decimal("0"),
                     "unpriced_or_other": Decimal("0"),
                 },
             )
             bucket["priced"] += _decimal(account.get("priced_value_native"))
             bucket["cash"] += _decimal(account.get("cash_native"))
+            bucket["unsettled_cash"] += _decimal(account.get("unsettled_cash_native"))
             bucket["unpriced_or_other"] += _decimal(
                 account.get("unpriced_or_other_native")
             )
@@ -570,12 +584,13 @@ class PortfolioService:
                     currency: {
                         "priced": _number(bucket["priced"]),
                         "cash": _number(bucket["cash"]),
+                        "unsettled_cash": _number(bucket["unsettled_cash"]),
                         "unpriced_or_other": _number(
                             bucket["unpriced_or_other"]
                         ),
                         "identified_coverage": (
                             _number(
-                                (bucket["priced"] + bucket["cash"])
+                                (bucket["priced"] + bucket["cash"] + bucket["unsettled_cash"])
                                 / native_totals[currency]
                             )
                             if native_totals[currency] > 0
@@ -904,6 +919,9 @@ class PortfolioService:
                     "total_usd": row.get("total_usd"),
                     "native_currency": row.get("native_currency"),
                     "total_native": row.get("total_native"),
+                    "cash_native": row.get("cash_native"),
+                    "unsettled_cash_native": row.get("unsettled_cash_native"),
+                    "unpriced_or_other_native": row.get("unpriced_or_other_native"),
                 }
                 for index, row in enumerate(snapshot["accounts"])
             ],
