@@ -286,3 +286,125 @@ def test_explicit_missing_snapshot_is_not_filled_from_parent(tmp_path):
                       G + '; ' + T, 6615045 / TOTAL * 100, data=data)
     assert not result.valid
     assert any(i.get('reason') == 'operand_snapshot_unavailable' for i in result.issues)
+
+
+def _balanced_sum(leaves):
+    if len(leaves) == 1:
+        return leaves[0]
+    middle = len(leaves) // 2
+    return '(' + _balanced_sum(leaves[:middle]) + ' + ' + _balanced_sum(leaves[middle:]) + ')'
+
+
+@pytest.mark.parametrize('numerator', [
+    '6615045*100 + 6615045*100',
+    ' + '.join(['6615045'] * 100),
+    _balanced_sum(['6615045'] * 128),
+    '(' * 60 + '6615045' + ' +6615045)' * 60,
+    '6615045*100 - (-(6615045*100))',
+    '(6615045+6615045)*100',
+    '(6615045+6615045)/0.01',
+])
+def test_distributed_coefficients_cannot_evade_cap(tmp_path, numerator):
+    expr = '(' + numerator + ') / 222105473.58200002 *100'
+    result = validate(tmp_path, expr, G + '; ' + T, eval(expr, {'__builtins__': {}}, {}))
+    assert not result.valid, result.issues
+    assert any(i.get('reason') == 'scalar_subtree_out_of_range' for i in result.issues)
+
+
+@pytest.mark.parametrize('numerator', ['6615045*100 +6615045*100', '(6615045+6615045)*100'])
+def test_coefficient_200_is_rejected_without_percent_conversion(tmp_path, numerator):
+    expr = '(' + numerator + ') / 222105473.58200002'
+    assert not validate(tmp_path, expr, G + '; ' + T, eval(expr, {'__builtins__': {}}, {})).valid
+
+
+def test_same_ref_twice_accumulates_two_and_cancellation_is_algebraic(tmp_path):
+    for expr in ['(6615045+6615045)/222105473.58200002',
+                 '(6615045*100+6615045*100-6615045*100)/222105473.58200002']:
+        result = validate(tmp_path, expr, G + '; ' + T, eval(expr, {'__builtins__': {}}, {}))
+        assert result.valid, result.issues
+
+
+@pytest.mark.parametrize('expr,expected', [
+    ('(6615045+6615045)/222105473.58200002', [2]),
+    ('(6615045*100+6615045*100)/222105473.58200002', [200]),
+    ('(6615045+1384425)/222105473.58200002', [1, 1]),
+    ('(6615045*100+6615045*100-6615045*100)/222105473.58200002', [100]),
+])
+def test_exact_coefficient_proof(tmp_path, expr, expected):
+    from src.agent.grounding.derived import validate_operands
+    from src.agent.grounding.policies import _formula_in_note
+
+    gate = GroundingLedger(run_dir=tmp_path, user_message='Analyze portfolio')
+    ingest(gate, payload())
+    paths = {'context.holdings[0].market_value_ars', 'context.totals.portfolio_market_value_ars'}
+    if '1384425' in expr:
+        paths.add('context.holdings[1].market_value_ars')
+    records = [r for r in gate._evidence if r.field in paths]
+    proof = {}
+    reason = validate_operands(_formula_in_note(expr)[2], records, None, coefficient_proof=proof)
+    assert list(proof.values()) == expected
+    assert reason == ('scalar_subtree_out_of_range' if max(expected) > 100 else None)
+    assert len({key[0] for key in proof}) == len(expected)
+    assert all(key[1][1] == 'context.totals.portfolio_market_value_ars' for key in proof)
+
+
+def test_equal_values_distinct_refs_are_not_fused():
+    from fractions import Fraction
+
+    from src.agent.grounding.derived import _merge_coefficients
+
+    # Identity is entirely source-based; equal numeric evidence is irrelevant
+    # to coefficient merging. The end-to-end ambiguous-value guard remains.
+    a = (('call', 'holdings[0].market_value_ars', None), None)
+    b = (('call', 'holdings[1].market_value_ars', None), None)
+    assert _merge_coefficients({a: Fraction(1)}, {b: Fraction(1)}) == {a: 1, b: 1}
+    assert _merge_coefficients({a: Fraction(1)}, {a: Fraction(1)}) == {a: 2}
+
+
+def test_equivalent_provider_ref_spellings_fuse_before_coefficients(tmp_path):
+    gate = GroundingLedger(run_dir=tmp_path, user_message='Analyze GGAL portfolio')
+    ingest(gate, payload(), 'call_one|fc_suffix')
+    refs = ('call_one::context.holdings[0].market_value_ars; '
+            'call_one|fc_suffix::context.holdings[0].market_value_ars; '
+            'call_one::context.totals.portfolio_market_value_ars')
+    expr = '(6615045+6615045)/222105473.58200002'
+    answer = f'GGAL: {2*6615045/TOTAL:.6f} puntos porcentuales.\n\n```figures\n{2*6615045/TOTAL:.6f} | derived | {expr} | {refs}\n```'
+    result = gate.validate_final_answer(answer)
+    assert result.valid, result.issues
+    expr = '(6615045*100+6615045*100)/222105473.58200002'
+    answer = f'GGAL: {200*6615045/TOTAL:.6f} puntos porcentuales.\n\n```figures\n{200*6615045/TOTAL:.6f} | derived | {expr} | {refs}\n```'
+    result = gate.validate_final_answer(answer)
+    assert not result.valid
+    assert any(i.get('reason') == 'scalar_subtree_out_of_range' for i in result.issues)
+
+
+@pytest.mark.parametrize('left,right,include_bbar', [
+    ('(6615045+1384425)/222105473.58200002*100',
+     '(6615045/222105473.58200002+1384425/222105473.58200002)*100', True),
+    ('6615045*0.50/222105473.58200002*100',
+     '(6615045*0.25+6615045*0.25)/222105473.58200002*100', False),
+    ('6615045*(1-0.25)/222105473.58200002*100',
+     '(6615045-6615045*0.25)/222105473.58200002*100', False),
+])
+def test_algebraically_equivalent_forms_have_same_proof(tmp_path, left, right, include_bbar):
+    import math
+
+    from src.agent.grounding.derived import validate_operands
+    from src.agent.grounding.policies import _formula_in_note
+
+    gate = GroundingLedger(run_dir=tmp_path, user_message='Analyze portfolio')
+    ingest(gate, payload())
+    paths = {'context.holdings[0].market_value_ars', 'context.totals.portfolio_market_value_ars'}
+    if include_bbar:
+        paths.add('context.holdings[1].market_value_ars')
+    records = [r for r in gate._evidence if r.field in paths]
+    proofs = []
+    values = []
+    for expr in [left, right]:
+        value, _, tree = _formula_in_note(expr)
+        proof = {}
+        assert validate_operands(tree, records, None, coefficient_proof=proof) is None
+        proofs.append(proof)
+        values.append(value)
+    assert proofs[0] == proofs[1]
+    assert math.isclose(values[0], values[1], rel_tol=1e-12)

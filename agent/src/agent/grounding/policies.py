@@ -2994,7 +2994,10 @@ class _PolicyMixin:
                 record = item[0][0]
                 if self._canonical_session_call_id(call) != record.call_id or field != record.field:
                     return "no_evidence"
-                exact_records.append(record)
+                # Equivalent provider-id spellings name the same observation.
+                if not any((r.call_id, r.field, r.scope) == (record.call_id, record.field, record.scope)
+                           for r in exact_records):
+                    exact_records.append(record)
             reason = validate_operands(tree, exact_records, symbol, money=money)
             return reason if reason else (result, operands)
         # Two instruments' bars and no resolved symbol: arithmetic anchored on

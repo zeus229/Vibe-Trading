@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from fractions import Fraction
 import math
 from typing import Sequence
 
@@ -17,7 +19,32 @@ def _instant(value: str) -> str:
         return value
 
 
-def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], symbol: str | None, *, money: bool = False) -> str | None:
+
+RefKey = tuple[str, str, str | None]
+TermKey = tuple[RefKey, RefKey | None]
+
+
+def _merge_coefficients(left: dict[TermKey, Fraction], right: dict[TermKey, Fraction], sign: int = 1) -> dict[TermKey, Fraction]:
+    """Accumulate by exact source identity, never by numeric evidence value."""
+    result = dict(left)
+    for ref, coefficient in right.items():
+        result[ref] = result.get(ref, Fraction(0)) + sign * coefficient
+    return result
+
+
+@dataclass
+class _FinancialForm:
+    unit: str
+    currency: str | None = None
+    coefficients: dict[TermKey, Fraction] = field(default_factory=dict)
+    scalar: Fraction | None = None
+
+    def scaled(self, factor: Fraction) -> _FinancialForm:
+        return _FinancialForm(self.unit, self.currency,
+                              {ref: value * factor for ref, value in self.coefficients.items()})
+
+
+def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], symbol: str | None, *, money: bool = False, coefficient_proof: dict[TermKey, Fraction] | None = None) -> str | None:
     """Check exact refs, dimensions, temporal identity and every financial leaf.
 
     Scalars can scale a proven expression, but cannot stand alone as a
@@ -54,91 +81,97 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
     if any(r.unit not in {'money', 'ratio'} or (r.unit == 'money' and not r.currency) for r in records):
         return 'operand_unit_unavailable'
     used: set[int] = set()
-    factors: dict[int, float] = {}
 
-    def visit(node: ast.AST) -> tuple[str, str | None]:
-        dimension = visit_dimension(node)
-        if dimension[0] == 'scalar':
-            factor = getattr(node, "_grounding_value", None)
-            if factor is None:
-                raise ValueError('scalar_subtree_out_of_range')
-        elif isinstance(node, ast.BinOp):
-            left, right = factors[id(node.left)], factors[id(node.right)]
-            if isinstance(node.op, ast.Mult):
-                factor = left * right
-            elif isinstance(node.op, ast.Div):
-                factor = left / right
-            else:
-                # Conservative bound for additive financial expressions.
-                factor = max(abs(left), abs(right))
-        else:
-            factor = factors.get(id(getattr(node, 'operand', None)), 1.0)
-        # Reassociation must not evade the effective scale cap, e.g.
-        # entity *100 *100 or entity /0.0001. This tracks scale metadata,
-        # not financial arithmetic, which the existing evaluator owns.
-        if not math.isfinite(factor) or abs(factor) > 100:
+    def reference(record: EvidenceRecord) -> RefKey:
+        return record.call_id, record.field, record.scope
+
+    def matching(value: float) -> list[int]:
+        return [i for i, r in enumerate(records)
+                if math.isclose(float(r.value), value, rel_tol=1e-12, abs_tol=1e-12)]
+
+    def scalar(node: ast.AST) -> _FinancialForm:
+        value = getattr(node, "_grounding_value", None)
+        if value is None or not math.isfinite(value) or not (abs(value) <= 1 or abs(value) == 100):
             raise ValueError('scalar_subtree_out_of_range')
-        factors[id(node)] = factor
-        return dimension
+        return _FinancialForm('scalar', scalar=Fraction(str(value)))
 
-    def visit_dimension(node: ast.AST) -> tuple[str, str | None]:
-        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.USub, ast.UAdd)):
-            # Signed financial leaves retain their sign for evidence matching.
-            if isinstance(node.operand, ast.Constant):
-                value = node.operand.value
-                if isinstance(value, (int, float)) and not isinstance(value, bool):
-                    return leaf(-value if isinstance(node.op, ast.USub) else value)
-            return visit(node.operand)
-        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
-            return leaf(float(node.value))
-        if not isinstance(node, ast.BinOp):
-            raise ValueError('formula_not_evaluable')
-        left, right = visit(node.left), visit(node.right)
-        if left[0] == right[0] == 'scalar':
-            # Use the existing safe evaluator's cached value, not raw literals.
-            value = getattr(node, "_grounding_value", None)
-            if value is None or not math.isfinite(value) or not (abs(value) <= 1 or abs(value) == 100):
-                raise ValueError('scalar_subtree_out_of_range')
-            return 'scalar', None
-        if isinstance(node.op, (ast.Add, ast.Sub)):
-            if left[0] == 'scalar' or right[0] == 'scalar':
-                raise ValueError('additive_operand_not_observed')
-            if left != right:
-                raise ValueError('operand_unit_conflict')
-            return left
-        if isinstance(node.op, ast.Mult):
-            if left[0] == 'scalar':
-                return right
-            if right[0] == 'scalar':
-                return left
-            raise ValueError('operand_unit_conflict')
-        if isinstance(node.op, ast.Div):
-            if right[0] == 'scalar':
-                return left
-            if left[0] != 'scalar' and left == right:
-                return 'ratio', None
-            raise ValueError('operand_unit_conflict')
-        raise ValueError('formula_not_evaluable')
-
-    def leaf(value: float) -> tuple[str, str | None]:
-        candidates = [i for i, r in enumerate(records) if math.isclose(float(r.value), value, rel_tol=1e-12, abs_tol=1e-12)]
+    def leaf(value: float) -> _FinancialForm:
+        candidates = matching(value)
         if len(candidates) > 1:
             raise ValueError('operand_ref_ambiguous')
         if candidates:
             i = candidates[0]
             used.add(i)
-            r = records[i]
-            return str(r.unit), r.currency if r.unit == 'money' else None
+            record = records[i]
+            return _FinancialForm(str(record.unit), record.currency if record.unit == 'money' else None,
+                                  {(reference(record), None): Fraction(1)})
         if abs(value) <= 1 or abs(value) == 100:
-            return 'scalar', None
+            return _FinancialForm('scalar', scalar=Fraction(str(value)))
         raise ValueError('financial_operand_not_observed')
 
+    def visit(node: ast.AST) -> _FinancialForm:
+        if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
+            return leaf(float(node.value))
+        if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+            # Preserve a signed observed leaf; otherwise negation is a proven
+            # arithmetic operation on its positive observed operand.
+            if isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
+                if matching(-float(node.operand.value)):
+                    return leaf(-float(node.operand.value))
+            form = visit(node.operand)
+            if form.unit == 'scalar':
+                return scalar(node)
+            return form.scaled(Fraction(-1 if isinstance(node.op, ast.USub) else 1))
+        if not isinstance(node, ast.BinOp):
+            raise ValueError('formula_not_evaluable')
+        left, right = visit(node.left), visit(node.right)
+        if left.unit == right.unit == 'scalar':
+            return scalar(node)
+        if isinstance(node.op, (ast.Add, ast.Sub)):
+            if left.unit == 'scalar' or right.unit == 'scalar':
+                raise ValueError('additive_operand_not_observed')
+            denominators = {key[1] for key in (*left.coefficients, *right.coefficients)}
+            if (left.unit, left.currency) != (right.unit, right.currency) or len(denominators) > 1:
+                raise ValueError('operand_unit_conflict')
+            return _FinancialForm(left.unit, left.currency,
+                                  _merge_coefficients(left.coefficients, right.coefficients,
+                                                      -1 if isinstance(node.op, ast.Sub) else 1))
+        if isinstance(node.op, ast.Mult):
+            if left.unit == 'scalar':
+                return right.scaled(left.scalar)
+            if right.unit == 'scalar':
+                return left.scaled(right.scalar)
+            raise ValueError('operand_unit_conflict')
+        if isinstance(node.op, ast.Div):
+            if right.unit == 'scalar':
+                return left.scaled(Fraction(1) / right.scalar)
+            if left.unit == 'scalar' or (left.unit, left.currency) != (right.unit, right.currency):
+                raise ValueError('operand_unit_conflict')
+            # Normalize only a common, observed single-ref denominator. A sum
+            # or a nested financial quotient is not silently treated as scalar.
+            if len(right.coefficients) != 1 or any(key[1] is not None for key in left.coefficients):
+                raise ValueError('operand_unit_conflict')
+            (denominator, nested), divisor = next(iter(right.coefficients.items()))
+            if nested is not None:
+                raise ValueError('operand_unit_conflict')
+            return _FinancialForm('ratio', coefficients={
+                (ref, denominator): value / divisor for (ref, _), value in left.coefficients.items()
+            })
+        raise ValueError('formula_not_evaluable')
+
     try:
-        dimension = visit(tree.body)
-        if money and dimension[0] != 'money':
+        form = visit(tree.body)
+        if money and form.unit != 'money':
             return 'operand_unit_conflict'
-        if dimension[0] == 'scalar' or len(used) != len(records):
+        if form.unit == 'scalar' or len(used) != len(records):
             return 'financial_operand_not_observed'
+        if coefficient_proof is not None:
+            coefficient_proof.update(form.coefficients)
+        # Apply the cap to the complete normalized expression, not a branch's
+        # maximum: repeated refs add, distinct refs remain distinct, and signed
+        # cancellation happens before the effective coefficient is checked.
+        if any(abs(value) > 100 for value in form.coefficients.values()):
+            return 'scalar_subtree_out_of_range'
     except ZeroDivisionError:
         return 'scalar_subtree_out_of_range'
     except ValueError as exc:
