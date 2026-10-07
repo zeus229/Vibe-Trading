@@ -843,6 +843,11 @@ class EvidenceRecord:
     # Generic structured evidence distinguishes a bound entity from an
     # aggregate, an unidentified item, and contradictory identities.
     identity_scope: str | None = None
+    snapshot_id: str | None = None
+    as_of: str | None = None
+    date: str | None = None
+    trade_date: str | None = None
+    temporal_context: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -1494,6 +1499,8 @@ class _EvidenceMixin:
             currency: str | None = None,
             unit_hint: Any = None,
             context: _EntityContext = root,
+            snapshot_id: str | None = None,
+            temporal_context: dict[str, str] | None = None,
         ) -> None:
             nonlocal remaining
             if remaining <= 0:
@@ -1523,6 +1530,12 @@ class _EvidenceMixin:
                         currency=evidence_currency,
                         venue=_infer_venue(context.symbol or ""),
                         identity_scope=context.scope,
+                        snapshot_id=snapshot_id,
+                        as_of=(temporal_context or {}).get("as_of"),
+                        date=(temporal_context or {}).get("date"),
+                        trade_date=(temporal_context or {}).get("trade_date"),
+                        temporal_context={k: v for k, v in (temporal_context or {}).items()
+                                          if k not in {"as_of", "date", "trade_date"}} or None,
                         unit=unit,
                     )
                 )
@@ -1533,6 +1546,19 @@ class _EvidenceMixin:
                 local = _entity_child(context, explicit, allowed)
                 if contradictory:
                     local = _EntityContext(None, "conflict")
+                local_snapshot = snapshot_id
+                if "snapshot_id" in value:
+                    local_snapshot = (str(value["snapshot_id"])
+                                      if value["snapshot_id"] is not None and value["snapshot_id"] != "" else None)
+                # Keep observation identity independently of the legacy timestamp
+                # precedence (trade_date/date/.../as_of) used by observed claims.
+                local_temporal = dict(temporal_context or {})
+                for key in timestamp_fields:
+                    if key in value:
+                        if value[key] is None:
+                            local_temporal.pop(key, None)
+                        else:
+                            local_temporal[key] = str(value[key])
                 local_timestamp = next(
                     (
                         str(value[key])
@@ -1558,11 +1584,13 @@ class _EvidenceMixin:
                         local_currency or _currency_from_path(child_path),
                         units.get(key),
                         _entity_for_key(local, key, allowed),
+                        local_snapshot,
+                        local_temporal,
                     )
             elif isinstance(value, list):
                 item_context = _list_entity_context(value, context)
                 for index, item in enumerate(value):
-                    visit(item, f"{path}[{index}]", timestamp, currency, None, item_context)
+                    visit(item, f"{path}[{index}]", timestamp, currency, None, item_context, snapshot_id, temporal_context)
 
         visit(payload, "")
 
