@@ -21,6 +21,7 @@ class RepairAction(str, Enum):
     PRESERVE_REWRITE = "preserve_rewrite"
     PRESERVE_OPTIONS = "preserve_options"
     DERIVE = "derive"
+    REPLACE = "replace"
     RECOVER = "recover"
     DROP = "drop"
 
@@ -35,6 +36,8 @@ class RepairDirective:
     allowed_refs: tuple[str, ...] = ()
     target_scope: str | None = None
     derive_formula: str | None = None
+    replacement_value: float | None = None
+    replacement_formula: str | None = None
 
 
 _RECOVERY_REASONS = frozenset({"no_evidence", "symbol_never_handled", "no_symbol"})
@@ -70,6 +73,36 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
             preserve=True,
             allowed_refs=derive_refs,
             derive_formula=str(derive_formula),
+        )
+
+    replacement_ref = issue.get("replacement_ref_candidate")
+    replacement_refs = tuple(
+        dict.fromkeys(str(item) for item in issue.get("replacement_refs") or [])
+    )
+    replacement_value = issue.get("replacement_value")
+    replacement_formula = issue.get("replacement_formula")
+    if (replacement_ref or replacement_refs) and isinstance(replacement_value, (int, float)):
+        allowed = (
+            replacement_refs
+            if replacement_refs
+            else (str(replacement_ref),)
+        )
+        return RepairDirective(
+            RepairAction.REPLACE,
+            preserve=True,
+            exact_ref=str(replacement_ref) if replacement_ref else None,
+            allowed_refs=allowed,
+            target_scope=(
+                f"entity:{issue.get('replacement_entity_symbol')}"
+                if issue.get("replacement_entity_symbol")
+                else "aggregate"
+                if issue.get("replacement_role") == "derived"
+                else None
+            ),
+            replacement_value=float(replacement_value),
+            replacement_formula=(
+                str(replacement_formula) if replacement_formula else None
+            ),
         )
 
     if len(proven_refs) > 1:
@@ -135,6 +168,7 @@ class RequiredFigure:
     percent: bool
     digits: str
     allowed_refs: tuple[str, ...] = ()
+    require_all_refs: bool = False
 
     @classmethod
     def from_issue(
@@ -144,6 +178,10 @@ class RequiredFigure:
         value = issue.get("figure_value")
         percent = issue.get("figure_percent")
         digits = issue.get("figure_digits")
+        if directive.action is RepairAction.REPLACE:
+            text = str(issue.get("replacement_text") or text)
+            value = issue.get("replacement_value")
+            digits = issue.get("replacement_digits") or digits
         if not text or not isinstance(value, (int, float)):
             return None
         if not isinstance(percent, bool):
@@ -155,6 +193,13 @@ class RequiredFigure:
             digits=str(digits or ""),
             allowed_refs=directive.allowed_refs or (
                 (directive.exact_ref,) if directive.exact_ref else ()
+            ),
+            require_all_refs=(
+                directive.action is RepairAction.DERIVE
+                or (
+                    directive.action is RepairAction.REPLACE
+                    and len(directive.allowed_refs) > 1
+                )
             ),
         )
 
@@ -190,6 +235,24 @@ class RequiredFigure:
             for part in declaration.ref.split(";")
             if part.strip()
         }
+        if self.require_all_refs:
+            normalized_refs = set(refs)
+            for ref in list(refs):
+                if "::" not in ref:
+                    continue
+                call_id, field = ref.split("::", 1)
+                if "|" in call_id:
+                    continue
+                matching = {
+                    allowed
+                    for allowed in self.allowed_refs
+                    if "::" in allowed
+                    and allowed.split("::", 1)[0].split("|", 1)[0] == call_id
+                    and allowed.split("::", 1)[1] == field
+                }
+                if len(matching) == 1:
+                    normalized_refs.update(matching)
+            return set(self.allowed_refs).issubset(normalized_refs)
         if refs.intersection(self.allowed_refs):
             return True
 
