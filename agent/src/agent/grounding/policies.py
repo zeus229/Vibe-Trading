@@ -387,16 +387,12 @@ def _evaluate_formula(expression: str) -> tuple[float, list[float], ast.Expressi
     inputs: list[float] = []
 
     def visit(node: ast.AST) -> float:
-        value = compute(node)
-        # Operand validation reuses these safe evaluations for constant-only
-        # subtrees; it must not introduce a second arithmetic evaluator.
-        setattr(node, "_grounding_value", value)
-        return value
-
-    def compute(node: ast.AST) -> float:
         if isinstance(node, ast.Expression):
             return visit(node.body)
         if isinstance(node, ast.Constant) and _is_number(node.value):
+            # Preserve decimal syntax for exact coefficient normalization;
+            # rebuilding it from an evaluated float loses cancellations.
+            setattr(node, "_grounding_literal", ast.get_source_segment(normalized, node))
             value = float(node.value)
             inputs.append(value)
             return value

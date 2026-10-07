@@ -81,6 +81,7 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
     if any(r.unit not in {'money', 'ratio'} or (r.unit == 'money' and not r.currency) for r in records):
         return 'operand_unit_unavailable'
     used: set[int] = set()
+    unobserved_divisor = False
 
     def reference(record: EvidenceRecord) -> RefKey:
         return record.call_id, record.field, record.scope
@@ -89,13 +90,7 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
         return [i for i, r in enumerate(records)
                 if math.isclose(float(r.value), value, rel_tol=1e-12, abs_tol=1e-12)]
 
-    def scalar(node: ast.AST) -> _FinancialForm:
-        value = getattr(node, "_grounding_value", None)
-        if value is None or not math.isfinite(value) or not (abs(value) <= 1 or abs(value) == 100):
-            raise ValueError('scalar_subtree_out_of_range')
-        return _FinancialForm('scalar', scalar=Fraction(str(value)))
-
-    def leaf(value: float) -> _FinancialForm:
+    def leaf(value: float, exact: Fraction) -> _FinancialForm:
         candidates = matching(value)
         if len(candidates) > 1:
             raise ValueError('operand_ref_ambiguous')
@@ -105,28 +100,42 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
             record = records[i]
             return _FinancialForm(str(record.unit), record.currency if record.unit == 'money' else None,
                                   {(reference(record), None): Fraction(1)})
-        if abs(value) <= 1 or abs(value) == 100:
-            return _FinancialForm('scalar', scalar=Fraction(str(value)))
-        raise ValueError('financial_operand_not_observed')
+        # Unmatched constants are only factors. Additive terms and standalone
+        # financial amounts still require evidence; bound normalized refs last.
+        return _FinancialForm('scalar', scalar=exact)
 
     def visit(node: ast.AST) -> _FinancialForm:
+        nonlocal unobserved_divisor
         if isinstance(node, ast.Constant) and isinstance(node.value, (int, float)) and not isinstance(node.value, bool):
-            return leaf(float(node.value))
+            literal = getattr(node, "_grounding_literal", None)
+            if literal is None:
+                raise ValueError('formula_not_evaluable')
+            return leaf(float(node.value), Fraction(literal.replace('_', '')))
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
             # Preserve a signed observed leaf; otherwise negation is a proven
             # arithmetic operation on its positive observed operand.
             if isinstance(node.op, ast.USub) and isinstance(node.operand, ast.Constant):
                 if matching(-float(node.operand.value)):
-                    return leaf(-float(node.operand.value))
+                    return leaf(-float(node.operand.value), Fraction(0))
             form = visit(node.operand)
             if form.unit == 'scalar':
-                return scalar(node)
+                return _FinancialForm('scalar', scalar=form.scalar * (-1 if isinstance(node.op, ast.USub) else 1))
             return form.scaled(Fraction(-1 if isinstance(node.op, ast.USub) else 1))
         if not isinstance(node, ast.BinOp):
             raise ValueError('formula_not_evaluable')
         left, right = visit(node.left), visit(node.right)
         if left.unit == right.unit == 'scalar':
-            return scalar(node)
+            if isinstance(node.op, ast.Add):
+                value = left.scalar + right.scalar
+            elif isinstance(node.op, ast.Sub):
+                value = left.scalar - right.scalar
+            elif isinstance(node.op, ast.Mult):
+                value = left.scalar * right.scalar
+            elif isinstance(node.op, ast.Div):
+                value = left.scalar / right.scalar
+            else:
+                raise ValueError('formula_not_evaluable')
+            return _FinancialForm('scalar', scalar=value)
         if isinstance(node.op, (ast.Add, ast.Sub)):
             if left.unit == 'scalar' or right.unit == 'scalar':
                 raise ValueError('additive_operand_not_observed')
@@ -144,6 +153,10 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
             raise ValueError('operand_unit_conflict')
         if isinstance(node.op, ast.Div):
             if right.unit == 'scalar':
+                # A large unreferenced financial denominator must not become
+                # an innocuous small coefficient. Keep the existing boundary
+                # on constant-only divisors, after exact subtree normalization.
+                unobserved_divisor |= abs(right.scalar) > 100
                 return left.scaled(Fraction(1) / right.scalar)
             if left.unit == 'scalar' or (left.unit, left.currency) != (right.unit, right.currency):
                 raise ValueError('operand_unit_conflict')
@@ -163,7 +176,7 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
         form = visit(tree.body)
         if money and form.unit != 'money':
             return 'operand_unit_conflict'
-        if form.unit == 'scalar' or len(used) != len(records):
+        if unobserved_divisor or form.unit == 'scalar' or len(used) != len(records):
             return 'financial_operand_not_observed'
         if coefficient_proof is not None:
             coefficient_proof.update(form.coefficients)

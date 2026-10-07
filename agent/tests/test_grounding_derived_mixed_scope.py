@@ -408,3 +408,114 @@ def test_algebraically_equivalent_forms_have_same_proof(tmp_path, left, right, i
         values.append(value)
     assert proofs[0] == proofs[1]
     assert math.isclose(values[0], values[1], rel_tol=1e-12)
+
+
+@pytest.fixture
+def generic_operand_gate(tmp_path):
+    gate = GroundingLedger(run_dir=tmp_path, user_message='Analyze generic observations')
+    data = {'snapshot_id': 'one', 'as_of': '2026-10-07T00:00:00Z', 'currency': 'USD',
+            'positions': [{'symbol': 'AAA.US', 'market_value': 7},
+                          {'symbol': 'BBB.US', 'market_value': 11}],
+            'totals': {'market_value': 1000}}
+    gate.ingest_tool_result(tool_name='generic_snapshot', arguments={},
+                           result=json.dumps(data), call_id='call', success=True)
+    return gate
+
+
+def _generic_proof(gate, expr, paths=('positions[0].market_value',)):
+    from src.agent.grounding.derived import validate_operands
+    from src.agent.grounding.policies import _formula_in_note
+
+    value, _, tree = _formula_in_note(expr)
+    records = [r for r in gate._evidence if r.field in paths]
+    proof = {}
+    reason = validate_operands(tree, records, None, coefficient_proof=proof)
+    refs = '; '.join('call::' + r.field for r in records)
+    result = gate.validate_final_answer(
+        f'Portfolio: {value:.6f}.\n\n```figures\n{value:.6f} | derived | {expr} | {refs}\n```')
+    return proof, reason, result
+
+
+@pytest.mark.parametrize('forms,coefficient', [
+    (['7*2', '7+7', '7-(-7)', '(7*4)/2', '((+7)*(+4))/(+2)',
+      '(7+7)+(7-7)', '((7+7)+7)-7'], 2),
+    (['7*1', '7*100-7*99', '7*100-7*100*.99', '7*(1-.99)*100',
+      '-(-(7*100-7*99))', '7*(200-199)', '(7*400-7*396)/4'], 1),
+    (['7*100', '7*(1-.99)*100*100', '(7*400)/4',
+      '7/(1/100)', '(7*200)-(7*100)'], 100),
+])
+def test_generic_equivalence_has_identical_normalized_map(generic_operand_gate, forms, coefficient):
+    from fractions import Fraction
+
+    expected = {(('call', 'positions[0].market_value', None), None): Fraction(coefficient)}
+    for expr in forms:
+        proof, reason, result = _generic_proof(generic_operand_gate, expr)
+        assert proof == expected, (expr, proof)
+        assert reason is None, (expr, reason)
+        assert result.valid, (expr, result.issues)
+
+
+@pytest.mark.parametrize('expr', [
+    '7*200', '7*100+7*100', '(7*400)/2', '7/0.005',
+    _balanced_sum(['7'] * 200),
+    ' + '.join(['7'] * 200),
+    '7*(-200)', '7*(1/(1/200))',
+])
+def test_generic_excessive_equivalent_scales_have_same_proof(generic_operand_gate, expr):
+    from fractions import Fraction
+
+    proof, reason, result = _generic_proof(generic_operand_gate, expr)
+    assert len(proof) == 1
+    assert abs(next(iter(proof.values()))) == Fraction(200)
+    assert reason == 'scalar_subtree_out_of_range'
+    assert not result.valid
+
+
+@pytest.mark.parametrize('expr', ['7*0.10000000000000000000001*1000',
+                                  '7*(1-.99999999999999999999999)*1.00000000000000000000001e25'])
+def test_decimal_text_not_float_roundtrip_controls_boundary(generic_operand_gate, expr):
+    proof, reason, result = _generic_proof(generic_operand_gate, expr)
+    assert next(iter(proof.values())) > 100
+    assert reason == 'scalar_subtree_out_of_range'
+    assert not result.valid
+
+
+@pytest.mark.parametrize('expr', ['7/1000', '7/(100*100)', '7/(400/2)',
+                                  '(7+10000)', '(100*100)', '(7+999)-(999)',
+                                  '7/(1000-1000)', '7**2'])
+def test_generic_unobserved_amounts_and_unsupported_forms_still_fail(generic_operand_gate, expr):
+    from src.agent.grounding.policies import _formula_in_note
+
+    if _formula_in_note(expr) is None:
+        return  # Zero denominator is rejected by the existing safe evaluator.
+    _, reason, result = _generic_proof(generic_operand_gate, expr)
+    assert reason is not None
+    assert not result.valid
+
+
+def test_generic_distinct_refs_and_common_denominator_survive(generic_operand_gate):
+    paths = ('positions[0].market_value', 'positions[1].market_value', 'totals.market_value')
+    proofs = []
+    for expr in ['(7+11)/1000*100', '(7/1000+11/1000)*100',
+                 '((7+11)*400)/4/1000']:
+        proof, reason, result = _generic_proof(generic_operand_gate, expr, paths)
+        assert reason is None
+        assert result.valid
+        assert len(proof) == 2
+        assert set(proof.values()) == {100}
+        assert all(key[1] == ('call', 'totals.market_value', None) for key in proof)
+        proofs.append(proof)
+    assert proofs[0] == proofs[1] == proofs[2]
+
+
+def test_identity_leaf_has_same_map_as_coefficient_one(generic_operand_gate):
+    import ast
+
+    from src.agent.grounding.derived import validate_operands
+
+    tree = ast.parse('7', mode='eval')
+    tree.body._grounding_literal = '7'
+    proof = {}
+    records = [r for r in generic_operand_gate._evidence if r.field == 'positions[0].market_value']
+    assert validate_operands(tree, records, None, coefficient_proof=proof) is None
+    assert proof == _generic_proof(generic_operand_gate, '7*100-7*99')[0]
