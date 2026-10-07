@@ -32,6 +32,7 @@ import pytest
 
 from src.agent.grounding import GroundingLedger
 from src.agent.grounding.evidence import ARCHIVE_MANIFEST
+from src.agent.grounding.repair_contract import RepairAction, directive_for_issue
 from src.agent.tool_results import _archive_backtest_result
 
 RP = {
