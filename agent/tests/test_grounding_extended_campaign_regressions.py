@@ -797,9 +797,14 @@ def test_bare_risk_weight_ref_requires_unique_source_call(
             {
                 "context": {
                     "holdings_native": {
-                        "ARS": [{"symbol": "YPFD", "weight": holding}]
+                        "ARS": [
+                            {"symbol": "YPFD", "weight": holding},
+                            {"symbol": "PAMP", "weight": 0.13},
+                        ]
                     },
-                    "risk_xray_args": {"weights": {"YPFD": 0.2001}},
+                    "risk_xray_args": {
+                        "weights": {"YPFD": 0.2001, "PAMP": 0.131}
+                    },
                 }
             },
             f"call_summary|fc_{suffix}",
