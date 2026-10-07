@@ -822,13 +822,21 @@ class _PolicyMixin:
                 declaration = candidates[0] if len(candidates) == 1 else None
             written = self._written_symbol(content, figure, line_symbols, symbol_records)
             symbol = written if written in {record.symbol for record in symbol_records} else issue.get("symbol")
-            self._authorize_derived_repair(issue, figure, declaration, symbol, records)
+            if declaration is None and issue.get("role") != "derived" and not figure.percent:
+                displays = [item for item in block.compatible_declarations(
+                    figure.value, True, figure.digits) if item.role == "observed"]
+                if len(displays) == 1 and not figure.currency and not figure.column:
+                    declaration = self._ratio_display_declaration(figure, displays[0])
+                    if declaration is not None:
+                        issue["role"] = "derived"
+            self._authorize_derived_repair(
+                issue, figure, declaration, symbol, records, block.declarations)
         return issues
 
     def _authorize_derived_repair(
         self, issue: dict[str, Any], figure: Figure,
         declaration: Declaration | None, symbol: str | None,
-        records: Sequence[EvidenceRecord],
+        records: Sequence[EvidenceRecord], declarations: Sequence[Declaration] = (),
     ) -> None:
         """Turn a candidate into a preservation promise only after full proof.
 
@@ -854,7 +862,7 @@ class _PolicyMixin:
             candidate = Declaration(-1, figure.text, figure.value, figure.percent, "derived",
                                     issue["derive_formula"], "; ".join(issue["derive_operand_refs"]))
         if candidate is not None and not figure.column:
-            proof = self._derived_ref_repair_metadata(target, candidate, symbol, records)
+            proof = self._derived_ref_repair_metadata(target, candidate, symbol, records, declarations)
             if proof:
                 repaired = replace(candidate, percent=target.percent, note=proof["derive_formula"],
                                    ref="; ".join(proof["derive_operand_refs"]))
@@ -1618,9 +1626,29 @@ class _PolicyMixin:
         values = walk(root)
         return [value for value in values if abs(value) not in {0.0, 1.0, 100.0}]
 
+    def _ratio_display_declaration(
+        self, figure: Figure, declaration: Declaration,
+    ) -> Declaration | None:
+        """Offer an explicit display conversion, never silently change units."""
+        keys = [key.strip() for key in re.split(r"[,;]", declaration.ref) if key.strip()]
+        if len(keys) != 1 or "::" not in keys[0]:
+            return None
+        call, path = keys[0].split("::", 1)
+        call = self._canonical_session_call_id(call)
+        candidates, _ = self._field_sources(path, None)
+        known = any(record.call_id == call for record in self._evidence)
+        candidates = [record for record in candidates
+                      if record.status == "observed" and record.unit == "ratio"
+                      and record.value is not None and (not known or record.call_id == call)
+                      and self._strict_written_match(figure, float(record.value)) == (True, True)]
+        if len(candidates) != 1:
+            return None
+        return replace(declaration, role="derived", percent=figure.percent,
+                       note=f"{candidates[0].value} * 100")
+
     def _derived_ref_repair_metadata(
         self, figure: Figure, declaration: Declaration, symbol: str | None,
-        records: Sequence[EvidenceRecord],
+        records: Sequence[EvidenceRecord], declarations: Sequence[Declaration] = (),
     ) -> dict[str, Any]:
         """Prove a complete repair of an existing structured derivation.
 
@@ -1633,6 +1661,40 @@ class _PolicyMixin:
         if evaluated is None or not keys or any("::" not in key for key in keys):
             return {}
         _, operands, tree = evaluated
+        # Inline only independently proven declarations whose complete original
+        # ref set is already explicit in the consumer. One level, no new evidence
+        # records, no numeric search outside this structured dependency boundary.
+        if declarations:
+            class Inline(ast.NodeTransformer):
+                changed = False
+
+                def visit_Constant(inner, node: ast.Constant) -> ast.AST:
+                    proofs = []
+                    for item in declarations:
+                        item_keys = {key.strip() for key in re.split(r"[,;]", item.ref) if key.strip()}
+                        if (item == declaration or item.role != "derived"
+                            or item.percent or item.value != node.value
+                            or not item_keys or not item_keys.issubset(set(keys))):
+                            continue
+                        target = replace(figure, value=item.value, text=item.value_text,
+                                         digits=item.value_text, percent=item.percent)
+                        proof = self._derived_ref_repair_metadata(target, item, symbol, records)
+                        if proof:
+                            proofs.append(proof)
+                    if len(proofs) > 1:
+                        raise ValueError("ambiguous declared dependency")
+                    if proofs:
+                        inner.changed = True
+                        return _evaluate_formula(proofs[0]["derive_formula"])[2].body
+                    return node
+            inline = Inline()
+            try:
+                tree = inline.visit(tree)
+            except ValueError:
+                return {}
+            if inline.changed:
+                operands = [float(node.value) for node in ast.walk(tree)
+                            if isinstance(node, ast.Constant) and _is_number(node.value)]
         refs: list[str] = []
         associated: dict[str, EvidenceRecord] = {}
         for key in keys:
