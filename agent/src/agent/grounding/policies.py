@@ -468,6 +468,8 @@ def _formula_in_note(note: str) -> tuple[float, list[float], ast.Expression] | N
 
     The whole note is tried first, then each segment between result separators
     ("0.666 × 0.97 = 0.646"); separators are punctuation, not vocabulary.
+    An ASCII colon instead delimits descriptive labels and one complete numeric
+    expression; labels cannot contain arithmetic, and the suffix loses no words.
 
     Args:
         note: The declaration's free-text note.
@@ -475,6 +477,20 @@ def _formula_in_note(note: str) -> tuple[float, list[float], ast.Expression] | N
     Returns:
         ``(result, operands, parsed tree)`` for the first parseable segment, or None.
     """
+    # An explicit ASCII label separator requires a complete arithmetic suffix.
+    # Do not strip trailing words or choose between formulas in the description.
+    if ":" in note:
+        *labels, expression = note.split(":")
+        if any(
+            not label.strip()
+            or re.search(r"[+*/×✕÷−²³^]|\d\s*[-–]", label)
+            or _formula_in_note(label) is not None
+            for label in labels
+        ):
+            return None
+        if not re.fullmatch(r"[\d\s.eE+*/()%％,×✕÷−–（）²³^\-]+", expression):
+            return None
+        return _evaluate_formula(expression)
     candidates = [note]
     parts = [note]
     for separator in ("≈", "≒", "＝", "=", "→", "->"):
