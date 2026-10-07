@@ -3,6 +3,7 @@ from __future__ import annotations
 from decimal import Decimal
 
 from src.portfolio.config import PortfolioSettingsStore
+from src.portfolio import config as portfolio_config
 from src.portfolio import service as portfolio_service
 from src.portfolio.service import PortfolioService
 from src.portfolio.store import PortfolioStore
@@ -29,6 +30,7 @@ def test_native_account_separates_unsettled_cash(tmp_path, monkeypatch):
     # modules, so patch both call sites used by this isolated local-plugin fixture.
     monkeypatch.setattr(portfolio_service, "profile_by_id", _profile_by_id)
     monkeypatch.setattr(trading_connections, "profile_by_id", _profile_by_id)
+    monkeypatch.setattr(portfolio_config, "profile_by_id", _profile_by_id)
 
     settings = PortfolioSettingsStore(tmp_path / "portfolio.json")
     settings.connection_store.ensure("ars", profile.id, "ARS")
