@@ -843,6 +843,7 @@ class EvidenceRecord:
     # Generic structured evidence distinguishes a bound entity from an
     # aggregate, an unidentified item, and contradictory identities.
     identity_scope: str | None = None
+    snapshot_id: str | None = None
 
 
 @dataclass(frozen=True)
@@ -1494,6 +1495,7 @@ class _EvidenceMixin:
             currency: str | None = None,
             unit_hint: Any = None,
             context: _EntityContext = root,
+            snapshot_id: str | None = None,
         ) -> None:
             nonlocal remaining
             if remaining <= 0:
@@ -1523,6 +1525,7 @@ class _EvidenceMixin:
                         currency=evidence_currency,
                         venue=_infer_venue(context.symbol or ""),
                         identity_scope=context.scope,
+                        snapshot_id=snapshot_id,
                         unit=unit,
                     )
                 )
@@ -1533,6 +1536,7 @@ class _EvidenceMixin:
                 local = _entity_child(context, explicit, allowed)
                 if contradictory:
                     local = _EntityContext(None, "conflict")
+                local_snapshot = str(value.get("snapshot_id") or snapshot_id or "") or None
                 local_timestamp = next(
                     (
                         str(value[key])
@@ -1558,11 +1562,12 @@ class _EvidenceMixin:
                         local_currency or _currency_from_path(child_path),
                         units.get(key),
                         _entity_for_key(local, key, allowed),
+                        local_snapshot,
                     )
             elif isinstance(value, list):
                 item_context = _list_entity_context(value, context)
                 for index, item in enumerate(value):
-                    visit(item, f"{path}[{index}]", timestamp, currency, None, item_context)
+                    visit(item, f"{path}[{index}]", timestamp, currency, None, item_context, snapshot_id)
 
         visit(payload, "")
 

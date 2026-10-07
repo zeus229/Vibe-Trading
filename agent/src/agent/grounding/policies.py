@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
+from src.agent.grounding.derived import validate_operands
+
 from src.agent.grounding.identity import (
     _CANONICAL_SYMBOL_RE,
     _normalize_symbol,
@@ -2967,6 +2969,27 @@ class _PolicyMixin:
         if evaluated is None:
             return "formula_not_evaluable"
         result, operands, tree = evaluated
+        # Exact generic financial refs are validated per operand, independently
+        # of the identity of the resulting claim. Never borrow session pools.
+        keys = [key.strip() for key in re.split(r"[,;]", declaration.ref) if key.strip()]
+        resolved = [self._referenced_one(key, None, None, pool_ambiguous=True) for key in keys]
+        generic_financial = any(
+            record.identity_scope in {"entity", "aggregate"}
+            and record.unit in {"money", "ratio"}
+            for item in resolved if item is not None for record in item[0]
+        )
+        if generic_financial and all("::" in key for key in keys):
+            exact_records = []
+            for key, item in zip(keys, resolved):
+                if "::" not in key or item is None or len(item[0]) != 1 or item[1]:
+                    return "no_evidence"
+                call, field = (part.strip() for part in key.split("::", 1))
+                record = item[0][0]
+                if self._canonical_session_call_id(call) != record.call_id or field != record.field:
+                    return "no_evidence"
+                exact_records.append(record)
+            reason = validate_operands(tree, exact_records, symbol, money=money)
+            return reason if reason else (result, operands)
         # Two instruments' bars and no resolved symbol: arithmetic anchored on
         # the session's pools, or on one instrument's prints the ref names,
         # would look anchored with nothing to anchor it to. Only evidence that
@@ -3070,6 +3093,15 @@ class _PolicyMixin:
         derivation = self._derivation(declaration, symbol, records, money=figure.currency)
         if isinstance(derivation, str):
             derive_hint = self._deterministic_derive_metadata(figure)
+            operand_message = {
+                "financial_operand_not_observed": "has a financial operand without its exact observed ref, or an unused operand ref",
+                "operand_entity_conflict": "references an entity incompatible with the claimed symbol",
+                "operand_snapshot_conflict": "mixes incompatible snapshots or observation timestamps",
+                "operand_snapshot_unavailable": "combines calls without a common proven snapshot and timestamp",
+                "operand_unit_conflict": "combines incompatible financial units or currencies",
+                "operand_unit_unavailable": "references financial operands without sufficient unit or currency metadata",
+                "operand_ref_ambiguous": "cannot associate equal-valued operand refs uniquely with the formula leaves",
+            }.get(derivation)
             return [
                 self._figure_issue(
                     "numeric_claim_conflict"
@@ -3079,11 +3111,13 @@ class _PolicyMixin:
                     "derived",
                     symbol,
                     derivation,
-                    "is declared derived, but its note adds or subtracts an operand "
-                    "this session did not observe"
-                    if derivation == "additive_operand_not_observed"
-                    else "is declared derived, but its note is not arithmetic over at "
-                    "least two operands with one of them observed in this session",
+                    operand_message or (
+                        "is declared derived, but its note adds or subtracts an operand "
+                        "this session did not observe"
+                        if derivation == "additive_operand_not_observed"
+                        else "is declared derived, but its note is not arithmetic over at "
+                        "least two operands with one of them observed in this session"
+                    ),
                     **derive_hint,
                 )
             ]
