@@ -861,9 +861,11 @@ def test_bare_display_ref_repairs_to_same_call_money_sibling(
     expected = f"{call_id}::context.totals.native_by_currency.ARS"
     assert issue["field_ref_candidates"] == [expected]
     directive = directive_for_issue(issue)
-    assert directive.action is RepairAction.AUTO_REPAIR
+    assert directive.action is RepairAction.PRESERVE_REWRITE
     assert directive.preserve is True
     assert directive.exact_ref == expected
+    assert directive.allowed_refs == (expected,)
+    assert directive.target_scope == "aggregate"
 
 
 def test_bare_display_ref_with_two_matching_source_calls_stays_fail_closed(
@@ -913,6 +915,15 @@ def test_bare_scalar_metric_ref_gets_exact_call_candidate_without_reformatting(
         },
         call_id,
     )
+    _ingest(
+        ledger,
+        "portfolio_risk",
+        {
+            "symbol": "ACCIONES",
+            "data": {"volatility": {"annualized_vol": 0.2272}},
+        },
+        "call_risk|fc_other",
+    )
 
     result = ledger.validate_final_answer(
         "ACCIONES: 35.46%.\n\n"
@@ -948,6 +959,15 @@ def test_bare_scalar_metric_ref_with_multiple_matching_calls_preserves_options(
             },
             f"call_risk|fc_{suffix}",
         )
+    _ingest(
+        ledger,
+        "portfolio_risk",
+        {
+            "symbol": "ACCIONES",
+            "data": {"volatility": {"annualized_vol": 0.2272}},
+        },
+        "call_risk|fc_other",
+    )
 
     result = ledger.validate_final_answer(
         "ACCIONES: 35.46%.\n\n"
