@@ -2621,26 +2621,6 @@ class _PolicyMixin:
                             ),
                         )
                     ]
-                bare_field_candidates = self._bare_field_ref_candidates(
-                    declaration.ref, symbol, figure
-                )
-                if bare_field_candidates:
-                    return [
-                        self._figure_issue(
-                            "numeric_claim_conflict",
-                            figure,
-                            "observed",
-                            symbol,
-                            "field_ref_needs_call_id",
-                            f"is declared observed from bare field {declaration.ref}; "
-                            "use one exact session call ref proven to contain this value",
-                            source_tool_call_ids=[declaration.ref],
-                            field_ref_candidates=bare_field_candidates,
-                            **self._exact_repair_metadata(
-                                bare_field_candidates, figure, symbol
-                            ),
-                        )
-                    ]
                 canonical_replacement = self._canonical_position_weight_replacement(
                     declaration, figure, symbol
                 )
@@ -2661,6 +2641,26 @@ class _PolicyMixin:
                                 str(canonical_replacement["replacement_ref_candidate"])
                             ],
                             **canonical_replacement,
+                        )
+                    ]
+                bare_field_candidates = self._bare_field_ref_candidates(
+                    declaration.ref, symbol, figure
+                )
+                if bare_field_candidates:
+                    return [
+                        self._figure_issue(
+                            "numeric_claim_conflict",
+                            figure,
+                            "observed",
+                            symbol,
+                            "field_ref_needs_call_id",
+                            f"is declared observed from bare field {declaration.ref}; "
+                            "use one exact session call ref proven to contain this value",
+                            source_tool_call_ids=[declaration.ref],
+                            field_ref_candidates=bare_field_candidates,
+                            **self._exact_repair_metadata(
+                                bare_field_candidates, figure, symbol
+                            ),
                         )
                     ]
                 call_field_candidates = self._tool_field_ref_candidates(
