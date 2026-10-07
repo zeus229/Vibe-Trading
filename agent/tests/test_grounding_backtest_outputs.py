@@ -260,9 +260,10 @@ def test_a_bare_field_two_runs_hold_is_ambiguous_and_the_correction_names_the_ru
 
     assert not result.valid
     (issue,) = result.issues
-    assert issue["reason"] == "ambiguous_field_ref"
-    assert "rp::sortino" in issue["field_ref_candidates"]
-    assert "ew::sortino" in issue["field_ref_candidates"]
+    assert issue["reason"] == "field_ref_needs_call_id"
+    assert issue["field_ref_candidates"] == ["rp::sortino"]
+    assert issue["proven_ref_repair_candidates"] == ["rp::sortino"]
+    assert issue["exact_ref_repair_candidate"] == "rp::sortino"
     assert "rp::sortino" in two_runs.correction_prompt(result)
 
 
