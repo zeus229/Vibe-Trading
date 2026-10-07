@@ -2995,7 +2995,7 @@ class _PolicyMixin:
                            for r in exact_records):
                     exact_records.append(record)
             reason = validate_operands(tree, exact_records, symbol, money=money)
-            return reason if reason else (result, operands)
+            return reason if reason else (tree._grounding_financial_value, operands)
         # Two instruments' bars and no resolved symbol: arithmetic anchored on
         # the session's pools, or on one instrument's prints the ref names,
         # would look anchored with nothing to anchor it to. Only evidence that

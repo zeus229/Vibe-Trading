@@ -519,3 +519,18 @@ def test_identity_leaf_has_same_map_as_coefficient_one(generic_operand_gate):
     records = [r for r in generic_operand_gate._evidence if r.field == 'positions[0].market_value']
     assert validate_operands(tree, records, None, coefficient_proof=proof) is None
     assert proof == _generic_proof(generic_operand_gate, '7*100-7*99')[0]
+
+
+@pytest.mark.parametrize('expr,expected', [
+    ('7*(1-.99999999999999999999999)*1e25', 700),
+    ('7*1e20-7*(1e20-1)', 7),
+])
+def test_gate_uses_exact_normal_form_after_float_cancellation(generic_operand_gate, expr, expected):
+    from src.agent.grounding.policies import _formula_in_note
+
+    assert _formula_in_note(expr)[0] == 0  # Demonstrate the old float loss.
+    for value, valid in [(expected, True), (0, False)]:
+        answer = (f'Portfolio: {value:.6f}.\n\n```figures\n{value:.6f} | derived | {expr} | '
+                  'call::positions[0].market_value\n```')
+        result = generic_operand_gate.validate_final_answer(answer)
+        assert result.valid == valid, result.issues

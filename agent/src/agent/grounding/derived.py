@@ -185,6 +185,18 @@ def validate_operands(tree: ast.Expression, records: Sequence[EvidenceRecord], s
         # cancellation happens before the effective coefficient is checked.
         if any(abs(value) > 100 for value in form.coefficients.values()):
             return 'scalar_subtree_out_of_range'
+        # Evaluate the proven normal form, not a float expression whose
+        # cancellation may disagree with its exact coefficient semantics.
+        values = {reference(r): Fraction(str(r.value)) for r in records}
+        exact_value = sum((coefficient * values[numerator] /
+                           (values[denominator] if denominator else 1)
+                           for (numerator, denominator), coefficient in form.coefficients.items()), Fraction(0))
+        value = float(exact_value)
+        if not math.isfinite(value):
+            return 'formula_not_evaluable'
+        setattr(tree, '_grounding_financial_value', value)
+    except OverflowError:
+        return 'formula_not_evaluable'
     except ZeroDivisionError:
         return 'scalar_subtree_out_of_range'
     except ValueError as exc:
