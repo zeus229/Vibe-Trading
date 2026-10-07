@@ -387,6 +387,13 @@ def _evaluate_formula(expression: str) -> tuple[float, list[float], ast.Expressi
     inputs: list[float] = []
 
     def visit(node: ast.AST) -> float:
+        value = compute(node)
+        # Operand validation reuses these safe evaluations for constant-only
+        # subtrees; it must not introduce a second arithmetic evaluator.
+        setattr(node, "_grounding_value", value)
+        return value
+
+    def compute(node: ast.AST) -> float:
         if isinstance(node, ast.Expression):
             return visit(node.body)
         if isinstance(node, ast.Constant) and _is_number(node.value):
@@ -3100,6 +3107,7 @@ class _PolicyMixin:
                 "operand_snapshot_unavailable": "combines calls without a common proven snapshot and timestamp",
                 "operand_unit_conflict": "combines incompatible financial units or currencies",
                 "operand_unit_unavailable": "references financial operands without sufficient unit or currency metadata",
+                "scalar_subtree_out_of_range": "uses a constant-only factor outside the conservative effective scalar range",
                 "operand_ref_ambiguous": "cannot associate equal-valued operand refs uniquely with the formula leaves",
             }.get(derivation)
             return [

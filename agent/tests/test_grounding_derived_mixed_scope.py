@@ -164,3 +164,125 @@ def test_snapshot_metadata_persists_and_survives_reingestion(tmp_path):
                                         '2.978335 | derived | 6615045 / 222105473.58200002 * 100 | '
                                         + G + '; ' + ref('totals.portfolio_market_value_ars', 'replayed-call') + '\n```')
     assert result.valid, result.issues
+
+
+@pytest.mark.parametrize('date_key', ['date', 'trade_date'])
+def test_explicit_as_of_cannot_be_hidden_by_other_dates(tmp_path, date_key):
+    data = payload()
+    data['context'][date_key] = '2026-10-01'
+    other = copy.deepcopy(data)
+    other['context']['as_of'] = '2026-10-08T03:31:01+00:00'
+    result = validate(tmp_path, '6615045 / 222105473.58200002 * 100',
+                      G + '; ' + ref('totals.portfolio_market_value_ars', 'other-call'),
+                      6615045 / TOTAL * 100, data=data, other=other)
+    assert not result.valid, result.issues
+    assert any(i.get('reason') == 'operand_snapshot_conflict' for i in result.issues)
+
+
+@pytest.mark.parametrize('date_key', ['date', 'trade_date'])
+def test_matching_explicit_as_of_and_other_dates_are_compatible(tmp_path, date_key):
+    data = payload()
+    data['context'][date_key] = '2026-10-01'
+    result = validate(tmp_path, '6615045 / 222105473.58200002 * 100',
+                      G + '; ' + ref('totals.portfolio_market_value_ars', 'other-call'),
+                      6615045 / TOTAL * 100, data=data, other=data)
+    assert result.valid, result.issues
+
+
+@pytest.mark.parametrize('expr', [
+    '6615045 * (1 - 0.25) / 222105473.58200002 * 100',
+    '6615045 * (0.25 * 0.50) / 222105473.58200002 * 100',
+])
+def test_legitimate_constant_subtrees_are_dimensionless_factors(tmp_path, expr):
+    assert validate(tmp_path, expr, G + '; ' + T, eval(expr, {'__builtins__': {}}, {})).valid
+
+
+@pytest.mark.parametrize('expr', [
+    '(6615045 + 10000) / 222105473.58200002 * 100',
+    '(6615045 + (100 * 100)) / 222105473.58200002 * 100',
+    '(6615045 - (1 - 0.25)) / 222105473.58200002 * 100',
+    '(100 * 100) / 222105473.58200002 * 100',
+    '6615045 * (100 * 100) / 222105473.58200002 * 100',
+    '6615045 * (1 / 0.0001) / 222105473.58200002 * 100',
+])
+def test_composed_constants_cannot_replace_financial_leaves(tmp_path, expr):
+    assert not validate(tmp_path, expr, G + '; ' + T, eval(expr, {'__builtins__': {}}, {})).valid
+
+
+def test_temporal_fields_and_old_json_roundtrip(tmp_path):
+    from dataclasses import asdict
+
+    from src.agent.grounding.evidence import EvidenceRecord
+
+    gate = GroundingLedger(run_dir=tmp_path, user_message='Analyze portfolio')
+    data = payload()
+    data['context'].update(date='2026-10-01', trade_date='2026-09-30', latest_date='2026-09-29')
+    ingest(gate, data)
+    record = next(r for r in gate._evidence if r.field == 'context.holdings[0].market_value_ars')
+    assert record.as_of == data['context']['as_of']
+    assert record.date == '2026-10-01'
+    assert record.trade_date == record.timestamp == '2026-09-30'
+    assert record.temporal_context == {'latest_date': '2026-09-29'}
+    encoded = json.loads(json.dumps(asdict(record)))
+    assert asdict(EvidenceRecord(**encoded)) == asdict(record)
+    for field in ['snapshot_id', 'as_of', 'date', 'trade_date', 'temporal_context']:
+        del encoded[field]
+    old = EvidenceRecord(**encoded)
+    assert old.as_of is None and old.snapshot_id is None
+    assert old.date is None and old.trade_date is None and old.temporal_context is None
+    assert old.timestamp == record.timestamp
+    historical = payload()
+    del historical['context']['as_of']
+    del historical['context']['snapshot_id']
+    ingest(gate, historical, 'historical-call')
+    assert all(r.as_of is None and r.snapshot_id is None for r in gate._evidence if r.call_id == 'historical-call')
+
+
+def test_partial_as_of_is_fail_closed_even_if_date_matches(tmp_path):
+    data = payload()
+    data['context']['date'] = '2026-10-01'
+    other = copy.deepcopy(data)
+    del other['context']['as_of']
+    result = validate(tmp_path, '6615045 / 222105473.58200002 * 100',
+                      G + '; ' + ref('totals.portfolio_market_value_ars', 'other-call'),
+                      6615045 / TOTAL * 100, data=data, other=other)
+    assert not result.valid
+    assert any(i.get('reason') == 'operand_snapshot_unavailable' for i in result.issues)
+
+
+def test_equivalent_as_of_instants_are_canonicalized(tmp_path):
+    other = payload()
+    other['context']['as_of'] = '2026-10-07T04:31:01+01:00'
+    assert validate(tmp_path, '6615045 / 222105473.58200002 * 100',
+                    G + '; ' + ref('totals.portfolio_market_value_ars', 'other-call'),
+                    6615045 / TOTAL * 100, other=other).valid
+
+
+@pytest.mark.parametrize('key', ['date', 'trade_date'])
+def test_same_call_nested_as_of_conflict_cannot_be_hidden(tmp_path, key):
+    data = payload()
+    data['context'][key] = '2026-10-01'
+    data['context']['totals']['as_of'] = '2026-10-08T03:31:01+00:00'
+    result = validate(tmp_path, '6615045 / 222105473.58200002 * 100',
+                      G + '; ' + T, 6615045 / TOTAL * 100, data=data)
+    assert not result.valid
+    assert any(i.get('reason') == 'operand_snapshot_conflict' for i in result.issues)
+
+
+@pytest.mark.parametrize('expr', [
+    '6615045 * 100 * 100 / 222105473.58200002 * 100',
+    '6615045 / 0.0001 / 222105473.58200002 * 100',
+])
+def test_scalar_reassociation_cannot_evade_effective_scale_cap(tmp_path, expr):
+    result = validate(tmp_path, expr, G + '; ' + T, eval(expr, {'__builtins__': {}}, {}))
+    assert not result.valid, result.issues
+    assert any(i.get('reason') == 'scalar_subtree_out_of_range' for i in result.issues)
+
+
+def test_explicit_missing_snapshot_is_not_filled_from_parent(tmp_path):
+    data = payload()
+    data['context']['totals']['snapshot_id'] = None
+    result = validate(tmp_path, '6615045 / 222105473.58200002 * 100',
+                      G + '; ' + T, 6615045 / TOTAL * 100, data=data)
+    assert not result.valid
+    assert any(i.get('reason') == 'operand_snapshot_unavailable' for i in result.issues)
