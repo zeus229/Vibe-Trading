@@ -827,13 +827,13 @@ def test_a_field_two_calls_returned_differently_needs_its_call(tmp_path: Path) -
             prose + _block(ROW, "95% | count | confidence", f"{_pct(var_95)} | observed | VaR 95% | {ref}")
         )
 
-    ambiguous = answer("historical_var")
-    assert _reasons(ambiguous) == ["ambiguous_field_ref"]
-    assert ambiguous.issues[0]["ambiguous_sources"] == ["q1::historical_var", "q2::historical_var"]
-    assert ambiguous.issues[0]["field_ref_candidates"] == [
-        "q1::historical_var",
-        "q2::historical_var",
+    repairable = answer("historical_var")
+    assert _reasons(repairable) == ["field_ref_needs_call_id"]
+    assert repairable.issues[0]["field_ref_candidates"] == ["q1::historical_var"]
+    assert repairable.issues[0]["proven_ref_repair_candidates"] == [
+        "q1::historical_var"
     ]
+    assert repairable.issues[0]["exact_ref_repair_candidate"] == "q1::historical_var"
     assert answer("q1::historical_var").valid is True
     assert _reasons(answer("q2::historical_var")) == ["not_in_referenced_call"]
 
