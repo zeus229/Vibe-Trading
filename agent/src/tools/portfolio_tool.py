@@ -24,6 +24,8 @@ _SUMMARY_FIELDS_FIRST: tuple[str, ...] = (
     "risk_xray_args",
     "warnings",
     "privacy",
+    "snapshot_id",
+    "valuation_version",
 )
 
 _TOP_CONTRIBUTOR_COUNT = 8
@@ -125,6 +127,8 @@ class PortfolioSummaryTool(BaseTool):
 
     name = "portfolio_summary"
     description = (
+        "Use view=compact for composition and scenarios: it returns all ARS holdings, "
+        "country/type aggregates, explicit cash and one snapshot identity within the result budget. "
         "Read the latest sanitized snapshot of the user's locally configured "
         "read-only brokerage accounts. Returns deterministic totals, "
         "daily_change (the portfolio's aggregate daily price move: pct, "
@@ -154,11 +158,22 @@ class PortfolioSummaryTool(BaseTool):
         "paths. Use the Web Portfolio refresh button before requesting current "
         "data."
     )
-    parameters = {"type": "object", "properties": {}, "required": []}
+    parameters = {
+        "type": "object",
+        "properties": {
+            "view": {
+                "type": "string",
+                "enum": ["extended", "compact"],
+                "default": "extended",
+                "description": "compact returns every holding, totals, cash and composition from one identified ARS-native snapshot; extended preserves the legacy analysis context.",
+            }
+        },
+        "required": [],
+    }
     repeatable = True
     is_readonly = True
 
-    def execute(self, **_: Any) -> str:
+    def execute(self, view: str = "extended", **_: Any) -> str:
         """Return the sanitized portfolio context as a JSON envelope.
 
         Returns:
@@ -167,6 +182,32 @@ class PortfolioSummaryTool(BaseTool):
             are reordered (never dropped or changed) so that a truncated
             result still carries the portfolio-level aggregates.
         """
+        if view not in {"extended", "compact"}:
+            return json.dumps({"status": "error", "message": "Unsupported portfolio view"})
+        if view == "compact":
+            from src.config.limits import TOOL_RESULT_LIMIT
+            from src.portfolio.compact import CompactPortfolioError
+
+            try:
+                context = PortfolioService().compact_analysis_context()
+            except CompactPortfolioError as exc:
+                return json.dumps({"status": "error", "message": str(exc)})
+            if context is None:
+                return json.dumps(
+                    {
+                        "status": "empty",
+                        "message": "No usable portfolio snapshot exists. Refresh the Portfolio page first.",
+                    }
+                )
+            result = json.dumps({"status": "ok", "context": context}, ensure_ascii=False, separators=(",", ":"))
+            if len(result) >= TOOL_RESULT_LIMIT:
+                return json.dumps(
+                    {
+                        "status": "error",
+                        "message": "Compact portfolio exceeds the tool result budget; no holdings were omitted.",
+                    }
+                )
+            return result
         context = PortfolioService().analysis_context()
         if context is None:
             return json.dumps(

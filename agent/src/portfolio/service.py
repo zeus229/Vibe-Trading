@@ -844,6 +844,13 @@ class PortfolioService:
         writer.writerows(snapshot["positions"])
         return output.getvalue()
 
+    def compact_analysis_context(self) -> dict[str, Any] | None:
+        """Read latest once and project its immutable identity and ARS composition."""
+        from src.portfolio.compact import compact_snapshot
+
+        snapshot = self.latest()
+        return None if snapshot is None else compact_snapshot(snapshot)
+
     def analysis_context(self) -> dict[str, Any] | None:
         """Return a credential/account-id-free snapshot suitable for an LLM.
 
@@ -909,6 +916,8 @@ class PortfolioService:
             )
         return {
             "as_of": snapshot["created_at"],
+            "snapshot_id": snapshot.get("snapshot_id"),
+            "valuation_version": snapshot.get("valuation_version"),
             "complete": snapshot["complete"],
             "totals": snapshot["totals"],
             "account_allocation": [
