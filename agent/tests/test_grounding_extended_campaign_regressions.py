@@ -824,3 +824,182 @@ def test_bare_risk_weight_ref_requires_unique_source_call(
         issue.get("reason") == "entity_value_needs_canonical_replacement"
         for issue in result.issues
     )
+
+
+
+def test_bare_display_ref_repairs_to_same_call_money_sibling(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio cuts")
+    call_id = "call_summary|fc_snapshot"
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {
+            "context": {
+                "totals": {
+                    "display": 222020616.326,
+                    "native_by_currency": {"ARS": 222020616.326},
+                }
+            }
+        },
+        call_id,
+    )
+
+    result = ledger.validate_final_answer(
+        "Snapshot actual: ARS 222.020.616,326.\n\n"
+        "```figures\n"
+        "222.020.616,326 | observed | snapshot value | context.totals.display\n"
+        "```"
+    )
+
+    assert result.valid is False
+    issue = next(
+        item for item in result.issues
+        if item.get("reason") == "field_ref_needs_numeric_sibling"
+    )
+    expected = f"{call_id}::context.totals.native_by_currency.ARS"
+    assert issue["field_ref_candidates"] == [expected]
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.AUTO_REPAIR
+    assert directive.preserve is True
+    assert directive.exact_ref == expected
+
+
+def test_bare_display_ref_with_two_matching_source_calls_stays_fail_closed(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio cuts")
+    for suffix in ("one", "two"):
+        _ingest(
+            ledger,
+            "portfolio_summary",
+            {
+                "context": {
+                    "totals": {
+                        "display": 222020616.326,
+                        "native_by_currency": {"ARS": 222020616.326},
+                    }
+                }
+            },
+            f"call_summary|fc_{suffix}",
+        )
+
+    result = ledger.validate_final_answer(
+        "Snapshot actual: ARS 222.020.616,326.\n\n"
+        "```figures\n"
+        "222.020.616,326 | observed | snapshot value | context.totals.display\n"
+        "```"
+    )
+
+    assert result.valid is False
+    assert not any(
+        item.get("reason") == "field_ref_needs_numeric_sibling"
+        for item in result.issues
+    )
+
+
+def test_bare_scalar_metric_ref_gets_exact_call_candidate_without_reformatting(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="compare risk")
+    call_id = "call_risk|fc_acciones"
+    _ingest(
+        ledger,
+        "portfolio_risk",
+        {
+            "symbol": "ACCIONES",
+            "data": {"volatility": {"annualized_vol": 0.35463698891476825}},
+        },
+        call_id,
+    )
+
+    result = ledger.validate_final_answer(
+        "ACCIONES: 35.46%.\n\n"
+        "```figures\n"
+        "35.46% | observed | annualized volatility | data.volatility.annualized_vol\n"
+        "```"
+    )
+
+    assert result.valid is False
+    issue = next(
+        item for item in result.issues
+        if item.get("reason") == "field_ref_needs_call_id"
+    )
+    expected = f"{call_id}::data.volatility.annualized_vol"
+    assert issue["field_ref_candidates"] == [expected]
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.AUTO_REPAIR
+    assert directive.preserve is True
+    assert directive.exact_ref == expected
+
+
+def test_bare_scalar_metric_ref_with_multiple_matching_calls_preserves_options(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="compare risk")
+    for suffix in ("one", "two"):
+        _ingest(
+            ledger,
+            "portfolio_risk",
+            {
+                "symbol": "ACCIONES",
+                "data": {"volatility": {"annualized_vol": 0.35463698891476825}},
+            },
+            f"call_risk|fc_{suffix}",
+        )
+
+    result = ledger.validate_final_answer(
+        "ACCIONES: 35.46%.\n\n"
+        "```figures\n"
+        "35.46% | observed | annualized volatility | data.volatility.annualized_vol\n"
+        "```"
+    )
+
+    assert result.valid is False
+    issue = next(
+        item for item in result.issues
+        if item.get("reason") == "field_ref_needs_call_id"
+    )
+    assert len(issue.get("proven_ref_repair_candidates") or []) == 2
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.PRESERVE_OPTIONS
+    assert directive.preserve is True
+
+
+def test_bare_risk_weight_still_prefers_canonical_replace_over_exact_call_repair(
+    tmp_path: Path,
+) -> None:
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="top holdings")
+    call_id = "call_summary|fc_weights"
+    _ingest(
+        ledger,
+        "portfolio_summary",
+        {
+            "context": {
+                "holdings_native": {
+                    "ARS": [{"symbol": "YPFD", "weight": 0.1997}]
+                },
+                "risk_xray_args": {"weights": {"YPFD": 0.2001}},
+            }
+        },
+        call_id,
+    )
+
+    result = ledger.validate_final_answer(
+        "| Ticker | Peso |\n"
+        "|---|---:|\n"
+        "| YPFD | 20.01% |\n\n"
+        "```figures\n"
+        "20.01% | observed | weight | context.risk_xray_args.weights.YPFD\n"
+        "```"
+    )
+
+    assert result.valid is False
+    issue = next(
+        item for item in result.issues
+        if item.get("reason") == "entity_value_needs_canonical_replacement"
+    )
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.REPLACE
+    assert directive.replacement_value == pytest.approx(19.97)
