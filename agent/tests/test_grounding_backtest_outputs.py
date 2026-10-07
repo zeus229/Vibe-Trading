@@ -261,10 +261,25 @@ def test_a_bare_field_two_runs_hold_is_ambiguous_and_the_correction_names_the_ru
     assert not result.valid
     (issue,) = result.issues
     assert issue["reason"] == "field_ref_needs_call_id"
-    assert issue["field_ref_candidates"] == ["rp::sortino"]
-    assert issue["proven_ref_repair_candidates"] == ["rp::sortino"]
-    assert issue["exact_ref_repair_candidate"] == "rp::sortino"
-    assert "rp::sortino" in two_runs.correction_prompt(result)
+    assert issue["field_ref_candidates"] == [
+        "rp::metrics.sortino",
+        "rp::sortino",
+    ]
+    assert issue["proven_ref_repair_candidates"] == [
+        "rp::metrics.sortino",
+        "rp::sortino",
+    ]
+    assert "exact_ref_repair_candidate" not in issue
+    directive = directive_for_issue(issue)
+    assert directive.action is RepairAction.PRESERVE_OPTIONS
+    assert directive.preserve is True
+    assert directive.allowed_refs == (
+        "rp::metrics.sortino",
+        "rp::sortino",
+    )
+    prompt = two_runs.correction_prompt(result)
+    assert "rp::metrics.sortino" in prompt
+    assert "rp::sortino" in prompt
 
 
 def test_a_wrong_call_ref_hints_only_refs_that_then_ground_the_figure(
