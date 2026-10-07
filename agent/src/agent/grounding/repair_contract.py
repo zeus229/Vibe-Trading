@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import re
 from typing import Any, Iterable
 
 from src.agent.grounding.figures import Declaration, parse_figures_block
@@ -67,7 +68,7 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
         )
     )
 
-    if derive_formula and len(derive_refs) >= 2:
+    if derive_formula and derive_refs:
         return RepairDirective(
             RepairAction.DERIVE,
             preserve=True,
@@ -161,6 +162,8 @@ class RequiredFigure:
     not against presentation context in prose. This makes the contract stable
     across harmless rewrites such as currency labels moving around the number,
     while still binding the claim to its proven exact evidence ref when known.
+    A proven derivation additionally keeps its role, complete operand set and
+    supplied machine formula (whitespace may change, arithmetic may not).
     """
 
     text: str
@@ -169,6 +172,8 @@ class RequiredFigure:
     digits: str
     allowed_refs: tuple[str, ...] = ()
     require_all_refs: bool = False
+    required_role: str | None = None
+    required_formula: str | None = None
 
     @classmethod
     def from_issue(
@@ -193,6 +198,17 @@ class RequiredFigure:
             digits=str(digits or ""),
             allowed_refs=directive.allowed_refs or (
                 (directive.exact_ref,) if directive.exact_ref else ()
+            ),
+            required_role=(
+                "derived" if directive.action is RepairAction.DERIVE or (
+                    directive.action is RepairAction.REPLACE
+                    and issue.get("replacement_role") == "derived"
+                ) else None
+            ),
+            required_formula=(
+                directive.derive_formula if directive.action is RepairAction.DERIVE
+                else directive.replacement_formula
+                if issue.get("replacement_role") == "derived" else None
             ),
             require_all_refs=(
                 directive.action is RepairAction.DERIVE
@@ -226,6 +242,12 @@ class RequiredFigure:
         when exactly one allowed ref maps to it. Ambiguous aliases stay rejected.
         """
 
+        if self.required_role and declaration.role != self.required_role:
+            return False
+        if self.required_formula and re.sub(r"\s+", "", declaration.note) != re.sub(
+            r"\s+", "", self.required_formula
+        ):
+            return False
         if declaration.percent != self.percent or not self._value_matches(declaration.value):
             return False
         if not self.allowed_refs:
@@ -300,6 +322,8 @@ class CorrectionContract:
             claim = RequiredFigure.from_issue(issue, directive)
             if claim is not None and not any(
                 existing.percent == claim.percent
+                and existing.required_role == claim.required_role
+                and existing.required_formula == claim.required_formula
                 and existing.allowed_refs == claim.allowed_refs
                 and abs(existing.value - claim.value)
                 <= max(abs(claim.value) * 1e-9, 1e-9)

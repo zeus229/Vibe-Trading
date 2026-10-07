@@ -12,7 +12,7 @@ import json
 from decimal import Decimal, ROUND_HALF_UP
 import math
 import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
@@ -651,6 +651,26 @@ class _PolicyMixin:
                     )
                     continue
             if declaration is None:
+                # A shape mismatch must not erase an existing derived intent.
+                # Association is only a candidate: repair still proves every ref
+                # and the complete formula before requiring preservation.
+                derived_candidates = [
+                    item for item in block.declarations
+                    if item.role == "derived" and item in block.compatible_declarations(
+                        figure.value, item.percent, figure.digits
+                    )
+                ]
+                if derived_candidates:
+                    repair = self._derived_ref_repair_metadata(
+                        figure, derived_candidates[0], symbol, records
+                    ) if len(derived_candidates) == 1 else {}
+                    issues.append(self._figure_issue(
+                        "figure_undeclared", figure, "derived", symbol, "undeclared",
+                        "has no compatible derived declaration in its written unit; "
+                        "repair the complete derivation or remove it",
+                        **repair,
+                    ))
+                    continue
                 found = self._check_observed(figure, None, symbol, records)
                 if block.present and found:
                     # Declared, but as a fraction where the answer writes a
@@ -1510,6 +1530,79 @@ class _PolicyMixin:
 
         values = walk(root)
         return [value for value in values if abs(value) not in {0.0, 1.0, 100.0}]
+
+    def _derived_ref_repair_metadata(
+        self, figure: Figure, declaration: Declaration, symbol: str | None,
+        records: Sequence[EvidenceRecord],
+    ) -> dict[str, Any]:
+        """Prove a complete repair of an existing structured derivation.
+
+        Paths restrict association before values are considered. Never invent
+        missing refs, choose between calls, or replace derived intent with an
+        equal observed scalar. The existing operand validator remains authority.
+        """
+        evaluated = _formula_in_note(declaration.note)
+        keys = [key.strip() for key in re.split(r"[,;]", declaration.ref) if key.strip()]
+        if evaluated is None or not keys or any("::" not in key for key in keys):
+            return {}
+        _, operands, tree = evaluated
+        refs: list[str] = []
+        for key in keys:
+            call, path = (part.strip() for part in key.split("::", 1))
+            call = self._canonical_session_call_id(call)
+            candidates, _ = self._field_sources(path, None)
+            known_call = any(record.call_id == call for record in self._evidence)
+            candidates = [record for record in candidates
+                          if (not known_call or record.call_id == call)
+                          and record.status == "observed"
+                          and record.identity_scope in {"entity", "aggregate"}
+                          and record.unit in {"money", "ratio"}
+                          and record.value is not None
+                          and any(math.isclose(float(record.value), operand,
+                                               rel_tol=1e-12, abs_tol=1e-12)
+                                  for operand in operands)]
+            exact = {self._ref_source(record.call_id, record.field, record.scope)[1]
+                     for record in candidates}
+            if len(exact) != 1:
+                return {}
+            refs.append(next(iter(exact)))
+
+        # Render the parser's numeric literals, not float reconstructions. This
+        # also removes explanatory prose and percent display syntax from notes.
+        def arithmetic(node: ast.AST) -> str:
+            if isinstance(node, ast.Expression):
+                return arithmetic(node.body)
+            if isinstance(node, ast.Constant):
+                literal = getattr(node, "_grounding_literal", None)
+                if literal is not None:
+                    return str(literal)
+            if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+                return ("+" if isinstance(node.op, ast.UAdd) else "-") + "(" + arithmetic(node.operand) + ")"
+            operators = {ast.Add: "+", ast.Sub: "-", ast.Mult: "*", ast.Div: "/"}
+            if isinstance(node, ast.BinOp) and type(node.op) in operators:
+                return "(" + arithmetic(node.left) + " " + operators[type(node.op)] + " " + arithmetic(node.right) + ")"
+            raise ValueError("unsupported repair formula")
+
+        try:
+            formula = arithmetic(tree)
+        except ValueError:
+            return {}
+        repaired = replace(declaration, percent=figure.percent, note=formula,
+                           ref="; ".join(dict.fromkeys(refs)))
+        result = self._derivation(repaired, symbol, records, money=figure.currency)
+        if not isinstance(result, tuple) or not self._result_matches(figure, result[0], formula):
+            return {}
+        # Make a fraction-to-display conversion explicit in the repair note,
+        # then prove that complete formula again with the same operand gate.
+        matched, scaled = self._strict_written_match(figure, result[0])
+        if matched and scaled:
+            formula = f"({formula}) * 100"
+            repaired = replace(repaired, note=formula)
+            result = self._derivation(repaired, symbol, records, money=figure.currency)
+            if not isinstance(result, tuple) or not self._result_matches(figure, result[0], formula):
+                return {}
+        return {"derive_formula": formula,
+                "derive_operand_refs": list(dict.fromkeys(refs))}
 
     def _deterministic_derive_metadata(self, figure: Figure) -> dict[str, Any]:
         """Prove a claim from one exact deterministic calc + observed operands."""
@@ -3098,7 +3191,10 @@ class _PolicyMixin:
                     ]
         derivation = self._derivation(declaration, symbol, records, money=figure.currency)
         if isinstance(derivation, str):
-            derive_hint = self._deterministic_derive_metadata(figure)
+            derive_hint = self._derived_ref_repair_metadata(
+                figure, declaration, symbol, records
+            ) if declaration is not None else {}
+            derive_hint = derive_hint or self._deterministic_derive_metadata(figure)
             operand_message = {
                 "financial_operand_not_observed": "has a financial operand without its exact observed ref, or an unused operand ref",
                 "operand_entity_conflict": "references an entity incompatible with the claimed symbol",
