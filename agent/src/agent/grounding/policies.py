@@ -790,7 +790,78 @@ class _PolicyMixin:
                 currency=figure.currency,
                 market_price=self._figure_is_market_price(content, figure, declaration),
             )
+        # Producers supply hints; only this boundary may authorize a derived
+        # preservation obligation. It sees the original declaration, so a calc
+        # cannot silently fill omitted refs or replace explicit derived intent.
+        for issue in issues:
+            span = issue.get("span")
+            figure = figures_by_span.get(tuple(span)) if isinstance(span, (list, tuple)) else None
+            if figure is None:
+                continue
+            declaration = declaration_by_span.get((figure.start, figure.end))
+            if declaration is None and issue.get("role") == "derived":
+                candidates = [item for item in block.declarations
+                              if item.role == "derived" and item in block.compatible_declarations(
+                                  figure.value, item.percent, figure.digits)]
+                declaration = candidates[0] if len(candidates) == 1 else None
+            written = self._written_symbol(content, figure, line_symbols, symbol_records)
+            symbol = written if written in {record.symbol for record in symbol_records} else issue.get("symbol")
+            self._authorize_derived_repair(issue, figure, declaration, symbol, records)
         return issues
+
+    def _authorize_derived_repair(
+        self, issue: dict[str, Any], figure: Figure,
+        declaration: Declaration | None, symbol: str | None,
+        records: Sequence[EvidenceRecord],
+    ) -> None:
+        """Turn a candidate into a preservation promise only after full proof.
+
+        Structured derived intent is authoritative: association can repair its
+        refs, but a deterministic calculation cannot supply missing operands.
+        Undeclared calc and canonical replacement candidates use this same proof.
+        """
+        derived = issue.get("role") == "derived" or (
+            declaration is not None and declaration.role == "derived"
+        )
+        replacement = issue.get("replacement_role") == "derived"
+        if not (derived or replacement or issue.get("derive_formula")):
+            return
+        proof: dict[str, Any] = {}
+        target = figure
+        candidate = declaration if derived else None
+        if replacement:
+            target = replace(figure, value=issue["replacement_value"],
+                             text=issue["replacement_text"], digits=issue["replacement_digits"])
+            candidate = Declaration(-1, target.text, target.value, target.percent, "derived",
+                                    issue["replacement_formula"], "; ".join(issue["replacement_refs"]))
+        elif candidate is None and not derived and issue.get("derive_formula"):
+            candidate = Declaration(-1, figure.text, figure.value, figure.percent, "derived",
+                                    issue["derive_formula"], "; ".join(issue["derive_operand_refs"]))
+        if candidate is not None and not figure.column:
+            proof = self._derived_ref_repair_metadata(target, candidate, symbol, records)
+            if proof:
+                repaired = replace(candidate, percent=target.percent, note=proof["derive_formula"],
+                                   ref="; ".join(proof["derive_operand_refs"]))
+                if self._check_derived(target, repaired, symbol, records):
+                    proof = {}
+        # Remove every claim-preservation hint before publishing the decision.
+        # Observed candidates cannot downgrade a rejected derived declaration.
+        for key in list(issue):
+            if key.startswith(("derive_", "replacement_")) or key in {
+                "derived_repair_verified", "proven_ref_repair_candidates",
+                "exact_ref_repair_candidate", "aggregate_ref_candidate",
+                "aggregate_ref_candidates", "entity_ref_symbol", "field_ref_candidates",
+            }:
+                issue.pop(key)
+        if proof:
+            issue.update(proof, derived_repair_verified=True)
+            if replacement:
+                issue.update(replacement_role="derived", replacement_value=target.value,
+                             replacement_text=target.text, replacement_digits=target.digits,
+                             replacement_formula=proof["derive_formula"],
+                             replacement_refs=proof["derive_operand_refs"])
+                issue.pop("derive_formula", None)
+                issue.pop("derive_operand_refs", None)
 
     @staticmethod
     def _declarations_by_span(
@@ -1556,8 +1627,7 @@ class _PolicyMixin:
             candidates = [record for record in candidates
                           if (not known_call or record.call_id == call)
                           and record.status == "observed"
-                          and record.identity_scope in {"entity", "aggregate"}
-                          and record.unit in {"money", "ratio"}
+                          and record.tool != "financial_rigor"
                           and record.value is not None
                           and any(math.isclose(float(record.value), operand,
                                                rel_tol=1e-12, abs_tol=1e-12)
@@ -1593,9 +1663,9 @@ class _PolicyMixin:
                 raise ValueError("unsupported repair structure")
             left, right = coverage(node.left), coverage(node.right)
             if isinstance(node.op, (ast.Add, ast.Sub, ast.Div)) and (left or right):
-                if not left or not right or left.intersection(right):
+                if not left or not right:
                     raise ValueError("financial operand coverage unavailable")
-            if isinstance(node.op, ast.Div) and not right:
+            if isinstance(node.op, ast.Div) and (not right or left.intersection(right)):
                 raise ValueError("untyped divisor cannot prove complete coverage")
             return left | right
 
@@ -1642,11 +1712,17 @@ class _PolicyMixin:
         return {"derive_formula": formula,
                 "derive_operand_refs": list(dict.fromkeys(refs))}
 
-    def _deterministic_derive_metadata(self, figure: Figure) -> dict[str, Any]:
+    def _deterministic_derive_metadata(
+        self, figure: Figure, declaration: Declaration | None = None,
+    ) -> dict[str, Any]:
         """Prove a claim from one exact deterministic calc + observed operands."""
         proofs: list[dict[str, Any]] = []
         for calc in getattr(self, "_deterministic_calcs", []):
             expr = str(calc.get("expr") or "")
+            if declaration is not None:
+                stated = _formula_in_note(declaration.note)
+                if stated is None or not all(operand in stated[1] for operand in self._calc_operands(expr)):
+                    continue
             result = calc.get("result")
             if not isinstance(result, (int, float)):
                 continue
@@ -3264,7 +3340,9 @@ class _PolicyMixin:
             ]
         result, _ = derivation
         if self._result_matches(figure, result, declaration.note):
-            derive_hint = self._deterministic_derive_metadata(figure)
+            # An equal result cannot introduce operands absent from the stated
+            # arithmetic. Display scaling does not change financial coverage.
+            derive_hint = self._deterministic_derive_metadata(figure, declaration)
             expected_refs = {
                 str(item)
                 for item in derive_hint.get("derive_operand_refs") or []

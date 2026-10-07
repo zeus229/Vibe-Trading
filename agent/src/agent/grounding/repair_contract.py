@@ -68,7 +68,7 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
         )
     )
 
-    if derive_formula and derive_refs:
+    if derive_formula and derive_refs and issue.get("derived_repair_verified") is True:
         return RepairDirective(
             RepairAction.DERIVE,
             preserve=True,
@@ -82,6 +82,11 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
     )
     replacement_value = issue.get("replacement_value")
     replacement_formula = issue.get("replacement_formula")
+    if issue.get("replacement_role") == "derived" and issue.get("derived_repair_verified") is not True:
+        return RepairDirective(RepairAction.DROP, preserve=False)
+    if issue.get("role") == "derived" and issue.get("derived_repair_verified") is not True:
+        return RepairDirective(RepairAction.RECOVER if reason in _RECOVERY_REASONS else RepairAction.DROP,
+                               preserve=False)
     if (replacement_ref or replacement_refs) and isinstance(replacement_value, (int, float)):
         allowed = (
             replacement_refs

@@ -236,9 +236,9 @@ def test_undeclared_deterministic_calc_gets_derive_repair_metadata(
         "call_actions|fc_risk::data.volatility.annualized_vol",
         "call_cedears|fc_risk::data.volatility.annualized_vol",
     ]
-    assert directive.action is RepairAction.DERIVE
-    assert directive.preserve is True
-    assert directive.allowed_refs == tuple(metadata["derive_operand_refs"])
+    # A producer's candidate alone is not a preservation authorization.
+    assert directive.preserve is False
+    assert not directive.allowed_refs
 
 
 def test_calc_only_matching_under_broad_relative_tolerance_is_not_proven(
@@ -419,7 +419,7 @@ def test_company_name_row_is_not_treated_as_summary_even_for_unscoped_calc(
 
 
 
-def test_declared_derived_no_evidence_gets_deterministic_derive_repair(
+def test_calc_result_ref_cannot_replace_missing_derived_operand_refs(
     tmp_path: Path,
 ) -> None:
     ledger = GroundingLedger(run_dir=tmp_path, user_message="top five holdings")
@@ -469,13 +469,11 @@ def test_declared_derived_no_evidence_gets_deterministic_derive_repair(
     assert len(validation.issues) == 1
     issue = validation.issues[0]
     assert issue.get("reason") == "no_evidence"
-    assert issue.get("derive_formula")
-    assert len(issue.get("derive_operand_refs") or []) == 5
-
-    directive = directive_for_issue(issue)
-    assert directive.action is RepairAction.DERIVE
-    assert directive.preserve is True
-    assert len(directive.allowed_refs) == 5
+    # The old test expected calc to invent all omitted refs. That violated
+    # complete structural coverage; recovery must first obtain a declaration.
+    assert not issue.get("derive_formula")
+    assert not issue.get("derive_operand_refs")
+    assert not directive_for_issue(issue).preserve
 
 
 def test_multi_entity_derived_refs_ignore_incidental_ticker_on_same_line(
@@ -722,28 +720,9 @@ def test_deterministic_derive_requires_every_proven_operand_ref(
     )
 
     assert validation.valid is False
-    issue = next(
-        item for item in validation.issues
-        if item.get("reason") in {
-            "derived_refs_incomplete",
-            "additive_operand_not_observed",
-        }
-        and item.get("derive_operand_refs")
-    )
-    expected = {
-        f"{left_id}::data.volatility.annualized_vol",
-        f"{right_id}::data.volatility.annualized_vol",
-    }
-    assert set(issue["derive_operand_refs"]) == expected
-    if issue.get("reason") == "derived_refs_incomplete":
-        assert set(issue["missing_derive_refs"]) == {
-            f"{right_id}::data.volatility.annualized_vol"
-        }
-    directive = directive_for_issue(issue)
-    assert directive.action is RepairAction.DERIVE
-    assert directive.preserve is True
-    assert set(directive.allowed_refs) == expected
-
+    # A complete calc cannot turn a partial declaration into a promise.
+    assert all(not directive_for_issue(issue).preserve for issue in validation.issues)
+    assert all(not issue.get("derive_operand_refs") for issue in validation.issues)
 
 
 def test_bare_risk_weight_ref_must_match_claim_ticker_for_replacement(
