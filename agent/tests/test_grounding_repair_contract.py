@@ -3,7 +3,6 @@ from types import SimpleNamespace
 from src.agent.grounding.repair_contract import (
     CorrectionContract,
     RepairAction,
-    RequiredFigure,
     directive_for_issue,
 )
 
@@ -468,6 +467,8 @@ def test_derive_contract_requires_all_operand_refs():
                 "figure_currency": False,
                 "figure_digits": "12.73",
                 "reason": "derived_refs_incomplete",
+                # Contract-only fixture: authorization is tested through the ledger.
+                "derived_repair_verified": True,
                 "derive_formula": "(0.3581-0.2308)*100",
                 "derive_operand_refs": [
                     "call_a|fc_x::data.volatility.annualized_vol",
@@ -520,6 +521,8 @@ def test_replace_derived_contract_requires_canonical_total_and_all_refs():
                 "replacement_text": "50.61%",
                 "replacement_value": 50.61,
                 "replacement_digits": "50.61",
+                # Contract-only fixture: authorization is tested through the ledger.
+                "derived_repair_verified": True,
                 "replacement_role": "derived",
                 "replacement_refs": refs,
                 "replacement_formula": "(0.1997+0.1311+0.0598+0.0591+0.0564)*100",
