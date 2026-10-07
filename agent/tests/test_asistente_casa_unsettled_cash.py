@@ -6,6 +6,7 @@ from src.portfolio.config import PortfolioSettingsStore
 from src.portfolio import service as portfolio_service
 from src.portfolio.service import PortfolioService
 from src.portfolio.store import PortfolioStore
+from src.trading import connections as trading_connections
 from src.trading.types import TradingProfile
 
 
@@ -19,13 +20,15 @@ def test_native_account_separates_unsettled_cash(tmp_path, monkeypatch):
         capabilities=("account.read", "positions.read"),
         readonly=True,
     )
-    monkeypatch.setattr(
-        portfolio_service,
-        "profile_by_id",
-        lambda profile_id: profile
-        if profile_id == profile.id
-        else (_ for _ in ()).throw(ValueError(profile_id)),
-    )
+    def _profile_by_id(profile_id):
+        if profile_id == profile.id:
+            return profile
+        raise ValueError(profile_id)
+
+    # PortfolioService and ConnectionStore import the resolver into their own
+    # modules, so patch both call sites used by this isolated local-plugin fixture.
+    monkeypatch.setattr(portfolio_service, "profile_by_id", _profile_by_id)
+    monkeypatch.setattr(trading_connections, "profile_by_id", _profile_by_id)
 
     settings = PortfolioSettingsStore(tmp_path / "portfolio.json")
     settings.connection_store.ensure("ars", profile.id, "ARS")
