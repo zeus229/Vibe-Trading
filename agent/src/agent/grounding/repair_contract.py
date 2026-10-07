@@ -273,8 +273,9 @@ class RequiredFigure:
                     and allowed.split("::", 1)[1] == field
                 }
                 if len(matching) == 1:
+                    normalized_refs.discard(ref)
                     normalized_refs.update(matching)
-            return set(self.allowed_refs).issubset(normalized_refs)
+            return set(self.allowed_refs) == normalized_refs
         if refs.intersection(self.allowed_refs):
             return True
 

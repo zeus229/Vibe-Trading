@@ -1547,6 +1547,7 @@ class _PolicyMixin:
             return {}
         _, operands, tree = evaluated
         refs: list[str] = []
+        associated: dict[str, EvidenceRecord] = {}
         for key in keys:
             call, path = (part.strip() for part in key.split("::", 1))
             call = self._canonical_session_call_id(call)
@@ -1565,7 +1566,44 @@ class _PolicyMixin:
                      for record in candidates}
             if len(exact) != 1:
                 return {}
-            refs.append(next(iter(exact)))
+            ref = next(iter(exact))
+            refs.append(ref)
+            associated[ref] = next(record for record in candidates
+                                   if self._ref_source(record.call_id, record.field, record.scope)[1] == ref)
+
+        # Coverage is structural, not an effective-coefficient test. A quotient
+        # requires independently evidenced sides; an unreferenced divisor must
+        # not become a scalar just because later arithmetic cancels its scale.
+        # Ambiguous repeated financial literals also cannot establish distinct
+        # operand identities. This is a conservative repair boundary only:
+        # scalar division remains available to the unchanged algebra validator.
+        def coverage(node: ast.AST) -> set[str]:
+            if isinstance(node, ast.Expression):
+                return coverage(node.body)
+            if isinstance(node, ast.Constant):
+                matches = {ref for ref, record in associated.items()
+                           if math.isclose(float(record.value), float(node.value),
+                                           rel_tol=1e-12, abs_tol=1e-12)}
+                if len(matches) > 1:
+                    raise ValueError("ambiguous financial leaf")
+                return matches
+            if isinstance(node, ast.UnaryOp):
+                return coverage(node.operand)
+            if not isinstance(node, ast.BinOp):
+                raise ValueError("unsupported repair structure")
+            left, right = coverage(node.left), coverage(node.right)
+            if isinstance(node.op, (ast.Add, ast.Sub, ast.Div)) and (left or right):
+                if not left or not right or left.intersection(right):
+                    raise ValueError("financial operand coverage unavailable")
+            if isinstance(node.op, ast.Div) and not right:
+                raise ValueError("untyped divisor cannot prove complete coverage")
+            return left | right
+
+        try:
+            if coverage(tree) != set(associated):
+                return {}
+        except ValueError:
+            return {}
 
         # Render the parser's numeric literals, not float reconstructions. This
         # also removes explanatory prose and percent display syntax from notes.
