@@ -506,6 +506,21 @@ class SessionService:
 
         safe_overrides = sanitize_session_overrides(session_config) if session_config else session_config
         agent_config = load_runtime_agent_config(overrides=safe_overrides)
+        # Operator-configured Asistente Casa MCP credentials stay on disk.  Only
+        # API-authenticated human conversation sessions gain these two read-only
+        # tools, and only in the in-memory per-run config. Scheduled/background
+        # sessions keep their original allowlist even if an operator enables
+        # them globally by mistake.
+        from src.tools.ppi_conversation_scope import (
+            allow_ppi_conversation_tools,
+            scope_asistente_casa_agent_config,
+        )
+        session_record = self.store.get_session(session_id)
+        ppi_conversation = allow_ppi_conversation_tools(session_record)
+        agent_config = scope_asistente_casa_agent_config(
+            agent_config, conversational=ppi_conversation
+        )
+
 
         def event_callback(event_type: str, data: Dict[str, Any]) -> None:
             """Forward AgentLoop events to the SSE event bus."""
@@ -539,6 +554,9 @@ class SessionService:
                 warn_callback=_mcp_collision_warn,
             ),
         )
+
+        if not ppi_conversation:
+            registry._tools.pop("calculate_ppi_indicators", None)
 
         agent = AgentLoop(
             registry=registry,
