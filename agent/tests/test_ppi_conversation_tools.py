@@ -123,3 +123,32 @@ def test_ppi_indicators_do_not_use_yahoo(monkeypatch):
         payload=_payload(), source_call_id="call_abcdef1234"
     ))
     assert result["ok"]
+
+
+@pytest.mark.parametrize("status", ["success", "ok"])
+def test_wrapped_mcp_response_indicators(status):
+    inner = _payload()
+    inner["requested_symbol"] = "XLV.BA"
+    result = json.loads(CalculatePPIIndicatorsTool().execute(
+        payload={"status": status, "data": inner},
+        source_call_id="call_ppi_abc123",
+    ))
+    assert result["ok"] is True
+    assert result["symbol"] == "XLV"
+    assert result["requested_symbol"] == "XLV.BA"
+    assert result["indicators"]["sma_20"] is not None
+    assert result["indicators"]["rsi_14"] is not None
+    assert result["indicators"]["macd"] is not None
+
+
+@pytest.mark.parametrize("wrapper", [
+    {"status": "error", "data": _payload()},
+    {"status": "success", "data": None},
+    {"status": "success", "data": {"ok": False}},
+    {"status": "success", "data": {"ok": True, "source": "yahoo"}},
+])
+def test_invalid_mcp_wrapper_fails_closed(wrapper):
+    result = json.loads(CalculatePPIIndicatorsTool().execute(
+        payload=wrapper, source_call_id="call_ppi_abc123",
+    ))
+    assert result["ok"] is False
