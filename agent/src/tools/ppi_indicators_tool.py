@@ -54,6 +54,12 @@ class CalculatePPIIndicatorsTool(BaseTool):
         call_id = kwargs.get("source_call_id")
         if not isinstance(payload, dict) or not isinstance(call_id, str) or not call_id.startswith("call_"):
             return json.dumps({"ok": False, "error": "complete MCP payload and source call ID required"})
+        # The MCP transport wraps the canonical data in {status, data}.
+        # Reject envelopes without successful status or a valid inner payload.
+        if "data" in payload or "status" in payload:
+            if payload.get("status") not in ("ok", "success", "available") or not isinstance(payload.get("data"), dict):
+                return json.dumps({"ok": False, "error": "unsuccessful or malformed MCP envelope"})
+            payload = payload["data"]
         if (
             payload.get("ok") is not True
             or payload.get("contract_version") != _CONTRACT
@@ -109,6 +115,7 @@ class CalculatePPIIndicatorsTool(BaseTool):
             "source": "ppi_marketdata",
             "source_call_id": call_id,
             "symbol": payload.get("symbol"),
+            "requested_symbol": payload.get("requested_symbol"),
             "instrument_type": payload.get("instrument_type"),
             "market": "BYMA",
             "currency": payload["currency"],
