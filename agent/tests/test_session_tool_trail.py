@@ -197,7 +197,7 @@ def test_run_with_agent_consolidates_tool_events_by_call_id(
     monkeypatch.setattr("src.agent.loop.AgentLoop", _DummyAgentLoop)
     monkeypatch.setattr(
         "src.config.loader.load_runtime_agent_config",
-        lambda overrides=None: object(),
+        lambda overrides=None: __import__("src.config.schema", fromlist=["AgentConfig"]).AgentConfig(),
     )
     monkeypatch.setattr(
         "src.config.loader.sanitize_session_overrides",
