@@ -43,7 +43,7 @@ def test_run_with_agent_keeps_event_loop_responsive_during_registry_build(
     monkeypatch.setattr("src.providers.chat.ChatLLM", lambda: object())
     monkeypatch.setattr("src.memory.persistent.PersistentMemory", lambda: object())
     monkeypatch.setattr("src.agent.loop.AgentLoop", _DummyAgentLoop)
-    monkeypatch.setattr("src.config.loader.load_runtime_agent_config", lambda overrides=None: object())
+    monkeypatch.setattr("src.config.loader.load_runtime_agent_config", lambda overrides=None: __import__("src.config.schema", fromlist=["AgentConfig"]).AgentConfig())
     monkeypatch.setattr("src.config.loader.sanitize_session_overrides", lambda overrides: dict(overrides))
 
     service = SessionService(
