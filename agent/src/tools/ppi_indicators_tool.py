@@ -1,8 +1,8 @@
 """Calculate basic indicators from validated Asistente Casa PPI MCP OHLCV.
 
 This is not a market-data loader and never falls back to Yahoo/underlyings.
-Input bars must be the response of consultar_mercado_ppi_instrumento. Output
-describes calculations on provided bars, not independent source verification.
+Input bars are loaded from the exact consultar_mercado_ppi_instrumento tool
+result in the current session trace, never reconstructed by the model.
 """
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from typing import Any
 import pandas as pd
 
 from src.agent.tools import BaseTool
+from src.config.paths import get_sessions_dir
 from src.tools.technical_indicator_tool import (
     _compute_macd, _compute_rsi, _compute_sma,
 )
@@ -24,42 +25,92 @@ _CONTRACT = "asistente_casa_ppi_market_data_v1"
 class CalculatePPIIndicatorsTool(BaseTool):
     name = "calculate_ppi_indicators"
     description = (
-        "Calculate SMA20, SMA50, RSI14 and MACD on the exact consecutive "
-        "daily OHLCV bars returned by Asistente Casa MCP "
-        "consultar_mercado_ppi_instrumento (not Yahoo or the US underlying). "
-        "Supply the full verified MCP response as payload, including "
-        "source, market, currency, quality and bar dates. Only for interactive "
-        "research; not backtesting or canonical portfolio performance."
+        "Calculate SMA20, SMA50, RSI14 and MACD on the exact daily OHLCV "
+        "bars returned by Asistente Casa MCP consultar_mercado_ppi_instrumento "
+        "in this session (not Yahoo or the US underlying). The tool reads the "
+        "longest observed history for the unique PPI instrument in this run. "
+        "If several instruments were queried, supply the exact requested BYMA "
+        "symbol and instrument_type to select one; never supply or invent bars. "
+        "Only for interactive research; not backtesting or canonical portfolio performance."
     )
     parameters = {
         "type": "object",
         "properties": {
-            "payload": {
-                "type": "object",
-                "description": "Complete JSON output of consultar_mercado_ppi_instrumento",
-            },
-            "source_call_id": {
+            "symbol": {
                 "type": "string",
-                "description": "Exact MCP tool call ID that supplied the bars for citations",
+                "description": "Exact requested BYMA symbol, e.g. XLV.BA; needed if multiple instruments were queried",
             },
+            "instrument_type": {"type": "string", "description": "PPI instrument type, e.g. CEDEARS"},
         },
-        "required": ["payload", "source_call_id"],
+        "required": [],
     }
     repeatable = True
     is_readonly = True
     replay_after_compaction = False
 
+    def __init__(self, default_session_id: str | None = None, event_callback: Any = None) -> None:
+        self.session_id = default_session_id
+
+    def _verified_payload(self, symbol: str | None, instrument_type: str | None,
+                          calculation_call_id: str) -> tuple[dict[str, Any], str] | None:
+        """Select the longest exact BYMA history observed in this run."""
+        if not self.session_id:
+            return None
+        trace = get_sessions_dir() / self.session_id / "trace.jsonl"
+        try:
+            rows = [json.loads(line) for line in trace.read_text().splitlines() if line.strip()]
+        except (OSError, ValueError):
+            return None
+        last_start = max((i for i, row in enumerate(rows) if row.get("type") == "start"), default=-1)
+        if last_start < 0:
+            return None
+        if not any(row.get("type") == "tool_call"
+                   and row.get("tool") == self.name
+                   and row.get("call_id") == calculation_call_id
+                   for row in rows[last_start + 1:]):
+            return None
+        candidates: list[tuple[dict[str, Any], str]] = []
+        for row in rows[last_start + 1:]:
+            if (row.get("type") != "tool_result"
+                    or row.get("tool") != "mcp_asistente_casa_consultar_mercado_ppi_instrumento"
+                    or row.get("status") != "ok"):
+                continue
+            observed = row.get("result")
+            if isinstance(observed, str):
+                try:
+                    observed = json.loads(observed)
+                except ValueError:
+                    return None
+            if not isinstance(observed, dict) or observed.get("status") not in ("ok", "success", "available"):
+                continue
+            data = observed.get("data")
+            if not isinstance(data, dict) or not isinstance(row.get("call_id"), str):
+                continue
+            if symbol and data.get("requested_symbol") != symbol:
+                continue
+            if instrument_type and data.get("instrument_type") != instrument_type:
+                continue
+            candidates.append((data, row["call_id"]))
+        identities = {(data.get("requested_symbol"), data.get("instrument_type"), data.get("market"))
+                      for data, _ in candidates}
+        if len(identities) != 1:
+            return None
+        return max(candidates, key=lambda item: len(item[0].get("bars", []))
+                   if isinstance(item[0].get("bars"), list) else -1)
+
     def execute(self, **kwargs: Any) -> str:
-        payload = kwargs.get("payload")
-        call_id = kwargs.get("source_call_id")
-        if not isinstance(payload, dict) or not isinstance(call_id, str) or not call_id.startswith("call_"):
-            return json.dumps({"ok": False, "error": "complete MCP payload and source call ID required"})
-        # The MCP transport wraps the canonical data in {status, data}.
-        # Reject envelopes without successful status or a valid inner payload.
-        if "data" in payload or "status" in payload:
-            if payload.get("status") not in ("ok", "success", "available") or not isinstance(payload.get("data"), dict):
-                return json.dumps({"ok": False, "error": "unsuccessful or malformed MCP envelope"})
-            payload = payload["data"]
+        symbol = kwargs.get("symbol")
+        instrument_type = kwargs.get("instrument_type")
+        calculation_call_id = kwargs.get("_runtime_call_id")
+        if not isinstance(calculation_call_id, str) or not calculation_call_id.startswith("call_"):
+            return json.dumps({"ok": False, "error": "runtime calculation call ID required"})
+        if (symbol is not None and not isinstance(symbol, str)) or (
+                instrument_type is not None and not isinstance(instrument_type, str)):
+            return json.dumps({"ok": False, "error": "invalid PPI selector"})
+        observed = self._verified_payload(symbol, instrument_type, calculation_call_id)
+        if observed is None:
+            return json.dumps({"ok": False, "error": "no unique PPI instrument observed in this session"})
+        payload, call_id = observed
         if (
             payload.get("ok") is not True
             or payload.get("contract_version") != _CONTRACT
@@ -114,8 +165,9 @@ class CalculatePPIIndicatorsTool(BaseTool):
             "ok": True,
             "source": "ppi_marketdata",
             "source_call_id": call_id,
-            "symbol": payload.get("symbol"),
-            "requested_symbol": payload.get("requested_symbol"),
+            "calculation_call_id": calculation_call_id,
+            "symbol": payload.get("requested_symbol"),
+            "ppi_symbol": payload.get("symbol"),
             "instrument_type": payload.get("instrument_type"),
             "market": "BYMA",
             "currency": payload["currency"],
