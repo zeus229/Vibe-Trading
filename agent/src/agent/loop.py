@@ -2929,6 +2929,10 @@ class AgentLoop:
                 }
             ]
 
+        if tool_name == "calculate_ppi_indicators":
+            # Tool call provenance is assigned by the host, never the model.
+            args = {**args, "_runtime_call_id": call_id}
+
         readonly = self._is_tool_readonly(tool_name)
         timed_out = threading.Event()
 

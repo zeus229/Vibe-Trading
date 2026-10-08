@@ -137,6 +137,7 @@ def build_registry(
     from src.tools.remember_tool import RememberTool
     from src.tools.swarm_tool import SwarmTool
     from src.tools.scheduled_research_tool import ScheduledResearchTool
+    from src.tools.ppi_indicators_tool import CalculatePPIIndicatorsTool
 
     goal_tool_classes = {
         StartResearchGoalTool,
@@ -149,6 +150,7 @@ def build_registry(
     session_injected_classes = goal_tool_classes | {
         RunResearchAutopilotTool,
         ScheduledResearchTool,
+        CalculatePPIIndicatorsTool,
     }
     classes = _discover_subclasses()
     registry = ToolRegistry()
