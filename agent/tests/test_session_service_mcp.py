@@ -10,6 +10,8 @@ from src.session.events import EventBus
 from src.session.models import Attempt
 from src.session.service import SessionService
 from src.session.store import SessionStore
+from src.config.schema import AgentConfig
+from src.agent.tools import ToolRegistry
 
 
 class _DummyIndex:
@@ -36,14 +38,14 @@ def test_run_with_agent_keeps_event_loop_responsive_during_registry_build(
     def _slow_build_registry(**kwargs):
         del kwargs
         time.sleep(0.25)
-        return object()
+        return ToolRegistry()
 
     monkeypatch.setattr("src.session.service.get_shared_index", lambda: _DummyIndex())
     monkeypatch.setattr("src.tools.build_registry", _slow_build_registry)
     monkeypatch.setattr("src.providers.chat.ChatLLM", lambda: object())
     monkeypatch.setattr("src.memory.persistent.PersistentMemory", lambda: object())
     monkeypatch.setattr("src.agent.loop.AgentLoop", _DummyAgentLoop)
-    monkeypatch.setattr("src.config.loader.load_runtime_agent_config", lambda overrides=None: __import__("src.config.schema", fromlist=["AgentConfig"]).AgentConfig())
+    monkeypatch.setattr("src.config.loader.load_runtime_agent_config", lambda overrides=None: AgentConfig())
     monkeypatch.setattr("src.config.loader.sanitize_session_overrides", lambda overrides: dict(overrides))
 
     service = SessionService(
