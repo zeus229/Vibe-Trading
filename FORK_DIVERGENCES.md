@@ -88,3 +88,31 @@ Kept on purpose, with the reason:
 | `goal_tool.py` `completion_contract` / `criterion_index` | Fork-only repair aid for completion audits; upstream #1688 only covers tool-call provenance. |
 | `tools/mcp.py` PPI conversation scoping, Asistente Casa tools | Fork-only integrations. |
 | `api_server.py` `proxy_headers` + `forwarded_allow_ips` | Required behind Cloudflare/Authentik; its loss caused browser 403s on 2026-10-09 (guarded by `tests/test_serve_bind.py`). |
+
+## Future upstream contribution bundle (deferred, 2026-10-09)
+
+Do not open PRs until a fresh check for upstream equivalents. Two fork capabilities
+introduced by `c59313b8` remain candidate *independent* upstream contributions:
+
+1. **Reproducible technical indicators:** optional strict
+   `technical_indicators(end_date=YYYY-MM-DD)`, and `read_identity` with SHA-256
+   `dataset_fingerprint` of the exact input bars and provenance. A date boundary
+   alone cannot guarantee identical data if a provider revises historical bars.
+2. **Pinned portfolio reads:** `portfolio_summary(snapshot_id=...)` plus
+   `read_identity`; a missing/incompatible snapshot fails closed as
+   `snapshot_not_found`. Propose the standard upstream view only, excluding
+   the fork's compact view and PPI/Asistente Casa. Verify persistence and
+   immutable retrieval before claiming reproducibility.
+
+**Grounding follow-up:** upstream roadmap issue
+https://github.com/HKUDS/Vibe-Trading/issues/1622 tracks policy registry and
+check observability. Prior contributions include #1702 (keep verified figures
+through correction), #1728 (labelled formulas), #1638 (exact reference repair),
+#1688 (Research Goal provenance), plus locale and timestamp corrections.
+Do not re-propose replay lease (#1635); maintain the deliberate ASCII-colon
+fail-closed and 0.5% rounding policies documented above. The remaining
+`feat/asistente-casa-provider-identity` branch needs a clean port of
+ISIN-based .BA identity, allowed backtest evidence, and compaction evidence
+preservation before considering any generic upstream PR. Check open #1691
+(registry work) for overlap first. Only focused tests; no deployment for
+upstream PR preparation.
