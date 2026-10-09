@@ -3366,6 +3366,9 @@ class AgentLoop:
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
+        if preserve_tool_call_ids is None:
+            # A replay still owed one model request is never cleared by default.
+            preserve_tool_call_ids = self._readonly_replay_visibility_pending
         _microcompact(
             messages,
             target_tokens=target_tokens,
@@ -3554,6 +3557,7 @@ class AgentLoop:
                 self._readonly_replay_cache.clear()
                 self._readonly_replay_ready.clear()
                 self._readonly_replay_protected.clear()
+                self._readonly_replay_visibility_pending.clear()
 
         status = "ok" if success else "error"
         truncated = truncate_tool_result(result)
