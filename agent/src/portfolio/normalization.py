@@ -192,6 +192,11 @@ def normalize_position(broker: str, row: dict[str, Any]) -> dict[str, Any]:
         "source_instrument_id": row.get("source_instrument_id"),
         "source_instrument_type": row.get("source_instrument_type"),
         "isin": row.get("isin"),
+        # Trusted provider identity is meaningful only for the Asistente Casa
+        # connector. Other connectors must resolve their own identities through
+        # Vibe's normal resolver instead of smuggling similarly named fields.
+        "provider_identity": row.get("provider_identity") if broker == "asistente-casa" else None,
+        "underlying": row.get("underlying") if broker == "asistente-casa" else None,
         "venue": row.get("venue") or row.get("market"),
         "exposure_currency": row.get("exposure_currency"),
         "sector": row.get("sector"),

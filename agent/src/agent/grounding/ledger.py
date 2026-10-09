@@ -328,6 +328,8 @@ class GroundingLedger(
             )
         if tool_name in _ANALYSIS_TOOLS:
             self._ingest_analysis_result(tool_name, arguments, payload, call_id)
+        if tool_name == "portfolio_summary":
+            self._ingest_trusted_portfolio_identities(payload, call_id)
         if tool_name == _RESOLVER_TOOL:
             self._ingest_resolution(arguments, payload, call_id)
         elif tool_name == "get_market_data":
@@ -336,7 +338,10 @@ class GroundingLedger(
             self._ingest_engine_table(payload, call_id)
         elif tool_name == "read_run_artifact" and payload is not None:
             self._ingest_engine_table(payload, call_id, tool_name=tool_name)
-        elif payload is not None:
+        elif payload is not None and tool_name != "backtest":
+            # A backtest has an explicit evidence contract above (metrics files).
+            # Its envelope is bookkeeping (exit_code, elapsed_seconds, stdout);
+            # flattening it would mint "observed" provenance for those numbers.
             self._ingest_generic_numeric(tool_name, arguments, payload, call_id)
         self.persist()
 

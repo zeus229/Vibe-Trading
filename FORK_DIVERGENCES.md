@@ -61,7 +61,6 @@ the band to 1% was superseded by this policy and archived.
 
 | Branch | Unique value | Why not merged |
 |---|---|---|
-| `feat/asistente-casa-provider-identity` | trusted ISIN-verified provider identity locking `.BA` symbols; allow-listed backtest stdout metrics as grounded evidence; microcompact preservation of named evidence | written against the Sept-20 grounding core; overlaps heavily with the current one, needs a clean port plus new tests |
 | `exp/ac-native-equities-risk-xray-20260919` | native-equities risk X-Ray pilot with `.BA` history routing and pilot document | experimental; worktree `vibe-native-equity-pilot-20260919` |
 
 Retired branches are archived as tags `archive/<date>/<branch>` on the fork.
@@ -116,3 +115,29 @@ ISIN-based .BA identity, allowed backtest evidence, and compaction evidence
 preservation before considering any generic upstream PR. Check open #1691
 (registry work) for overlap first. Only focused tests; no deployment for
 upstream PR preparation.
+
+## Provider identity, backtest evidence and microcompact (recovered 2026-10-09)
+
+Recovered from `feat/asistente-casa-provider-identity` as a clean port (archived tag
+`archive/20261009/feat/asistente-casa-provider-identity`):
+
+- **ISIN-verified `.BA` identity.** `portfolio_summary` rows from the `asistente-casa` connector carry
+  `provider_identity` / `underlying`; the grounding ledger locks a `.BA` symbol only when the provider is
+  Yahoo, resolution is `isin`, `verified` is true and `resolved_by_isin` equals the row ISIN. Other
+  connectors cannot smuggle an identity (normalization nulls it). A locked `.BA` identity must be consumed
+  with the exact qualified symbol; a bare ticker is not accepted for it.
+- **Backtest envelope is not evidence.** A backtest's `exit_code`, `elapsed_seconds` and raw stdout no
+  longer mint "observed" provenance through the generic numeric flattening (`ledger.ingest_tool_result`).
+- **Microcompact keeps compact evidence.** Tools with `preserve_during_microcompact`
+  (`portfolio_summary`, `technical_indicators`, `financial_rigor`, `backtest`) are skipped by layer-1
+  microcompact, alongside the replay lease.
+
+Deliberately discarded: admitting labelled-JSON stdout metrics of a backtest as evidence (numbers printed by
+model-authored code are unverifiable; use `technical_indicators`), the extra `vol20_ann`/`rsi14`/`macd`
+analysis aliases, and reading `2,639499655314571` as one number (conflicts with the current locale policy).
+Already absorbed in `main`: `.BA` regexes, venue and currency, Yahoo routing, precision-aware matching and
+inline formulas.
+
+Upstream-generic candidates: the microcompact opt-in attribute (`preserve_during_microcompact`) and the rule
+that a code-execution tool's envelope bookkeeping must not become grounding evidence. The ISIN identity is
+Asistente Casa specific and stays in the fork.

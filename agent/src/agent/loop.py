@@ -535,6 +535,7 @@ def _microcompact(
     target_tokens: Optional[int] = None,
     measure: Optional[Callable[[list], int]] = None,
     preserve_tool_call_ids: Optional[set[str]] = None,
+    preserve_tools: Optional[set[str]] = None,
 ) -> list:
     """Layer 1: prune old tool results, keeping the most recent N intact.
 
@@ -548,6 +549,8 @@ def _microcompact(
         measure: Prompt-size function for ``target_tokens``.
         preserve_tool_call_ids: Replayed results no successful model request
             has carried yet; they are never cleared here.
+        preserve_tools: Tool names whose compact, high-value evidence is never
+            cleared here (``BaseTool.preserve_during_microcompact``).
 
     Returns:
         Names of tools whose every result just became unreadable (legacy
@@ -562,6 +565,8 @@ def _microcompact(
         if target_tokens is not None and measure is not None and measure(messages) <= target_tokens:
             break
         if preserve_tool_call_ids and msg.get("tool_call_id") in preserve_tool_call_ids:
+            continue
+        if preserve_tools and str(msg.get("name") or "") in preserve_tools:
             continue
         content = msg.get("content", "")
         # Skip a result already cleared: the marker is itself >100 chars, so
@@ -3369,11 +3374,17 @@ class AgentLoop:
         if preserve_tool_call_ids is None:
             # A replay still owed one model request is never cleared by default.
             preserve_tool_call_ids = self._readonly_replay_visibility_pending
+        preserve_tools = {
+            name
+            for name, tool in getattr(self.registry, "_tools", {}).items()
+            if getattr(tool, "preserve_during_microcompact", False)
+        }
         _microcompact(
             messages,
             target_tokens=target_tokens,
             measure=measure,
             preserve_tool_call_ids=preserve_tool_call_ids,
+            preserve_tools=preserve_tools,
         )
         unreadable_tools = self._unblock_lost_readonly_results(messages, readable_before)
         if unreadable_tools:

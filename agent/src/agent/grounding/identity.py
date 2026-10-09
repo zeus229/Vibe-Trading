@@ -600,8 +600,10 @@ class _IdentityMixin:
         it names rather than being read as a silent venue rewrite.
 
         A bare code carries no venue, so it is accepted only when exactly one
-        locked identity has it as its base. That uniqueness — not a list of
-        which tools are allowed to use one — is what makes a bare ticker safe.
+        locked identity has it as its base. Buenos Aires listings are stricter:
+        a locked `.BA` identity must be consumed with the exact provider-qualified
+        symbol because the same bare ticker can route to an unrelated default
+        market before the resolver has a chance to correct it.
         The list this replaced named nine tools while eleven documented
         argument spellings across the registry were bare or prefixed, so the
         tools' own schema examples were being rejected.
@@ -622,7 +624,9 @@ class _IdentityMixin:
         matches = [
             symbol
             for symbol in authorized
-            if "." in symbol and symbol.rsplit(".", 1)[0] == requested
+            if "." in symbol
+            and not symbol.endswith(".BA")
+            and symbol.rsplit(".", 1)[0] == requested
         ]
         return matches[0] if len(matches) == 1 else None
 
@@ -666,6 +670,77 @@ class _IdentityMixin:
             self.persist()
             return True
         return False
+
+    def _ingest_trusted_portfolio_identities(
+        self,
+        payload: Mapping[str, Any] | None,
+        call_id: str,
+    ) -> None:
+        """Lock verified local provider identities returned by portfolio_summary.
+
+        Asistente Casa is authoritative for the held local instrument. Only
+        provider identities resolved offline from the same local ISIN are
+        trusted here. Persisted/unverified mappings and CEDEAR underlying
+        aliases remain context only and never authorize market-sensitive tools.
+        """
+        if not isinstance(payload, Mapping):
+            return
+        context = payload.get("context")
+        if not isinstance(context, Mapping):
+            return
+        holdings = context.get("holdings_native")
+        if not isinstance(holdings, Mapping):
+            return
+
+        for rows in holdings.values():
+            if not isinstance(rows, list):
+                continue
+            for row in rows:
+                if not isinstance(row, Mapping):
+                    continue
+                instrument_type = str(row.get("source_instrument_type") or "").strip().upper()
+                if instrument_type not in {"ACCIONES", "CEDEARS"}:
+                    continue
+                if str(row.get("market") or "").strip().upper() != "BYMA":
+                    continue
+                isin = str(row.get("isin") or "").strip().upper()
+                identity = row.get("provider_identity")
+                if not isin or not isinstance(identity, Mapping):
+                    continue
+                if str(identity.get("provider") or "").strip().casefold() != "yahoo":
+                    continue
+                if str(identity.get("resolution") or "").strip().casefold() != "isin":
+                    continue
+                if identity.get("verified") is not True:
+                    continue
+                if str(identity.get("resolved_by_isin") or "").strip().upper() != isin:
+                    continue
+                symbol = _normalize_symbol(identity.get("symbol"))
+                if not symbol.endswith(".BA"):
+                    continue
+
+                key = f"portfolio:{isin}"
+                existing = self._identities.get(key)
+                self._identities[key] = IdentityRecord(
+                    query=isin,
+                    status="locked",
+                    symbol=symbol,
+                    venue=_infer_venue(symbol),
+                    instrument_type="listed_security",
+                    currency=_infer_currency(symbol),
+                    source_tool_call_id=call_id,
+                    source=["asistente-casa:provider_identity"],
+                    candidates=[{
+                        "symbol": symbol,
+                        "market": "BYMA",
+                        "source": "asistente-casa",
+                        "isin": isin,
+                    }],
+                    version=(existing.version + 1) if existing else 1,
+                )
+                self._identity_required = True
+                self._buffer_output = True
+                self._session_symbols.add(symbol)
 
     def _begin_resolution(self, query: str, call_id: str) -> None:
         """Enter unresolved state before the resolver executes."""
