@@ -1734,6 +1734,26 @@ class AgentLoop:
                             else self._grounding.validate_final_answer(final_content)
                         )
                         if not validation.valid:
+                            repaired = self._grounding.repair_undeclared_attribution(
+                                final_content, validation
+                            )
+                            if repaired is not None:
+                                recheck = self._grounding.revalidate(repaired)
+                                if recheck.valid:
+                                    trace.write({
+                                        "type": "answer_repaired",
+                                        "iter": current_iter,
+                                        "issues": validation.issues,
+                                        "repair": "figure_undeclared_canonical_attribution",
+                                    })
+                                    react_trace.append({
+                                        "type": "answer_repaired",
+                                        "issues": validation.issues,
+                                        "repair": "figure_undeclared_canonical_attribution",
+                                    })
+                                    final_content = repaired
+                                    validation = recheck
+                        if not validation.valid:
                             # A draft whose only defect is a missing provenance
                             # word (source / currency / symbol suffix) gets the
                             # word appended, not another multi-minute model round.
