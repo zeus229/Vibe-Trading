@@ -89,6 +89,7 @@ from src.api.helpers import (  # noqa: F401, E402
     _coerce_float,
     _coerce_int,
     _ensure_agent_env_file,
+    _forwarded_allow_ips,
     _format_env_value,
     _FRONTEND_DIST,
     _is_configured_secret,
@@ -380,7 +381,9 @@ def serve_main(argv: list[str] | None = None) -> int:
     install_access_log_redaction_filter()
 
     try:
-        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+        # Trusted reverse proxies only: VIBE_TRADING_FORWARDED_ALLOW_IPS.
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info",
+                    proxy_headers=True, forwarded_allow_ips=_forwarded_allow_ips())
     finally:
         if vite_proc:
             vite_proc.terminate()
