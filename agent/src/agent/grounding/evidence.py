@@ -1499,7 +1499,7 @@ class _EvidenceMixin:
         remaining = _MAX_GENERIC_EVIDENCE
         timestamp_fields = (*_TIMESTAMP_FIELDS, "latest_date", "as_of")
         payload_scope = _declares_currency_scope(payload)
-        attribution_context = self._attribution_context(tool_name, payload)
+        attribution_context = self._attribution_context(tool_name, payload, arguments)
 
         def visit(
             value: Any,
@@ -1606,11 +1606,19 @@ class _EvidenceMixin:
 
 
     @staticmethod
-    def _attribution_context(tool_name: str, payload: Mapping[str, Any]) -> dict[str, str] | None:
-        """Return unique period/block metadata for canonical portfolio attribution."""
-        if tool_name != "portfolio_attribution":
+    def _attribution_context(
+        tool_name: str, payload: Mapping[str, Any], arguments: Mapping[str, Any]
+    ) -> dict[str, str] | None:
+        """Retain exact request and unique result scope for attribution evidence."""
+        if tool_name != "mcp_asistente_casa_consultar_attribution_cartera_scope":
             return None
-        found: dict[str, set[str]] = {key: set() for key in ("start_date", "end_date", "asset_type")}
+        found: dict[str, set[str]] = {
+            key: set()
+            for key in (
+                "start_date", "end_date", "requested_start_date", "requested_end_date",
+                "effective_start_date", "effective_end_date", "asset_type",
+            )
+        }
         def walk(value: Any) -> None:
             if isinstance(value, Mapping):
                 for key, item in value.items():
@@ -1622,9 +1630,29 @@ class _EvidenceMixin:
                 for item in value:
                     walk(item)
         walk(payload)
-        if not all(len(found[key]) == 1 for key in found):
+        requested_block = str(arguments.get("asset_type") or "").strip().upper()
+        requested_period = str(arguments.get("period") or "").strip().casefold()
+        result_data = payload.get("data")
+        if (not all(len(found[key]) == 1 for key in found)
+                or requested_block not in {"ALL", "ACCIONES", "CEDEARS", "BONOS", "FCI"}
+                or requested_period != "1r"
+                or next(iter(found["asset_type"])).upper() != requested_block
+                or not isinstance(result_data, Mapping)
+                or result_data.get("status") != "fresh"
+                or result_data.get("ok") is not True
+                or result_data.get("boundary_adjustments") != []):
             return None
-        return {key: next(iter(values)) for key, values in found.items()}
+        dates = {key: next(iter(values)) for key, values in found.items() if key != "asset_type"}
+        if (dates["start_date"] != dates["requested_start_date"]
+                or dates["start_date"] != dates["effective_start_date"]
+                or dates["end_date"] != dates["requested_end_date"]
+                or dates["end_date"] != dates["effective_end_date"]):
+            return None
+        return {
+            **{key: next(iter(values)) for key, values in found.items()},
+            "request_period": requested_period,
+            "request_asset_type": requested_block,
+        }
 
     def _ingest_run_dir_ohlc_csvs(self) -> None:
         """Register OHLC rows from per-symbol CSVs the run wrote via bash+yfinance.

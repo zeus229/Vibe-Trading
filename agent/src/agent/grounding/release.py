@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import math
 import re
-from decimal import Decimal
+from datetime import date
 from typing import Any, Iterable, Sequence
 
 from src.agent.grounding.identity import (
@@ -727,15 +728,106 @@ class _ReleaseMixin:
             return None
         return content.rstrip() + "\n\n" + note
 
+    @staticmethod
+    def _attribution_report_context(content: str, figure: Figure) -> tuple[str, str] | None:
+        """Resolve a canonical daily report's explicit block heading and close date.
+
+        This accepts only a single ``Fecha de referencia`` declaring a complete
+        canonical close and a structural block heading inside ``Qué explicó el
+        resultado``. A ticker or a nearby value alone never establishes scope.
+        """
+        lines = content.splitlines()
+        line_index = content.count("\n", 0, figure.start)
+        section_matches = [
+            (index, len(match.group(1)))
+            for index, line in enumerate(lines)
+            if (match := re.match(r"^(#{1,6})\s*qu[eé]\s+explic[oó]\s+el\s+resultado\s*$", line.strip(), re.I))
+        ]
+        if len(section_matches) != 1:
+            return None
+        section_start, section_level = section_matches[0]
+        section_end = len(lines)
+        for index in range(section_start + 1, len(lines)):
+            heading = re.match(r"^(#{1,6})\s+", lines[index].strip())
+            if heading and len(heading.group(1)) <= section_level:
+                section_end = index
+                break
+        if not section_start < line_index < section_end:
+            return None
+        # The enclosing document must be explicitly a daily close report.
+        preamble = "\n".join(lines[:section_start]).casefold()
+        if "informe diario" not in preamble or "cierre" not in preamble:
+            return None
+
+        reference_lines = [
+            line for line in lines
+            if re.search(r"fecha\s+de\s+referencia", line, re.I)
+        ]
+        if len(reference_lines) != 1:
+            return None
+        reference = reference_lines[0]
+        if not re.search(r"cierre\s+can[oó]nico\s+completo", reference, re.I):
+            return None
+        iso = re.search(r"\b(20\d{2})-(\d{2})-(\d{2})\b", reference)
+        if iso:
+            close_date = f"{iso.group(1)}-{iso.group(2)}-{iso.group(3)}"
+        else:
+            spanish = re.search(
+                r"\b(\d{1,2})\s+de\s+(enero|febrero|marzo|abril|mayo|junio|"
+                r"julio|agosto|septiembre|octubre|noviembre|diciembre)\s+de\s+(20\d{2})\b",
+                reference,
+                re.I,
+            )
+            if not spanish:
+                return None
+            months = {
+                "enero": 1, "febrero": 2, "marzo": 3, "abril": 4,
+                "mayo": 5, "junio": 6, "julio": 7, "agosto": 8,
+                "septiembre": 9, "octubre": 10, "noviembre": 11, "diciembre": 12,
+            }
+            try:
+                close_date = date(
+                    int(spanish.group(3)), months[spanish.group(2).casefold()], int(spanish.group(1))
+                ).isoformat()
+            except ValueError:
+                return None
+        try:
+            close_date = date.fromisoformat(close_date).isoformat()
+        except ValueError:
+            return None
+
+        block = None
+        for index in range(section_start + 1, line_index + 1):
+            raw = lines[index].strip()
+            match = re.match(r"^En\s+(ACCIONES|CEDEARS)\b.*:\s*$", raw, re.I)
+            if match:
+                block = match.group(1).upper()
+                continue
+            match = re.match(r"^#{1,6}\s+(ACCIONES|CEDEARS)\s*:?\s*$", raw, re.I)
+            if match:
+                block = match.group(1).upper()
+                continue
+            heading = re.match(r"^#{1,6}\s+", raw)
+            if heading:
+                block = None
+                continue
+            # Another explicit ``En …:`` subsection invalidates the old scope.
+            if re.match(r"^En\s+.+:\s*$", raw, re.I):
+                block = None
+        if block is None:
+            return None
+        return block, close_date
+
     def repair_undeclared_attribution(
         self, content: str, validation: ValidationResult
     ) -> str | None:
         """Declare fully identified canonical contributions, then let the gate recheck them.
 
-        This is intentionally limited to ``figure_undeclared`` claims explicitly
-        written as percentage points. The MCP leaf, exact instrument, block and
-        full measurement period must all be uniquely recoverable from this
-        session's canonical ``portfolio_attribution`` result.
+        This is intentionally limited to daily-close ``figure_undeclared``
+        claims whose ticker is explicit on the claim line, whose block is bound
+        by a structural heading, and whose close date is declared once for the
+        report. The exact requested interval and scope must agree with the MCP
+        result in this session.
         """
         if not validation.issues or any(i.get("code") != "figure_undeclared" for i in validation.issues):
             return None
@@ -752,33 +844,44 @@ class _ReleaseMixin:
             if figure is None:
                 return None
             claim_end = content.find("\n", span[1])
-            claim = content[content.rfind("\n", 0, span[0]) + 1:claim_end if claim_end >= 0 else len(content)]
-            # The number scanner keeps prose units outside Figure.text. Accept only
-            # explicit percentage-point wording; a percent sign is a different unit.
-            if "%" in claim or not re.search(r"(?i)(?:\bpp\b|puntos?\s+porcentuales?)", claim):
+            line_start = content.rfind("\n", 0, span[0]) + 1
+            claim = content[line_start:claim_end if claim_end >= 0 else len(content)]
+            tail = content[span[1]:claim_end if claim_end >= 0 else len(content)]
+            tail = tail.replace("*", "").strip()
+            if "%" in claim or not re.match(
+                r"(?i)^(?:puntos?\s+porcentuales?|percentage\s+points?|pp)\b", tail
+            ):
                 return None
+            report_context = self._attribution_report_context(content, figure)
+            if report_context is None:
+                return None
+            report_block, report_date = report_context
             candidates = []
             for record in self._evidence:
                 context = record.attribution_context or {}
-                if (record.status == "observed" and record.tool == "portfolio_attribution"
+                if (record.status == "observed"
+                        and record.tool == "mcp_asistente_casa_consultar_attribution_cartera_scope"
                         and record.call_id
                         and re.fullmatch(r"data\.positions\[\d+\]\.contribution_pct", record.field)
                         and record.symbol and (not issue_symbol or record.symbol == issue_symbol)
                         and record.identity_scope == "entity"
                         and record.value is not None and context.get("asset_type")
                         and context.get("start_date") and context.get("end_date")
-                        and float(record.value) == figure.value
-                        and (float(record.value) < 0) == (figure.value < 0)
-                        and Decimal(figure.digits) == abs(Decimal(str(record.value)))):
+                        and context.get("request_period") == "1r"
+                        and context.get("request_asset_type") == report_block
+                        and context.get("asset_type", "").upper() == report_block
+                        and context.get("end_date") == report_date
+                        and self._within_written_precision(figure, figure.value, float(record.value))
+                        and math.copysign(1.0, float(record.value))
+                        == math.copysign(1.0, figure.value)):
                     candidates.append(record)
             if len(candidates) != 1:
                 return None
             record = candidates[0]
             context = record.attribution_context or {}
             symbol = record.symbol
-            if (not re.search(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", claim, re.I)
-                    or context["asset_type"].casefold() not in claim.casefold()
-                    or context["start_date"] not in claim or context["end_date"] not in claim):
+            if (not issue_symbol or issue_symbol != symbol
+                    or not re.search(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", claim, re.I)):
                 return None
             ref = f"{record.call_id}::{record.field}"
             # Do not alter any existing declarations or duplicate a declaration.
@@ -786,7 +889,7 @@ class _ReleaseMixin:
                 return None
             declarations.append(
                 f"{figure.text} | observed | canonical {context['asset_type']} contribution for "
-                f"{context['start_date']} to {context['end_date']} | {ref}"
+                f"daily {context['start_date']} to {context['end_date']} {context['asset_type']} | {ref}"
             )
         insertion = block.spans[0][1] - 3
         return content[:insertion] + "\n".join(declarations) + "\n" + content[insertion:]
