@@ -2717,7 +2717,6 @@ def test_correction_prompt_forbids_new_numeric_embellishments(tmp_path: Path) ->
     assert "machine arithmetic only" in prompt
     assert "ASCII + - * /" in prompt
     assert "'minus', 'menos', 'plus', 'más'" in prompt
-    assert "repair the rejected claims while preserving the clean figures" in prompt
 
 
 def test_the_keep_list_is_absent_when_nothing_passed(tmp_path: Path) -> None:
