@@ -35,7 +35,7 @@ from urllib.request import Request, urlopen
 
 import pandas as pd
 
-from backtest.risk_xray import compute_risk_xray
+from backtest.risk_xray import MIN_HISTORY_DAYS, compute_risk_xray
 from src.agent.tools import BaseTool
 from src.config.accessor import get_env_value
 
@@ -197,7 +197,9 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         "'mis datos reales', or the account already loaded through the "
         "asistente-casa connector: this tool resolves holdings, weights and "
         "canonical persisted price history itself — the model does NOT supply "
-        "symbols or weights, and must NOT call search_symbol/fetch_market_data/"
+        "symbols or weights. For requests such as 'últimas N ruedas' / 'last N "
+        "trading sessions', pass lookback_sessions=N exactly; do not translate N "
+        "into calendar days. The model must NOT call search_symbol/fetch_market_data/"
         "get_market_data first. Currently validated for ACCIONES (Argentine "
         "equities) and CEDEARS, analyzed as separate scopes. "
         "IMPORTANT ROUTING RULES: this result is deterministic for the same "
@@ -225,7 +227,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "type": "string",
                 "description": (
                     "Optional YYYY-MM-DD start date. Defaults to 120 calendar days "
-                    "before end_date. Mutually exclusive with horizon. This default "
+                    "before end_date. Mutually exclusive with horizon and lookback_sessions. This default "
                     "is a Risk X-Ray convenience window, not the start of persisted "
                     "history -- use asistente_casa_market_history_coverage for "
                     "'since when do you have data' questions."
@@ -234,6 +236,17 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             "end_date": {
                 "type": "string",
                 "description": "Optional YYYY-MM-DD end date. Defaults to today.",
+            },
+            "lookback_sessions": {
+                "type": "integer",
+                "minimum": 2,
+                "description": (
+                    "Optional exact number of most recent shared persisted trading sessions "
+                    "to analyze, ending at end_date. Dynamic: use the user-requested value "
+                    "(for example 21, 42, 63, 126). Mutually exclusive with start_date and "
+                    "horizon. Sessions are selected only after strict cross-symbol calendar "
+                    "alignment; no weekends/holidays are synthesized and no forward-fill is used."
+                ),
             },
             "horizon": {
                 "type": "string",
@@ -245,7 +258,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                     "date (from the coverage endpoint), i.e. the earliest date for "
                     "which every symbol in scope has an aligned observation -- use "
                     "this for 'analyze since inception' portfolio-level requests. "
-                    "Mutually exclusive with start_date."
+                    "Mutually exclusive with start_date and lookback_sessions."
                 ),
             },
         },
@@ -283,11 +296,22 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         start_raw = kwargs.get("start_date")
         end_raw = kwargs.get("end_date")
         horizon_raw = kwargs.get("horizon")
+        lookback_raw = kwargs.get("lookback_sessions")
         horizon = str(horizon_raw).strip().lower().replace("-", "_") if horizon_raw else None
         if horizon and horizon not in _SUPPORTED_HORIZONS:
             raise ValueError(f"horizon {horizon_raw!r} is not supported; use 1Y, YTD, or since_inception")
+        if lookback_raw is not None:
+            if isinstance(lookback_raw, bool) or not isinstance(lookback_raw, int):
+                raise ValueError("lookback_sessions must be an integer")
+            if lookback_raw < 2:
+                raise ValueError("lookback_sessions must be at least 2")
+            lookback_sessions: int | None = lookback_raw
+        else:
+            lookback_sessions = None
         if horizon and start_raw:
             raise ValueError("start_date and horizon are mutually exclusive")
+        if lookback_sessions is not None and (start_raw or horizon):
+            raise ValueError("lookback_sessions is mutually exclusive with start_date and horizon")
 
         base_url, api_key = _env_credentials()
 
@@ -307,15 +331,34 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         }
 
         end = date.fromisoformat(str(end_raw)) if end_raw else date.today()
-        start = self._resolve_start(
-            start_raw=start_raw,
-            horizon=horizon,
-            end=end,
-            symbols=symbols,
-            asset_type=asset_type,
-            base_url=base_url,
-            api_key=api_key,
-        )
+        coverage_earliest_common: date | None = None
+        if lookback_sessions is not None:
+            coverage = _fetch_coverage(
+                base_url, api_key, symbols=symbols, asset_type=asset_type
+            )
+            earliest_common_raw = coverage.get("earliest_common_date")
+            if not earliest_common_raw:
+                raise ValueError(
+                    "Asistente Casa coverage has no earliest_common_date for this basket"
+                )
+            coverage_earliest_common = date.fromisoformat(str(earliest_common_raw))
+            estimated_calendar_days = max(
+                _DEFAULT_LOOKBACK_DAYS, lookback_sessions * 2 + 14
+            )
+            start = max(
+                coverage_earliest_common,
+                end - timedelta(days=estimated_calendar_days),
+            )
+        else:
+            start = self._resolve_start(
+                start_raw=start_raw,
+                horizon=horizon,
+                end=end,
+                symbols=symbols,
+                asset_type=asset_type,
+                base_url=base_url,
+                api_key=api_key,
+            )
         if start >= end:
             raise ValueError("start_date must be before end_date")
         start_date, end_date = start.isoformat(), end.isoformat()
@@ -362,33 +405,118 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             )
         history_response_complete = bool(history_payload.get("complete"))
 
-        series: dict[str, pd.Series] = {}
-        for symbol in symbols:
-            observations = history_payload.get("series", {}).get(symbol, {}).get("observations", [])
-            series[symbol] = pd.Series(
-                {pd.Timestamp(row["date"]): float(row["close"]) for row in observations},
-                name=symbol,
-                dtype=float,
+        min_observations = lookback_sessions or _MIN_RISK_OBSERVATIONS
+
+        def _panel(payload: Mapping[str, Any]):
+            series: dict[str, pd.Series] = {}
+            for symbol in symbols:
+                observations = payload.get("series", {}).get(symbol, {}).get("observations", [])
+                series[symbol] = pd.Series(
+                    {pd.Timestamp(row["date"]): float(row["close"]) for row in observations},
+                    name=symbol,
+                    dtype=float,
+                )
+            raw = pd.DataFrame(series).sort_index()
+            if raw.empty:
+                raise ValueError("historical close panel is empty")
+            # strict_intersection_no_fill remains the primary path. If the full
+            # basket has too few common dates, allow only an explicit high-value
+            # partial fallback; never forward-fill or synthesize history.
+            selected, selected_weights, meta = _select_risk_panel(
+                raw, weights, min_observations=min_observations
+            )
+            return raw, selected, selected_weights, meta
+
+        def _try_panel(payload: Mapping[str, Any]):
+            try:
+                return _panel(payload)
+            except ValueError as exc:
+                if lookback_sessions is None or "insufficient common" not in str(exc):
+                    raise
+                return None
+
+        first_panel = _try_panel(history_payload)
+        if first_panel is not None:
+            closes_raw, closes, risk_weights, coverage_meta = first_panel
+        if lookback_sessions is not None and (
+            first_panel is None or first_panel[3]["coverage_mode"] != "strict_full_basket"
+        ) and coverage_earliest_common is not None and start > coverage_earliest_common:
+            # The initial window was too short for N shared sessions: widen once
+            # to the authoritative earliest common date.
+            start = coverage_earliest_common
+            start_date = start.isoformat()
+            history_payload = _get(
+                base_url,
+                api_key,
+                "/inversiones/vibe/market-history",
+                {
+                    "symbols": ",".join(symbols),
+                    "asset_type": asset_type,
+                    "from": start_date,
+                    "to": end_date,
+                },
+            )
+            if history_payload.get("policy") != "persisted_only":
+                raise ValueError("Asistente Casa market-history policy is not persisted_only")
+            if str(history_payload.get("interval") or "").upper() != "1D":
+                raise ValueError("Asistente Casa market-history interval is not 1D")
+            if history_payload.get("unresolved_symbols") or history_payload.get("unsafe_symbols"):
+                raise ValueError("Asistente Casa historical coverage has unresolved/unsafe identities")
+            history_response_complete = bool(history_payload.get("complete"))
+            first_panel = _try_panel(history_payload)
+            if first_panel is not None:
+                closes_raw, closes, risk_weights, coverage_meta = first_panel
+        if first_panel is None:
+            available = len(
+                pd.DataFrame(
+                    {
+                        symbol: pd.Series(
+                            {
+                                pd.Timestamp(row["date"]): float(row["close"])
+                                for row in history_payload.get("series", {})
+                                .get(symbol, {})
+                                .get("observations", [])
+                            },
+                            dtype=float,
+                        )
+                        for symbol in symbols
+                    }
+                ).dropna(axis=0, how="any")
+            )
+            raise ValueError(
+                f"requested {lookback_sessions} shared trading sessions but only "
+                f"{available} are available for {asset_type}"
             )
 
-        closes_raw = pd.DataFrame(series).sort_index()
-        if closes_raw.empty:
-            raise ValueError("historical close panel is empty")
-
-        # strict_intersection_no_fill remains the primary path. If the full
-        # basket has too few common dates, allow only an explicit high-value
-        # partial fallback; never forward-fill or synthesize history.
         missing_by_symbol = {
             symbol: int(count) for symbol, count in closes_raw.isna().sum().items() if count
         }
         full_basket_common_date_count = len(closes_raw.dropna(axis=0, how="any"))
-        closes, risk_weights, coverage_meta = _select_risk_panel(closes_raw, weights)
         dropped_non_common_dates = len(closes_raw) - len(closes)
+        common_date_count_before_window = len(closes)
+        if lookback_sessions is not None:
+            closes = closes.tail(lookback_sessions)
 
         # ------------------------------------------------------------
         # Vibe deterministic Risk X-Ray
         # ------------------------------------------------------------
-        report = compute_risk_xray(closes, risk_weights, periods_per_year=252)
+        explicit_min_history = (
+            min(MIN_HISTORY_DAYS, lookback_sessions)
+            if lookback_sessions is not None
+            else MIN_HISTORY_DAYS
+        )
+        report = compute_risk_xray(
+            closes,
+            risk_weights,
+            periods_per_year=252,
+            min_history=explicit_min_history,
+        )
+        if lookback_sessions is not None and lookback_sessions < MIN_HISTORY_DAYS:
+            report.setdefault("warnings", []).append(
+                f"explicit lookback_sessions={lookback_sessions} is shorter than "
+                f"the default {MIN_HISTORY_DAYS}-session history filter; short-window "
+                "risk estimates may be less stable"
+            )
 
         result = {
             "status": "ok",
@@ -405,9 +533,24 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "position_snapshot_at": portfolio_payload.get("position_snapshot_at"),
                 "history_policy": history_payload.get("policy"),
                 "history_source_selection": history_payload.get("source_selection"),
-                "horizon": horizon or "default_120d",
-                "start_date": start_date,
-                "end_date": end_date,
+                "horizon": (
+                    "lookback_sessions"
+                    if lookback_sessions is not None
+                    else (horizon or "default_120d")
+                ),
+                "lookback_sessions": lookback_sessions,
+                "start_date": (
+                    closes.index[0].date().isoformat()
+                    if lookback_sessions is not None
+                    else start_date
+                ),
+                "end_date": (
+                    closes.index[-1].date().isoformat()
+                    if lookback_sessions is not None
+                    else end_date
+                ),
+                "history_fetch_start_date": start_date,
+                "requested_end_date": end_date,
                 "symbols": symbols,
                 "position_count": len(symbols),
                 "risk_position_count": len(coverage_meta["included_symbols"]),
@@ -423,6 +566,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "full_basket_dropped_non_common_dates": len(closes_raw) - full_basket_common_date_count,
                 "close_observations": len(closes),
                 "common_date_count": len(closes),
+                "common_date_count_before_window": common_date_count_before_window,
                 "dropped_non_common_dates": dropped_non_common_dates,
                 "missing_dates_by_symbol": missing_by_symbol,
                 "alignment_policy": "strict_intersection_no_fill_with_explicit_high_coverage_fallback",
@@ -433,6 +577,45 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             },
         }
         return json.dumps(result, ensure_ascii=False, indent=2, allow_nan=False)
+
+    @staticmethod
+    def _aligned_close_panel(
+        history_payload: Mapping[str, Any],
+        symbols: list[str],
+    ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int], int]:
+        """Build the strict shared-session close panel from persisted history."""
+        series: dict[str, pd.Series] = {}
+        for symbol in symbols:
+            observations = (
+                history_payload.get("series", {})
+                .get(symbol, {})
+                .get("observations", [])
+            )
+            if not observations:
+                raise ValueError(f"no historical observations for {symbol}")
+            series[symbol] = pd.Series(
+                {
+                    pd.Timestamp(row["date"]): float(row["close"])
+                    for row in observations
+                },
+                name=symbol,
+                dtype=float,
+            )
+
+        closes_raw = pd.DataFrame(series).sort_index()
+        if closes_raw.empty:
+            raise ValueError("historical close panel is empty")
+
+        missing_by_symbol = {
+            symbol: int(count)
+            for symbol, count in closes_raw.isna().sum().items()
+            if count
+        }
+        closes = closes_raw.dropna(axis=0, how="any")
+        if closes.empty:
+            raise ValueError("historical close panel has no common dates across symbols")
+        dropped_non_common_dates = len(closes_raw) - len(closes)
+        return closes_raw, closes, missing_by_symbol, dropped_non_common_dates
 
     @staticmethod
     def _resolve_start(
