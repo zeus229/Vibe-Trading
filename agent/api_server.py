@@ -28,7 +28,10 @@ for _s in ("stdout", "stderr"):
     if callable(_r):
         _r(encoding="utf-8", errors="replace")
 
+# ---------------------------------------------------------------------------
 # Extracted infrastructure — re-exported for route-module and test access
+# ---------------------------------------------------------------------------
+
 from src.api.security import (  # noqa: F401, E402
     _API_KEY,
     _CORS_ORIGINS,
@@ -66,6 +69,7 @@ from src.api.security import (  # noqa: F401, E402
     require_local_or_auth,
     require_settings_write_auth,
 )
+
 from src.api.models import (  # noqa: F401, E402
     Artifact,
     BacktestMetrics,
@@ -73,6 +77,7 @@ from src.api.models import (  # noqa: F401, E402
     RunInfo,
     RunResponse,
 )
+
 from src.api.helpers import (  # noqa: F401, E402
     AGENT_DIR,
     ENV_EXAMPLE_PATH,
@@ -85,7 +90,6 @@ from src.api.helpers import (  # noqa: F401, E402
     _coerce_int,
     _ensure_agent_env_file,
     _format_env_value,
-    _forwarded_allow_ips,
     _FRONTEND_DIST,
     _is_configured_secret,
     _is_spa_html_route,
@@ -97,6 +101,7 @@ from src.api.helpers import (  # noqa: F401, E402
     _validate_path_param,
     _write_env_values,
 )
+
 from src.api.state import (  # noqa: F401, E402
     _channel_bus,
     _channel_manager,
@@ -109,18 +114,21 @@ from src.api.state import (  # noqa: F401, E402
 console = Console()
 logger = logging.getLogger(__name__)
 
-from src.api.channels_routes import (  # noqa: E402
+from src.api.channels_routes import (  # noqa: F401, E402
     _start_channel_runtime,
     _stop_channel_runtime,
 )
-from src.api.scheduled_routes import (  # noqa: E402
+from src.api.scheduled_routes import (  # noqa: F401, E402
     _start_scheduled_research_executor,
     _stop_scheduled_research_executor,
+    _stop_scheduled_research_on_shutdown,
 )
+
 
 async def _run_startup_preflight() -> None:
     """Run preflight checks on server startup."""
     from src.preflight import run_preflight
+
     from src.config import migrate as _migrate
 
     try:
@@ -134,12 +142,6 @@ async def _run_startup_preflight() -> None:
     if get_env_config().agent_tuning.vibe_trading_channels_auto_start:
         await _start_channel_runtime()
 
-async def _stop_scheduled_research_on_shutdown() -> None:
-    """Stop the scheduled research executor on server shutdown."""
-    try:
-        await _stop_channel_runtime()
-    finally:
-        await _stop_scheduled_research_executor()
 
 @asynccontextmanager
 async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
@@ -150,6 +152,7 @@ async def _lifespan(_: FastAPI) -> AsyncIterator[None]:
     finally:
         await _stop_scheduled_research_on_shutdown()
 
+
 app = FastAPI(
     title="Vibe-Trading API",
     description="Vibe-Trading API: natural-language finance research, backtesting, and swarm workflows",
@@ -159,6 +162,7 @@ app = FastAPI(
     openapi_url=None,
     lifespan=_lifespan,
 )
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_CORS_ORIGINS,
@@ -170,9 +174,13 @@ app.middleware("http")(_reject_untrusted_loopback_host)
 app.middleware("http")(_spa_html_deep_link_fallback)
 app.middleware("http")(_apply_security_headers)
 
+
 # Route registration + re-exports
+
+# --- Runs ---
 from src.api.runs_routes import register_runs_routes  # noqa: E402
 register_runs_routes(app)
+
 from src.api.runs_routes import (  # noqa: F401, E402
     _load_json_file,
     _load_csv_to_dict,
@@ -180,25 +188,37 @@ from src.api.runs_routes import (  # noqa: F401, E402
 )
 from src.api.attribution_routes import register_attribution_routes  # noqa: E402
 register_attribution_routes(app)
+
+# --- Sessions ---
 from src.api.sessions_routes import register_sessions_routes  # noqa: E402
 register_sessions_routes(app)
+
 from src.api.sessions_routes import (  # noqa: F401, E402
     _goal_store,
     _live_action_frame_from_tool_result,
     _mandate_proposal_frame_from_tool_result,
 )
+
+# --- System ---
 from src.api.system_routes import register_system_routes  # noqa: E402
 register_system_routes(app)
+
 from src.api.system_routes import _terminate_current_process  # noqa: F401, E402
+
+# --- Settings ---
 from src.api.settings_routes import register_settings_routes  # noqa: E402
 register_settings_routes(app)
+
 from src.api.settings_routes import (  # noqa: F401, E402
     _baostock_supported,
     _baostock_installed,
     _load_llm_providers,
 )
+
+# --- Uploads ---
 from src.api.uploads_routes import register_uploads_routes  # noqa: E402
 register_uploads_routes(app)
+
 from src.api.uploads_routes import (  # noqa: F401, E402
     MAX_UPLOAD_SIZE,
     _BLOCKED_UPLOAD_EXT,
@@ -206,22 +226,36 @@ from src.api.uploads_routes import (  # noqa: F401, E402
     _SHADOW_ID_RE,
     _UPLOAD_CHUNK_SIZE,
 )
+
+# --- Channels ---
 from src.api.channels_routes import register_channels_routes  # noqa: E402
 register_channels_routes(app)
 from src.api.channels_config_routes import register_channels_config_routes  # noqa: E402
 register_channels_config_routes(app)
 from src.api.qveris_routes import qveris_router  # noqa: E402  # QVERIS-INTEGRATION
 app.include_router(qveris_router)  # QVERIS-INTEGRATION
-from src.api.channels_routes import ChannelPairingCommandRequest  # noqa: F401, E402
+
+from src.api.channels_routes import (  # noqa: F401, E402
+    ChannelPairingCommandRequest,
+)
+
+# --- Swarm ---
 from src.api.swarm_routes import register_swarm_routes  # noqa: E402
 register_swarm_routes(app)
+
 from src.api.swarm_routes import _get_swarm_runtime  # noqa: F401, E402
+
+# --- Live trading ---
 from src.api.live_routes import register_live_routes  # noqa: E402
 register_live_routes(app)
+
+# --- Read-only portfolio dashboard ---
 from src.api.portfolio_routes import register_portfolio_routes  # noqa: E402
 register_portfolio_routes(app)
+
 from src.api.connection_routes import register_connection_routes  # noqa: E402
 register_connection_routes(app)
+
 from src.api.live_routes import (  # noqa: F401, E402
     CommitMandateRequest,
     LiveHaltRequest,
@@ -247,20 +281,32 @@ from src.api.live_routes import (  # noqa: F401, E402
     _live_broker_adapter,
     _build_live_runner,
     _drive_runner,
+    _stop_live_runners,
     _connector_verify_cache,
     _check_connector_status,
 )
+
+# --- Alpha Zoo ---
 from src.api.alpha_routes import register_alpha_routes  # noqa: E402
 register_alpha_routes(app)
+
+# --- Options analysis ---
 from src.api.options_routes import register_options_routes  # noqa: E402
 register_options_routes(app)
+
+# --- Auth helpers (SSE tickets) ---
 from src.api.auth_routes import register_auth_routes  # noqa: E402
 register_auth_routes(app)
-# OpenBB Workspace agent bridge; no-op unless the optional extra is installed.
+
+# --- OpenBB Workspace agent bridge (GET /agents.json, POST /v1/query) ---
+# No-op unless the optional `openbb` extra is installed; self-reports either way.
 from src.openbb_bridge import try_register_openbb_routes  # noqa: E402  # OPENBB-WORKSPACE-INTEGRATION
 try_register_openbb_routes(app)
+
+# --- Scheduled research ---
 from src.api.scheduled_routes import register_scheduled_routes  # noqa: E402
 register_scheduled_routes(app)
+
 from src.api.scheduled_routes import (  # noqa: E402, F401
     CreateRunFromPlaybookRequest,
     CreateScheduledRunRequest,
@@ -271,6 +317,11 @@ from src.api.scheduled_routes import (  # noqa: E402, F401
     _get_scheduled_research_store,
     _scheduled_research_scheduler_enabled,
 )
+
+
+# ============================================================================
+# Main Entry Point
+# ============================================================================
 
 def serve_main(argv: list[str] | None = None) -> int:
     """Start the API server from CLI-style arguments."""
@@ -297,6 +348,7 @@ def serve_main(argv: list[str] | None = None) -> int:
 
     frontend_dist = Path(__file__).resolve().parent.parent / "frontend" / "dist"
     frontend_root = Path(__file__).resolve().parent.parent / "frontend"
+
     vite_proc = None
     if args.dev and frontend_root.exists():
         print("[dev] Starting Vite dev server on :5173 ...")
@@ -321,22 +373,20 @@ def serve_main(argv: list[str] | None = None) -> int:
     print("  Vibe-Trading Server")
     print(f"  http://127.0.0.1:{args.port}")
     print("=" * 50)
-    # Redact api_key=/ticket= values from Uvicorn's access log.
+
+    # Redact api_key=/ticket= values from Uvicorn's access log (it logs the full
+    # request line including the query string). Installed before run() so the
+    # filter is attached when Uvicorn configures its loggers.
     install_access_log_redaction_filter()
+
     try:
-        uvicorn.run(
-            app,
-            host=args.host,
-            port=args.port,
-            log_level="info",
-            proxy_headers=True,
-            forwarded_allow_ips=_forwarded_allow_ips(),
-        )
+        uvicorn.run(app, host=args.host, port=args.port, log_level="info")
     finally:
         if vite_proc:
             vite_proc.terminate()
             print("[dev] Vite stopped")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(serve_main())

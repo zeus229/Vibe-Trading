@@ -325,6 +325,18 @@ def _verdict_record_or_none(data: Any, job_id: str) -> Optional[VerdictRecord]:
         return None
 
 
+def contains_pdf_password(value: Any) -> bool:
+    """Return whether arbitrary job config contains the Email PDF secret key."""
+    if isinstance(value, dict):
+        return any(
+            str(key).casefold() == "pdf_password" or contains_pdf_password(item)
+            for key, item in value.items()
+        )
+    if isinstance(value, (list, tuple)):
+        return any(contains_pdf_password(item) for item in value)
+    return False
+
+
 @dataclass
 class ScheduledResearchJob:
     """Mutable persisted state for a scheduled research / backtest job.
@@ -381,8 +393,6 @@ class ScheduledResearchJob:
     delivery_target_ref: Optional[str] = None
     delivery_target_label: Optional[str] = None
     delivery_format: Optional[str] = None
-    # Whether a generated PDF must be password-protected. The password itself
-    # belongs to private Email channel configuration and is never persisted here.
     protect_pdf: bool = False
     delivery: DeliveryRecord = field(default_factory=DeliveryRecord)
     last_verdict: Optional[VerdictRecord] = None
@@ -394,6 +404,12 @@ class ScheduledResearchJob:
             A dict containing all job fields, with ``status`` as its string
             value.
         """
+        if contains_pdf_password(self.config):
+            raise ValueError("scheduled research config must not contain pdf_password")
+        if not isinstance(self.protect_pdf, bool):
+            raise TypeError("'protect_pdf' must be a boolean")
+        if self.protect_pdf and (self.delivery_channel != "email" or self.delivery_format != "pdf"):
+            raise ValueError("'protect_pdf' requires PDF email delivery")
         return {
             "id": self.id,
             "prompt": self.prompt,
@@ -490,6 +506,8 @@ class ScheduledResearchJob:
             raise TypeError("'end_at' must be an integer (epoch ms) or null")
         raw_config = data.get("config")
         config: Dict[str, Any] = raw_config if isinstance(raw_config, dict) else {}
+        if contains_pdf_password(config):
+            raise ValueError("scheduled research config must not contain pdf_password")
         delivery_channel = data.get("delivery_channel")
         delivery_target = data.get("delivery_target")
         delivery_target_ref = data.get("delivery_target_ref")
@@ -500,8 +518,8 @@ class ScheduledResearchJob:
         protect_pdf = data.get("protect_pdf", False)
         if not isinstance(protect_pdf, bool):
             raise TypeError("'protect_pdf' must be a boolean")
-        if protect_pdf and delivery_format != "pdf":
-            raise ValueError("'protect_pdf' requires delivery_format='pdf'")
+        if protect_pdf and (delivery_channel != "email" or delivery_format != "pdf"):
+            raise ValueError("'protect_pdf' requires PDF email delivery")
         for name, value in (
             ("delivery_channel", delivery_channel),
             ("delivery_target", delivery_target),

@@ -375,6 +375,8 @@ class _ReleaseMixin:
                     "written, where they stand: " + keep + ".",
                     "Do not infer that an unlisted figure passed. Every rejected issue is shown "
                     "either in the detailed list or in the compact repair queue above.",
+                    "Cutting them or swapping whole sections for qualitative prose is not "
+                    "a fix; repair the rejected claims while preserving the clean figures.",
                 ]
             )
         lines.extend(

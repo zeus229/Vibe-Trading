@@ -2662,6 +2662,7 @@ def test_the_sweep_does_not_key_on_a_single_digit(tmp_path: Path) -> None:
     assert "跌破 5 日均线，关注 5 只同类基金" in released
     assert "※ 略去 1 处" in released
 
+
 # ---------------------------------------------------------------------------
 # The correction prompt's keep list (#1622 post-failure action semantics)
 # ---------------------------------------------------------------------------
@@ -2716,6 +2717,7 @@ def test_correction_prompt_forbids_new_numeric_embellishments(tmp_path: Path) ->
     assert "machine arithmetic only" in prompt
     assert "ASCII + - * /" in prompt
     assert "'minus', 'menos', 'plus', 'más'" in prompt
+    assert "repair the rejected claims while preserving the clean figures" in prompt
 
 
 def test_the_keep_list_is_absent_when_nothing_passed(tmp_path: Path) -> None:
@@ -2743,3 +2745,18 @@ def test_the_keep_list_caps_and_counts_the_rest(tmp_path: Path) -> None:
     assert "and 3 more" in keep
     assert "11.23" in keep
     assert "11.24" not in keep
+
+
+def test_keep_list_does_not_endorse_rejections_hidden_by_the_feedback_cap(tmp_path: Path) -> None:
+    ledger = _ledger(tmp_path)
+    bad_values = [f"{90 + i / 100:.2f}" for i in range(30)]
+    draft = HDR + " Unverified metrics: " + ", ".join(bad_values) + "." + _block(HDR_ROW)
+    result = ledger.validate_final_answer(draft)
+    assert len(result.issues) > 24
+    prompt = ledger.correction_prompt(result)
+    keep = next(line for line in prompt.splitlines() if "checked clean" in line)
+    assert "1.171" in keep
+    assert all(value not in keep for value in bad_values)
+    assert "Every other measured figure" not in prompt
+    assert "only the figures listed above need work" not in prompt
+    assert "EVERY remaining issue below is also rejected" in prompt

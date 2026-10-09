@@ -164,6 +164,10 @@ class ValidationResult:
 
     ``released_text`` is the draft without its declaration block, which is a
     contract with the gate and never reaches the user.
+
+    ``passed_figures`` names the measured figures the gate checked and let
+    through, as written, so the correction prompt can tell the model what to
+    keep, not only what to fix.
     """
 
     valid: bool
@@ -497,12 +501,12 @@ def _formula_in_note(note: str) -> tuple[float, list[float], ast.Expression] | N
         parts = [piece for part in parts for piece in part.split(separator)]
     # A formula followed by its explanation ("(a − b) / b，自高点回撤"). A bare
     # "," is not split: it groups thousands inside a formula.
-    for separator in ("，", "；", "：", "; ", ", "):
+    for separator in ("，", "；", "：", ":", "; ", ", "):
         parts = [piece for part in parts for piece in part.split(separator)]
     candidates.extend(part for part in parts if part.strip())
     # Only once the note as written fails: its words removed, whole and in parts.
     unlabelled = _without_labels(note)
-    for separator in ("≈", "≒", "＝", "=", "→", "->", "，", "；", "：", "; ", ", "):
+    for separator in ("≈", "≒", "＝", "=", "→", "->", "，", "；", "：", ":", "; ", ", "):
         unlabelled = " \n ".join(unlabelled.split(separator))
     candidates.extend(part for part in unlabelled.split(" \n ") if part.strip())
     for candidate in candidates:

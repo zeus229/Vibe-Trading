@@ -647,17 +647,17 @@ class ScheduledResearchExecutor:
             self._store.upsert(current, validate=False)
 
             try:
-                if job.delivery_format is None:
-                    receipt = await self._channel_sender(
-                        job.delivery_channel, job.delivery_target, text
-                    )
-                elif job.protect_pdf:
+                if job.protect_pdf:
                     receipt = await self._channel_sender(
                         job.delivery_channel,
                         job.delivery_target,
                         text,
                         job.delivery_format,
                         True,
+                    )
+                elif job.delivery_format is None:
+                    receipt = await self._channel_sender(
+                        job.delivery_channel, job.delivery_target, text
                     )
                 else:
                     receipt = await self._channel_sender(

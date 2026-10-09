@@ -114,6 +114,7 @@ export function Scheduled() {
   const [deliveryTargetRef, setDeliveryTargetRef] = useState<string | null>(null);
   const [deliveryFormat, setDeliveryFormat] = useState<EmailDeliveryFormat>("");
   const [protectPdf, setProtectPdf] = useState(false);
+  const [emailPdfPasswordConfigured, setEmailPdfPasswordConfigured] = useState(false);
   const [saving, setSaving] = useState(false);
   const [composerError, setComposerError] = useState<string | null>(null);
 
@@ -172,6 +173,22 @@ export function Scheduled() {
     };
   }, []);
 
+  useEffect(() => {
+    let cancelled = false;
+    void api.getChannelsConfig()
+      .then((config) => {
+        if (!cancelled) {
+          setEmailPdfPasswordConfigured(config.channels.email?.pdf_password_configured === true);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) setEmailPdfPasswordConfigured(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
   // Auto-disarm an armed delete after a few seconds (blur is unreliable on
   // Safari/iOS, where buttons do not take focus on click).
   useEffect(() => {
@@ -216,7 +233,7 @@ export function Scheduled() {
     setDeliveryTarget(run.delivery_target ?? "");
     setDeliveryTargetRef(run.delivery_target_ref);
     setDeliveryFormat(run.delivery_format === "html" || run.delivery_format === "pdf" ? run.delivery_format : "");
-    setProtectPdf(run.protect_pdf ?? false);
+    setProtectPdf(run.protect_pdf === true);
     setComposerError(null);
 
     if (cadence.kind === "daily") {
@@ -263,7 +280,7 @@ export function Scheduled() {
         delivery_channel: channel || null,
         delivery_target: channel ? target : null,
         delivery_format: channel === "email" && deliveryFormat ? deliveryFormat : null,
-        protect_pdf: channel === "email" && deliveryFormat === "pdf" ? protectPdf : false,
+        protect_pdf: channel === "email" && deliveryFormat === "pdf" && protectPdf,
         delivery_target_ref: channel ? deliveryTargetRef : null,
       };
       if (editingId) {
@@ -377,7 +394,6 @@ export function Scheduled() {
     .sort((a, b) => a.display_name.localeCompare(b.display_name));
 
   const selectedChannel = deliveryChannel ? channelStatus[deliveryChannel] : undefined;
-  const emailPdfPasswordConfigured = channelStatus.email?.pdf_password_configured === true;
   const selectedChannelIsAvailable = configuredDeliveryChannels.some(
     (channel) => channel.name === deliveryChannel,
   );
@@ -526,11 +542,11 @@ export function Scheduled() {
                   setDeliveryTarget("");
                   setDeliveryTargetRef(null);
                 }
+                setDeliveryChannel(nextChannel);
                 if (nextChannel !== "email") {
                   setDeliveryFormat("");
                   setProtectPdf(false);
                 }
-                setDeliveryChannel(nextChannel);
               }}
               className={fieldClass}
             >
@@ -615,9 +631,9 @@ export function Scheduled() {
                 id="scheduled-delivery-format"
                 value={deliveryFormat}
                 onChange={(e) => {
-                  const value = e.target.value as EmailDeliveryFormat;
-                  setDeliveryFormat(value);
-                  if (value !== "pdf") setProtectPdf(false);
+                  const nextFormat = e.target.value as EmailDeliveryFormat;
+                  setDeliveryFormat(nextFormat);
+                  if (nextFormat !== "pdf") setProtectPdf(false);
                 }}
                 className={fieldClass}
               >
@@ -643,10 +659,8 @@ export function Scheduled() {
                   <span>{t("scheduled.deliveryProtectPdf")}</span>
                 </label>
               )}
-              {deliveryFormat === "pdf" && !emailPdfPasswordConfigured && (
-                <p className={hintClass}>
-                  {t("scheduled.deliveryProtectPdfUnavailable")}
-                </p>
+              {deliveryFormat === "pdf" && !emailPdfPasswordConfigured && !protectPdf && (
+                <p className={hintClass}>{t("scheduled.deliveryProtectPdfUnavailable")}</p>
               )}
             </div>
           )}
