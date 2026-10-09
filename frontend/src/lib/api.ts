@@ -766,7 +766,6 @@ export interface ScheduledRun {
   protect_pdf: boolean;
   delivery_target_ref: string | null;
   delivery_target_label: string | null;
-  protect_pdf: boolean;
   delivery_status: string;
   delivery_error: string | null;
   delivery_updated_at: number | null;
@@ -790,7 +789,6 @@ export interface CreateScheduledRunRequest {
   delivery_format?: "html" | "pdf" | null;
   protect_pdf?: boolean;
   delivery_target_ref?: string | null;
-  protect_pdf?: boolean;
 }
 
 export interface UpdateScheduledRunRequest {
