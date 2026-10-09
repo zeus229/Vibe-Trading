@@ -16,7 +16,9 @@ from src.portfolio.service import PortfolioService
 #: is precomputed here (see ``_build_daily_contributors``) from the same
 #: fields, over every position, before any truncation narrows the view.
 _SUMMARY_FIELDS_FIRST: tuple[str, ...] = (
+    "snapshot_id",
     "as_of",
+    "read_identity",
     "complete",
     "totals",
     "daily_change",
@@ -122,6 +124,30 @@ def _reorder_for_truncation_safety(context: dict[str, Any]) -> dict[str, Any]:
     return ordered
 
 
+def _missing_snapshot(snapshot_id: str | None) -> str:
+    """Envelope for a missing pinned snapshot (error) or an empty store."""
+    if snapshot_id:
+        return json.dumps(
+            {
+                "status": "error",
+                "error_code": "snapshot_not_found",
+                "snapshot_id": snapshot_id,
+                "message": (
+                    "The requested immutable portfolio snapshot is unavailable "
+                    "or incompatible with the current portfolio contract."
+                ),
+            },
+            ensure_ascii=False,
+        )
+    return json.dumps(
+        {
+            "status": "empty",
+            "message": "No portfolio snapshot exists. Refresh the Portfolio page first.",
+        },
+        ensure_ascii=False,
+    )
+
+
 class PortfolioSummaryTool(BaseTool):
     """Expose the latest local portfolio snapshot as sanitized analysis context."""
 
@@ -155,8 +181,11 @@ class PortfolioSummaryTool(BaseTool):
         "reported as an error and excluded from the totals, so a snapshot "
         "with complete=false is missing accounts. It never returns "
         "credentials, account numbers, order IDs, personal names, or local "
-        "paths. Use the Web Portfolio refresh button before requesting current "
-        "data."
+        "paths. The result includes snapshot_id/read_identity; reuse a pinned "
+        "snapshot when the analysis must stay on the same observation. Use "
+        "no_cache=true only when an external refresh may have occurred and the "
+        "task genuinely requires the newest latest snapshot. Use the Web Portfolio "
+        "refresh button before requesting current data."
     )
     parameters = {
         "type": "object",
@@ -166,14 +195,33 @@ class PortfolioSummaryTool(BaseTool):
                 "enum": ["extended", "compact"],
                 "default": "extended",
                 "description": "compact returns every holding, totals, cash and composition from one identified ARS-native snapshot; extended preserves the legacy analysis context.",
-            }
+            },
+            "snapshot_id": {
+                "type": "string",
+                "description": (
+                    "Optional immutable portfolio snapshot id. When provided, "
+                    "read exactly that stored observation instead of advancing "
+                    "to the current latest snapshot."
+                ),
+            },
+            "no_cache": {
+                "type": "boolean",
+                "description": (
+                    "Force a fresh evaluation of the requested read instead of "
+                    "using a run-scoped replay after context compaction. For "
+                    "latest reads, use this when the portfolio may have been "
+                    "refreshed and the task genuinely requires the newest snapshot."
+                ),
+                "default": False,
+            },
         },
         "required": [],
     }
     repeatable = True
     is_readonly = True
+    replay_after_compaction = True
 
-    def execute(self, view: str = "extended", **_: Any) -> str:
+    def execute(self, view: str = "extended", **kwargs: Any) -> str:
         """Return the sanitized portfolio context as a JSON envelope.
 
         Returns:
@@ -184,21 +232,27 @@ class PortfolioSummaryTool(BaseTool):
         """
         if view not in {"extended", "compact"}:
             return json.dumps({"status": "error", "message": "Unsupported portfolio view"})
+        snapshot_id_raw = kwargs.get("snapshot_id")
+        snapshot_id = (
+            str(snapshot_id_raw).strip()
+            if snapshot_id_raw is not None and str(snapshot_id_raw).strip()
+            else None
+        )
+        service = PortfolioService()
         if view == "compact":
             from src.config.limits import TOOL_RESULT_LIMIT
             from src.portfolio.compact import CompactPortfolioError
 
             try:
-                context = PortfolioService().compact_analysis_context()
+                context = (
+                    service.compact_analysis_context(snapshot_id=snapshot_id)
+                    if snapshot_id
+                    else service.compact_analysis_context()
+                )
             except CompactPortfolioError as exc:
                 return json.dumps({"status": "error", "message": str(exc)})
             if context is None:
-                return json.dumps(
-                    {
-                        "status": "empty",
-                        "message": "No usable portfolio snapshot exists. Refresh the Portfolio page first.",
-                    }
-                )
+                return _missing_snapshot(snapshot_id)
             result = json.dumps({"status": "ok", "context": context}, ensure_ascii=False, separators=(",", ":"))
             if len(result) >= TOOL_RESULT_LIMIT:
                 return json.dumps(
@@ -208,15 +262,13 @@ class PortfolioSummaryTool(BaseTool):
                     }
                 )
             return result
-        context = PortfolioService().analysis_context()
+        context = (
+            service.analysis_context(snapshot_id=snapshot_id)
+            if snapshot_id
+            else service.analysis_context()
+        )
         if context is None:
-            return json.dumps(
-                {
-                    "status": "empty",
-                    "message": "No portfolio snapshot exists. Refresh the Portfolio page first.",
-                },
-                ensure_ascii=False,
-            )
+            return _missing_snapshot(snapshot_id)
         daily_contributors = _build_daily_contributors(context)
         if daily_contributors is not None:
             context = {**context, "daily_contributors": daily_contributors}

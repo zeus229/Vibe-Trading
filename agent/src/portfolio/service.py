@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import socket
@@ -713,6 +714,55 @@ class PortfolioService:
         ]
         return snapshot
 
+    def snapshot_by_id(self, snapshot_id: str) -> dict[str, Any] | None:
+        """Return one immutable snapshot without advancing to latest.
+
+        A pinned read intentionally uses the payload stored with that snapshot
+        instead of recomputing compatibility from today's connector settings.
+        This makes the snapshot id a stable observation identity.
+        """
+        snapshot = self.store.get(str(snapshot_id))
+        if snapshot is None:
+            return None
+        if snapshot.get("valuation_version") != PORTFOLIO_VALUATION_VERSION:
+            return None
+        return snapshot
+
+    @staticmethod
+    def _snapshot_read_identity(
+        snapshot: dict[str, Any],
+        *,
+        mode: str,
+    ) -> dict[str, Any]:
+        """Build a stable identity for the stored observation and projection."""
+        configuration = {
+            "valuation_version": snapshot.get("valuation_version"),
+            "accounts": [
+                {
+                    "source_id": row.get("source_id"),
+                    "profile_id": row.get("profile_id"),
+                    "broker": row.get("broker"),
+                    "portfolio_compatibility": row.get("portfolio_compatibility"),
+                }
+                for row in snapshot.get("accounts", [])
+                if isinstance(row, dict)
+            ],
+        }
+        canonical = json.dumps(
+            configuration,
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+            default=str,
+        ).encode("utf-8")
+        return {
+            "mode": mode,
+            "snapshot_id": snapshot.get("snapshot_id"),
+            "as_of": snapshot.get("created_at"),
+            "valuation_version": snapshot.get("valuation_version"),
+            "configuration_fingerprint": hashlib.sha256(canonical).hexdigest(),
+        }
+
     def reconnect_source(self, source_id: str) -> dict[str, Any]:
         """Run a source's interactive OAuth flow on explicit user request.
 
@@ -844,15 +894,19 @@ class PortfolioService:
         writer.writerows(snapshot["positions"])
         return output.getvalue()
 
-    def compact_analysis_context(self) -> dict[str, Any] | None:
-        """Read latest once and project its immutable identity and ARS composition."""
+    def compact_analysis_context(self, snapshot_id: str | None = None) -> dict[str, Any] | None:
+        """Read one snapshot (latest, or pinned by id) and project its ARS composition."""
         from src.portfolio.compact import compact_snapshot
 
-        snapshot = self.latest()
+        snapshot = self.snapshot_by_id(snapshot_id) if snapshot_id else self.latest()
         return None if snapshot is None else compact_snapshot(snapshot)
 
-    def analysis_context(self) -> dict[str, Any] | None:
+    def analysis_context(self, snapshot_id: str | None = None) -> dict[str, Any] | None:
         """Return a credential/account-id-free snapshot suitable for an LLM.
+
+        When snapshot_id is provided the read is pinned to that immutable
+        stored observation. Without it the existing latest semantics are
+        preserved.
 
         The context also carries ``risk_xray_args`` — the ``symbols`` and
         ``weights`` arguments for the existing ``portfolio_risk_xray`` tool.
@@ -862,7 +916,12 @@ class PortfolioService:
         Returns:
             The sanitized context, or ``None`` when no usable snapshot exists.
         """
-        snapshot = self.latest()
+        read_mode = "pinned" if snapshot_id else "latest"
+        snapshot = (
+            self.snapshot_by_id(snapshot_id)
+            if snapshot_id
+            else self.latest()
+        )
         if snapshot is None:
             return None
         total = _decimal(snapshot["totals"]["usd"])
@@ -918,6 +977,7 @@ class PortfolioService:
             "as_of": snapshot["created_at"],
             "snapshot_id": snapshot.get("snapshot_id"),
             "valuation_version": snapshot.get("valuation_version"),
+            "read_identity": self._snapshot_read_identity(snapshot, mode=read_mode),
             "complete": snapshot["complete"],
             "totals": snapshot["totals"],
             "account_allocation": [

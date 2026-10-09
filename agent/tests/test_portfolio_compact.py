@@ -248,3 +248,25 @@ def test_compact_is_semantic_subset_of_extended_from_one_snapshot(monkeypatch):
     ):
         assert compact["totals"][compact_key] == sum(r[extended_key] for r in extended["account_allocation"])
     assert source == with_source
+
+
+def test_compact_view_can_be_pinned_to_a_snapshot_id(monkeypatch):
+    """A pinned compact read goes to the snapshot id, a missing id fails closed."""
+    import json
+
+    from src.tools.portfolio_tool import PortfolioSummaryTool
+
+    seen = {}
+
+    def pinned(self, snapshot_id=None):
+        seen["id"] = snapshot_id
+        return None
+
+    monkeypatch.setattr(
+        "src.portfolio.service.PortfolioService.compact_analysis_context", pinned
+    )
+    payload = json.loads(PortfolioSummaryTool().execute(view="compact", snapshot_id="abc"))
+
+    assert seen["id"] == "abc"
+    assert payload["status"] == "error"
+    assert payload["error_code"] == "snapshot_not_found"
