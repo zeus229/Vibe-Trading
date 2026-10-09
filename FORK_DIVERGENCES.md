@@ -65,3 +65,26 @@ the band to 1% was superseded by this policy and archived.
 | `exp/ac-native-equities-risk-xray-20260919` | native-equities risk X-Ray pilot with `.BA` history routing and pilot document | experimental; worktree `vibe-native-equity-pilot-20260919` |
 
 Retired branches are archived as tags `archive/<date>/<branch>` on the fork.
+
+## Audit 2026-10-09: grounding, Research Goal and MCP against upstream `b1f6ce71`
+
+Since the merge base, upstream changed only three grounding files in small ways
+(`ledger._passed_figures`, the clean-figures keep list in `release.py`, and ASCII-colon
+handling in `policies._formula_in_note`). Everything else under `agent/src/agent/grounding/`
+is fork-only. A behaviour-level comparison found no parallel implementation of any upstream
+feature to remove. The only demonstrable redundancy was the ASCII `:` entries in the two
+separator tuples of `_formula_in_note`: a note containing `:` returns earlier through the strict
+colon branch, so those entries were unreachable and were removed (no behaviour change; 1,991
+focused grounding/Goal/MCP/Asistente Casa tests give identical results before and after).
+
+Kept on purpose, with the reason:
+
+| Area | Why it stays |
+|---|---|
+| `derived.py`, `repair_contract.py` | Not in upstream: proven derived-formula preservation and the post-failure repair/correction contract. |
+| `release.py` compact repair queue (>24 issues) and "preserve clean figures" wording | Upstream's keep list is merged into it; the compact queue is stricter (every rejected issue is shown). |
+| `policies.py` / `evidence.py` / `figures.py` extensions | Exact refs and indexed field refs, derived aggregates, locale/grouped numbers, per-item identity: fork-only and covered by ~1,800 tests. |
+| `ROUNDED_BAND = 0.005` and fail-closed ASCII-colon formulas | Deliberate policy (see above). |
+| `goal_tool.py` `completion_contract` / `criterion_index` | Fork-only repair aid for completion audits; upstream #1688 only covers tool-call provenance. |
+| `tools/mcp.py` PPI conversation scoping, Asistente Casa tools | Fork-only integrations. |
+| `api_server.py` `proxy_headers` + `forwarded_allow_ips` | Required behind Cloudflare/Authentik; its loss caused browser 403s on 2026-10-09 (guarded by `tests/test_serve_bind.py`). |
