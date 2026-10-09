@@ -848,6 +848,9 @@ class EvidenceRecord:
     date: str | None = None
     trade_date: str | None = None
     temporal_context: dict[str, str] | None = None
+    # Structured attribution dimensions are retained for the narrowly scoped
+    # undeclared-contribution repair. These are copied only from tool output.
+    attribution_context: dict[str, str] | None = None
 
 
 @dataclass(frozen=True)
@@ -1487,10 +1490,16 @@ class _EvidenceMixin:
     ) -> None:
         """Flatten bounded numeric leaves from other market-sensitive tools."""
         root, allowed = self._numeric_entity_context(arguments)
+        # Canonical attribution calls contain explicit per-position identities;
+        # a prior single-symbol observation must not bind a later multi-asset
+        # block call's root context to that earlier instrument.
+        if tool_name == "portfolio_attribution" and not allowed:
+            root = _EntityContext(None, "aggregate")
         source = str(payload.get("source") or tool_name)
         remaining = _MAX_GENERIC_EVIDENCE
         timestamp_fields = (*_TIMESTAMP_FIELDS, "latest_date", "as_of")
         payload_scope = _declares_currency_scope(payload)
+        attribution_context = self._attribution_context(tool_name, payload)
 
         def visit(
             value: Any,
@@ -1537,6 +1546,7 @@ class _EvidenceMixin:
                         temporal_context={k: v for k, v in (temporal_context or {}).items()
                                           if k not in {"as_of", "date", "trade_date"}} or None,
                         unit=unit,
+                        attribution_context=attribution_context,
                     )
                 )
                 remaining -= 1
@@ -1593,6 +1603,28 @@ class _EvidenceMixin:
                     visit(item, f"{path}[{index}]", timestamp, currency, None, item_context, snapshot_id, temporal_context)
 
         visit(payload, "")
+
+
+    @staticmethod
+    def _attribution_context(tool_name: str, payload: Mapping[str, Any]) -> dict[str, str] | None:
+        """Return unique period/block metadata for canonical portfolio attribution."""
+        if tool_name != "portfolio_attribution":
+            return None
+        found: dict[str, set[str]] = {key: set() for key in ("start_date", "end_date", "asset_type")}
+        def walk(value: Any) -> None:
+            if isinstance(value, Mapping):
+                for key, item in value.items():
+                    folded = str(key).casefold()
+                    if folded in found and isinstance(item, (str, int, float)) and str(item).strip():
+                        found[folded].add(str(item).strip())
+                    walk(item)
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item)
+        walk(payload)
+        if not all(len(found[key]) == 1 for key in found):
+            return None
+        return {key: next(iter(values)) for key, values in found.items()}
 
     def _ingest_run_dir_ohlc_csvs(self) -> None:
         """Register OHLC rows from per-symbol CSVs the run wrote via bash+yfinance.

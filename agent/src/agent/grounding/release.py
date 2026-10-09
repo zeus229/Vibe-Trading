@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import re
+from decimal import Decimal
 from typing import Any, Iterable, Sequence
 
 from src.agent.grounding.identity import (
@@ -725,6 +726,70 @@ class _ReleaseMixin:
         if note is None:
             return None
         return content.rstrip() + "\n\n" + note
+
+    def repair_undeclared_attribution(
+        self, content: str, validation: ValidationResult
+    ) -> str | None:
+        """Declare fully identified canonical contributions, then let the gate recheck them.
+
+        This is intentionally limited to ``figure_undeclared`` claims explicitly
+        written as percentage points. The MCP leaf, exact instrument, block and
+        full measurement period must all be uniquely recoverable from this
+        session's canonical ``portfolio_attribution`` result.
+        """
+        if not validation.issues or any(i.get("code") != "figure_undeclared" for i in validation.issues):
+            return None
+        block = parse_figures_block(content)
+        if not block.present or not block.spans:
+            return None
+        figures = scan_figures(content, block)
+        declarations: list[str] = []
+        for issue in validation.issues:
+            span, issue_symbol = issue.get("span"), issue.get("symbol")
+            if not isinstance(span, list) or len(span) != 2:
+                return None
+            figure = next((f for f in figures if [f.start, f.end] == span), None)
+            if figure is None:
+                return None
+            claim_end = content.find("\n", span[1])
+            claim = content[content.rfind("\n", 0, span[0]) + 1:claim_end if claim_end >= 0 else len(content)]
+            # The number scanner keeps prose units outside Figure.text. Accept only
+            # explicit percentage-point wording; a percent sign is a different unit.
+            if "%" in claim or not re.search(r"(?i)(?:\bpp\b|puntos?\s+porcentuales?)", claim):
+                return None
+            candidates = []
+            for record in self._evidence:
+                context = record.attribution_context or {}
+                if (record.status == "observed" and record.tool == "portfolio_attribution"
+                        and record.call_id
+                        and re.fullmatch(r"data\.positions\[\d+\]\.contribution_pct", record.field)
+                        and record.symbol and (not issue_symbol or record.symbol == issue_symbol)
+                        and record.identity_scope == "entity"
+                        and record.value is not None and context.get("asset_type")
+                        and context.get("start_date") and context.get("end_date")
+                        and float(record.value) == figure.value
+                        and (float(record.value) < 0) == (figure.value < 0)
+                        and Decimal(figure.digits) == abs(Decimal(str(record.value)))):
+                    candidates.append(record)
+            if len(candidates) != 1:
+                return None
+            record = candidates[0]
+            context = record.attribution_context or {}
+            symbol = record.symbol
+            if (not re.search(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", claim, re.I)
+                    or context["asset_type"].casefold() not in claim.casefold()
+                    or context["start_date"] not in claim or context["end_date"] not in claim):
+                return None
+            ref = f"{record.call_id}::{record.field}"
+            # Do not alter any existing declarations or duplicate a declaration.
+            if any(d.ref == ref and d.value == figure.value for d in block.declarations):
+                return None
+            declarations.append(
+                f"{figure.text} | observed | canonical {context['asset_type']} contribution for "
+                f"{context['start_date']} to {context['end_date']} | {ref}"
+            )
+        insertion = block.spans[0][1] - 3
+        return content[:insertion] + "\n".join(declarations) + "\n" + content[insertion:]
 
     @staticmethod
     def _redaction_needs_price_evidence(issues: Sequence[dict[str, Any]]) -> bool:
