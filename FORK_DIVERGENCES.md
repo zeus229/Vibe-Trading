@@ -51,7 +51,7 @@ the band to 1% was superseded by this policy and archived.
   `compact` views) and returns `snapshot_id` plus `read_identity` (mode, as_of, configuration
   fingerprint). A missing or incompatible id fails closed with `snapshot_not_found`; omitting it
   keeps the latest-snapshot behaviour.
-- `calculate_technical_indicators(end_date=YYYY-MM-DD)` pins the acquisition boundary (strict,
+- `technical_indicators(end_date=YYYY-MM-DD)` pins the acquisition boundary (strict,
   zero-padded format) and returns `read_identity` with a SHA-256 `dataset_fingerprint` of the exact
   bars and provenance used.
 - Replay visibility lease: a result restored after compaction is protected from microcompaction
