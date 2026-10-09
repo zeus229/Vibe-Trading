@@ -45,12 +45,23 @@ the band to 1% was superseded by this policy and archived.
 - **Argentina support:** Yahoo `.BA` routing, Spanish decimal-comma/grouped figures, dashboard link.
 - **CI:** Windows desktop workflow narrowed to real build inputs (PR #16).
 
+## Read identity and freshness (fork additions)
+
+- `portfolio_summary(snapshot_id=...)` reads one immutable stored snapshot (both `extended` and
+  `compact` views) and returns `snapshot_id` plus `read_identity` (mode, as_of, configuration
+  fingerprint). A missing or incompatible id fails closed with `snapshot_not_found`; omitting it
+  keeps the latest-snapshot behaviour.
+- `calculate_technical_indicators(end_date=YYYY-MM-DD)` pins the acquisition boundary (strict,
+  zero-padded format) and returns `read_identity` with a SHA-256 `dataset_fingerprint` of the exact
+  bars and provenance used.
+- Replay visibility lease: a result restored after compaction is protected from microcompaction
+  until one model request carried it; a write invalidation clears pending leases.
+
 ## Experimental branches kept (not in `main`)
 
 | Branch | Unique value | Why not merged |
 |---|---|---|
 | `feat/asistente-casa-provider-identity` | trusted ISIN-verified provider identity locking `.BA` symbols; allow-listed backtest stdout metrics as grounded evidence; microcompact preservation of named evidence | written against the Sept-20 grounding core; overlaps heavily with the current one, needs a clean port plus new tests |
-| `feat/read-freshness-context-recovery` | pinned/fresh portfolio snapshot reads by `snapshot_id`; dataset fingerprint/read identity for technical indicators; replay-lease consumption | large (22 commits) and touches `loop.py`, portfolio store and tools |
 | `exp/ac-native-equities-risk-xray-20260919` | native-equities risk X-Ray pilot with `.BA` history routing and pilot document | experimental; worktree `vibe-native-equity-pilot-20260919` |
 
 Retired branches are archived as tags `archive/<date>/<branch>` on the fork.
