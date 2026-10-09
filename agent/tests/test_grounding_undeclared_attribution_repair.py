@@ -8,6 +8,9 @@ import pytest
 from src.agent.grounding import GroundingLedger
 from src.agent.grounding.figures import parse_figures_block, scan_figures
 from src.agent.grounding.policies import ValidationResult
+from src.agent.loop import AgentLoop
+from src.agent.tools import BaseTool, ToolRegistry
+from src.agent.trace import TraceWriter
 
 pytestmark = pytest.mark.unit
 
@@ -98,6 +101,105 @@ def test_recovers_both_original_figures_in_one_correction(tmp_path):
     assert "+0.21 | observed" in repaired
     assert "call-ypfd|fc-1::data.positions[12].contribution_pct" in repaired
     assert "call-mu|fc-2::data.positions[1].contribution_pct" in repaired
+
+
+class _AttributionTool(BaseTool):
+    name = "mcp_asistente_casa_consultar_attribution_cartera_scope"
+    description = "Read-only canonical portfolio attribution fixture."
+    parameters = {
+        "type": "object",
+        "properties": {"asset_type": {"type": "string"}, "period": {"type": "string"}},
+        "required": ["asset_type", "period"],
+    }
+    repeatable = True
+
+    def execute(self, *, asset_type: str, period: str, **kwargs) -> str:
+        rows = {"ACCIONES": [(f"FILL{i}", 0.0) for i in range(12)] + [("YPFD", -1.276)],
+                "CEDEARS": [("MRNA", 0.272), ("MU", 0.210)]}[asset_type]
+        return json.dumps({"status": "ok", "data": {
+            "ok": True, "status": "fresh", "version": "canonical_attribution_v2_income_capital_return",
+            "scope": {"asset_type": asset_type, "currency": "ARS"},
+            "start_date": "2026-10-06", "end_date": "2026-10-07",
+            "requested_start_date": "2026-10-06", "requested_end_date": "2026-10-07",
+            "effective_start_date": "2026-10-06", "effective_end_date": "2026-10-07",
+            "boundary_adjustments": [],
+            "positions": [{"symbol": symbol, "tipo": asset_type, "contribution_pct": value}
+                          for symbol, value in rows],
+        }})
+
+
+class _AttributionRunLLM:
+    def __init__(self):
+        self.responses = [
+            {"id": "ypfd-call", "asset_type": "ACCIONES", "period": "1r"},
+            {"id": "mu-call", "asset_type": "CEDEARS", "period": "1r"},
+        ]
+        self.calls = 0
+
+    def stream_chat(self, messages, tools=None, on_text_chunk=None, **kwargs):
+        from types import SimpleNamespace
+
+        self.calls += 1
+        if self.responses:
+            call = self.responses.pop(0)
+            return SimpleNamespace(
+                has_tool_calls=True,
+                tool_calls=[SimpleNamespace(
+                    id=call["id"], name=_AttributionTool.name,
+                    arguments={"asset_type": call["asset_type"], "period": call["period"]},
+                )], content="", reasoning_content=None,
+            )
+        draft = (
+            "**Asunto: Informe diario de cartera — último cierre canónico completo al 7 de octubre de 2026**\n\n"
+            "> **Fecha de referencia:** el último cierre canónico completo disponible es el **7 de octubre de 2026**.\n\n"
+            "## Qué explicó el resultado\n\n### Comportamiento por bloques\n\n"
+            "En ACCIONES, la debilidad se concentró principalmente en energía:\n\n"
+            "- **YPFD:** contribución de **-1.28** puntos porcentuales dentro del bloque.\n\n"
+            "En CEDEARs:\n\n"
+            "- MRNA y MU fueron las principales defensas. MU aportó **+0.21** puntos porcentuales dentro del bloque.\n\n"
+            "```figures\n```"
+        )
+        if on_text_chunk:
+            on_text_chunk(draft)
+        return SimpleNamespace(has_tool_calls=False, tool_calls=[], content=draft, reasoning_content=None)
+
+    def chat(self, messages, **kwargs):
+        raise AssertionError("the deterministic release replay must not call chat")
+
+
+def test_loop_releases_original_report_after_observe_repair_and_revalidation(tmp_path, monkeypatch):
+    validated = []
+    original_revalidate = GroundingLedger.revalidate
+
+    def capture_revalidation(self, content):
+        result = original_revalidate(self, content)
+        validated.append((content, result.valid))
+        return result
+
+    monkeypatch.setattr(GroundingLedger, "revalidate", capture_revalidation)
+    registry = ToolRegistry()
+    registry.register(_AttributionTool())
+    agent = AgentLoop(registry=registry, llm=_AttributionRunLLM(), max_iterations=8)
+    run_dir = tmp_path / "run"
+    run_dir.mkdir()
+    agent.memory.run_dir = str(run_dir)
+
+    result = agent.run("Informe diario de contribuciones de cartera para el último cierre canónico")
+
+    assert result["status"] == "success"
+    assert "YPFD" in result["content"] and "-1.28" in result["content"]
+    assert "MU" in result["content"] and "+0.21" in result["content"]
+    assert "omitted※" not in result["content"]
+    trace = TraceWriter.read(run_dir)
+    repairs = [event for event in trace if event.get("type") == "answer_repaired"]
+    assert len(repairs) == 1
+    assert repairs[0]["repair"] == "figure_undeclared_canonical_attribution"
+    assert any(
+        is_valid
+        and "ypfd-call::data.positions[12].contribution_pct" in repaired
+        and "mu-call::data.positions[1].contribution_pct" in repaired
+        for repaired, is_valid in validated
+    )
 
 
 def test_all_and_block_values_are_not_interchangeable(tmp_path):
