@@ -18,6 +18,7 @@ from src.agent.grounding.evidence import EvidenceRecord
 from src.agent.grounding.figures import (
     BLOCK_LANGUAGE,
     Figure,
+    _fenced_blocks,
     _lines_with_offsets,
     parse_figures_block,
     scan_figures,
@@ -818,6 +819,28 @@ class _ReleaseMixin:
             return None
         return block, close_date
 
+    @staticmethod
+    def _declaration_line_span(
+        content: str, declaration_index: int
+    ) -> tuple[int, int, str] | None:
+        """Locate one parsed declaration line inside a single figures fence.
+
+        ``Declaration.index`` is a line number in the concatenated figures
+        bodies. Replacement is deliberately limited to one fence so that this
+        local line index cannot be confused across separately parsed blocks.
+        """
+        fences = [item for item in _fenced_blocks(content) if item[2] == BLOCK_LANGUAGE]
+        if len(fences) != 1 or declaration_index < 1:
+            return None
+        body_start, body_end = fences[0][3]
+        body = content[body_start:body_end]
+        lines = body.splitlines(keepends=True)
+        if declaration_index > len(lines):
+            return None
+        line_start = body_start + sum(len(line) for line in lines[: declaration_index - 1])
+        line = lines[declaration_index - 1]
+        return line_start, line_start + len(line), line
+
     def repair_undeclared_attribution(
         self, content: str, validation: ValidationResult
     ) -> str | None:
@@ -836,6 +859,8 @@ class _ReleaseMixin:
             return None
         figures = scan_figures(content, block)
         declarations: list[str] = []
+        replacements: list[tuple[int, int, str]] = []
+        repaired_refs: dict[str, str] = {}
         for issue in validation.issues:
             span, issue_symbol = issue.get("span"), issue.get("symbol")
             if not isinstance(span, list) or len(span) != 2:
@@ -884,15 +909,54 @@ class _ReleaseMixin:
                     or not re.search(rf"(?<![A-Z0-9]){re.escape(symbol)}(?![A-Z0-9])", claim, re.I)):
                 return None
             ref = f"{record.call_id}::{record.field}"
-            # Do not alter any existing declarations or duplicate a declaration.
-            if any(d.ref == ref and d.value == figure.value for d in block.declarations):
-                return None
-            declarations.append(
+            declaration_text = (
                 f"{figure.text} | observed | canonical {context['asset_type']} contribution for "
                 f"daily {context['start_date']} to {context['end_date']} {context['asset_type']} | {ref}"
             )
-        insertion = block.spans[0][1] - 3
-        return content[:insertion] + "\n".join(declarations) + "\n" + content[insertion:]
+            prior_repair = repaired_refs.get(ref)
+            if prior_repair is not None:
+                if prior_repair != declaration_text:
+                    return None
+                continue
+
+            same_ref = [item for item in block.declarations if item.ref == ref]
+            if same_ref:
+                # A declaration with this exact source is replaceable only when
+                # its numeric reading agrees at the prose precision but its
+                # percent mark contradicts an explicit percentage-point claim.
+                # Every other pre-existing declaration stays fail-closed.
+                if (
+                    len(same_ref) != 1
+                    or same_ref[0].role != "observed"
+                    or figure.percent
+                    or not same_ref[0].percent
+                    or not self._within_written_precision(
+                        figure, figure.value, same_ref[0].value
+                    )
+                    or math.copysign(1.0, same_ref[0].value)
+                    != math.copysign(1.0, figure.value)
+                ):
+                    return None
+                line_span = self._declaration_line_span(content, same_ref[0].index)
+                if line_span is None:
+                    return None
+                start, end, original_line = line_span
+                ending = "\r\n" if original_line.endswith("\r\n") else "\n" if original_line.endswith("\n") else ""
+                replacements.append((start, end, declaration_text + ending))
+            else:
+                declarations.append(declaration_text)
+            repaired_refs[ref] = declaration_text
+
+        edits = list(replacements)
+        if declarations:
+            insertion = block.spans[0][1] - 3
+            edits.append((insertion, insertion, "\n".join(declarations) + "\n"))
+        if not edits:
+            return None
+        repaired = content
+        for start, end, replacement in sorted(edits, key=lambda item: item[0], reverse=True):
+            repaired = repaired[:start] + replacement + repaired[end:]
+        return repaired
 
     @staticmethod
     def _redaction_needs_price_evidence(issues: Sequence[dict[str, Any]]) -> bool:

@@ -103,6 +103,79 @@ def test_recovers_both_original_figures_in_one_correction(tmp_path):
     assert "call-mu|fc-2::data.positions[1].contribution_pct" in repaired
 
 
+def test_replaces_same_ref_percentage_declarations_only_for_explicit_pp_claims(tmp_path):
+    ledger = _ledger(tmp_path, [
+        ("call-ypfd|fc-1", "ACCIONES", ("2026-10-06", "2026-10-07"), [("YPFD", -1.276)]),
+        ("call-mu|fc-2", "CEDEARS", ("2026-10-06", "2026-10-07"), [("MRNA", 0.272), ("MU", 0.210)]),
+    ])
+    draft = _draft("YPFD", "-1.28", "ACCIONES", unit="puntos porcentuales").replace(
+        "```figures\n```",
+        "En CEDEARS, principales contribuciones:\n\n"
+        "- **MRNA y MU** fueron las principales defensas. MU aportó **+0.21** puntos porcentuales dentro del bloque.\n\n"
+        "```figures\n"
+        "-1.28% | observed | stale percent unit | call-ypfd|fc-1::data.positions[0].contribution_pct\n"
+        "0.21% | observed | stale percent unit | call-mu|fc-2::data.positions[1].contribution_pct\n```",
+    )
+    rejected = ledger.validate_final_answer(draft)
+    assert [issue["code"] for issue in rejected.issues] == ["figure_undeclared", "figure_undeclared"]
+    repaired = ledger.repair_undeclared_attribution(draft, rejected)
+    assert repaired
+    parsed = parse_figures_block(repaired)
+    by_ref = {item.ref: item for item in parsed.declarations}
+    assert by_ref["call-ypfd|fc-1::data.positions[0].contribution_pct"].value_text == "-1.28"
+    assert not by_ref["call-ypfd|fc-1::data.positions[0].contribution_pct"].percent
+    assert by_ref["call-mu|fc-2::data.positions[1].contribution_pct"].value_text == "0.21"
+    assert not by_ref["call-mu|fc-2::data.positions[1].contribution_pct"].percent
+    assert sum(item.ref == "call-ypfd|fc-1::data.positions[0].contribution_pct" for item in parsed.declarations) == 1
+    assert sum(item.ref == "call-mu|fc-2::data.positions[1].contribution_pct" for item in parsed.declarations) == 1
+    assert ledger.revalidate(repaired).valid
+
+
+def test_does_not_rewrite_percent_claims_or_correct_point_declarations(tmp_path):
+    ledger = _ledger(tmp_path, [("call|fc", "ACCIONES", ("2026-10-06", "2026-10-07"), [("YPFD", -1.276)])])
+    ref = "call|fc::data.positions[0].contribution_pct"
+    percent_claim = _draft("YPFD", "-1.28", "ACCIONES", unit="%")
+    percent_claim = percent_claim.replace(
+        "```figures\n```", f"```figures\n-1.28% | observed | percent claim | {ref}\n```"
+    )
+    percent_validation = ledger.validate_final_answer(percent_claim)
+    assert ledger.repair_undeclared_attribution(percent_claim, percent_validation) is None
+    assert f"-1.28% | observed | percent claim | {ref}" in percent_claim
+
+    point_claim = _draft("YPFD", "-1.28", "ACCIONES", unit="puntos porcentuales")
+    point_claim = point_claim.replace(
+        "```figures\n```", f"```figures\n-1.28 | observed | canonical contribution pp | {ref}\n```"
+    )
+    point_validation = ledger.validate_final_answer(point_claim)
+    assert point_validation.valid
+    assert ledger.repair_undeclared_attribution(point_claim, point_validation) is None
+
+
+def test_wrong_percent_declaration_with_wrong_value_or_sign_stays_fail_closed(tmp_path):
+    ledger = _ledger(tmp_path, [("call|fc", "ACCIONES", ("2026-10-06", "2026-10-07"), [("YPFD", -1.276)])])
+    ref = "call|fc::data.positions[0].contribution_pct"
+    for declaration in (
+        f"1.28% | observed | wrong sign | {ref}",
+        f"-1.80% | observed | wrong value | {ref}",
+        f"-1.28% | derived | wrong role | {ref}",
+    ):
+        draft = _draft("YPFD", "-1.28", "ACCIONES", unit="puntos porcentuales")
+        draft = draft.replace("```figures\n```", f"```figures\n{declaration}\n```")
+        rejected = ledger.validate_final_answer(draft)
+        assert [issue["code"] for issue in rejected.issues] == ["figure_undeclared"]
+        assert ledger.repair_undeclared_attribution(draft, rejected) is None
+
+
+def test_wrong_percent_declaration_without_explicit_pp_unit_stays_fail_closed(tmp_path):
+    ledger = _ledger(tmp_path, [("call|fc", "ACCIONES", ("2026-10-06", "2026-10-07"), [("YPFD", -1.276)])])
+    ref = "call|fc::data.positions[0].contribution_pct"
+    draft = _draft("YPFD", "-1.28", "ACCIONES", unit="")
+    draft = draft.replace("```figures\n```", f"```figures\n-1.28% | observed | ambiguous unit | {ref}\n```")
+    rejected = ledger.validate_final_answer(draft)
+    assert [issue["code"] for issue in rejected.issues] == ["figure_undeclared"]
+    assert ledger.repair_undeclared_attribution(draft, rejected) is None
+
+
 class _AttributionTool(BaseTool):
     name = "mcp_asistente_casa_consultar_attribution_cartera_scope"
     description = "Read-only canonical portfolio attribution fixture."
@@ -157,7 +230,9 @@ class _AttributionRunLLM:
             "- **YPFD:** contribución de **-1.28** puntos porcentuales dentro del bloque.\n\n"
             "En CEDEARs:\n\n"
             "- MRNA y MU fueron las principales defensas. MU aportó **+0.21** puntos porcentuales dentro del bloque.\n\n"
-            "```figures\n```"
+            "```figures\n"
+            "-1.28% | observed | wrong unit for YPFD contribution | ypfd-call::data.positions[12].contribution_pct\n"
+            "0.21% | observed | wrong unit for MU contribution | mu-call::data.positions[1].contribution_pct\n```"
         )
         if on_text_chunk:
             on_text_chunk(draft)
