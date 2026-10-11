@@ -347,34 +347,23 @@ class TechnicalIndicatorTool(BaseTool):
             lookback = _DEFAULT_LOOKBACK
         lookback = max(10, min(lookback, _MAX_LOOKBACK))
 
-        # Resolve the acquisition boundary once so a single invocation cannot
-        # straddle midnight between separate clock reads.
-        end_date_raw = kwargs.get("end_date")
-        if end_date_raw is not None and str(end_date_raw).strip():
-            end_date_text = str(end_date_raw).strip()
+        # One clock read per call, or an explicit zero-padded YYYY-MM-DD boundary.
+        end_date_raw = str(kwargs.get("end_date") or "").strip()
+        if end_date_raw:
             try:
-                reference_date = datetime.strptime(
-                    end_date_text, "%Y-%m-%d"
-                ).date()
+                reference_date = date.fromisoformat(end_date_raw)
             except ValueError:
+                reference_date = None
+            if reference_date is None or reference_date.isoformat() != end_date_raw:
                 return json.dumps(
                     {"ok": False, "error": "end_date must use YYYY-MM-DD"}
                 )
-            # datetime.strptime accepts non-zero-padded month/day values for
-            # %m/%d. The public contract is intentionally stricter so read
-            # identities have one canonical spelling and invalid shapes fail
-            # closed before touching a data provider.
-            if reference_date.strftime("%Y-%m-%d") != end_date_text:
-                return json.dumps(
-                    {"ok": False, "error": "end_date must use YYYY-MM-DD"}
-                )
-            read_mode = "pinned_boundary"
         else:
             reference_date = datetime.now().date()
-            read_mode = "latest_boundary"
-        end_date = reference_date.strftime("%Y-%m-%d")
+        read_mode = "pinned_boundary" if end_date_raw else "latest_boundary"
+        end_date = reference_date.isoformat()
         days = lookback * _CALENDAR_DAYS_PER_BAR.get(interval, 2)
-        start_date = (reference_date - timedelta(days=days)).strftime("%Y-%m-%d")
+        start_date = (reference_date - timedelta(days=days)).isoformat()
 
         try:
             data = fetch_market_data(

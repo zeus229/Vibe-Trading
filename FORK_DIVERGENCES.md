@@ -65,7 +65,7 @@ the band to 1% was superseded by this policy and archived.
 
 ## Read identity and freshness (fork additions)
 
-- (Absorbed by upstream 2026-10-10; see top.) `portfolio_summary(snapshot_id=...)` reads one immutable stored snapshot (both `extended` and
+- (Historical: absorbed by upstream 2026-10-10, see top.) `portfolio_summary(snapshot_id=...)` reads one immutable stored snapshot (both `extended` and
   `compact` views) and returns `snapshot_id` plus `read_identity` (mode, as_of, configuration
   fingerprint). A missing or incompatible id fails closed with `snapshot_not_found`; omitting it
   keeps the latest-snapshot behaviour.
@@ -106,20 +106,12 @@ Kept on purpose, with the reason:
 | `tools/mcp.py` PPI conversation scoping, Asistente Casa tools | Fork-only integrations. |
 | `api_server.py` `proxy_headers` + `forwarded_allow_ips` | Required behind Cloudflare/Authentik; its loss caused browser 403s on 2026-10-09 (guarded by `tests/test_serve_bind.py`). |
 
-## Future upstream contribution bundle (deferred, 2026-10-09)
+## Upstream contribution bundle (historical, completed 2026-10-10)
 
-Do not open PRs until a fresh check for upstream equivalents. Two fork capabilities
-introduced by `c59313b8` remain candidate *independent* upstream contributions:
-
-1. **Reproducible technical indicators:** optional strict
-   `technical_indicators(end_date=YYYY-MM-DD)`, and `read_identity` with SHA-256
-   `dataset_fingerprint` of the exact input bars and provenance. A date boundary
-   alone cannot guarantee identical data if a provider revises historical bars.
-2. **Pinned portfolio reads:** `portfolio_summary(snapshot_id=...)` plus
-   `read_identity`; a missing/incompatible snapshot fails closed as
-   `snapshot_not_found`. Propose the standard upstream view only, excluding
-   the fork's compact view and PPI/Asistente Casa. Verify persistence and
-   immutable retrieval before claiming reproducibility.
+Both capabilities were contributed and merged upstream as #1768 (`technical_indicators`
+`end_date` + `read_identity.dataset_fingerprint`) and #1769 (`portfolio_summary(snapshot_id=...)`
++ `read_identity`), together with #1767 (code-tool envelope is not grounding evidence). The
+`contrib/*-20261009` branches were archived as tags and deleted. Nothing here is pending.
 
 **Grounding follow-up:** upstream roadmap issue
 https://github.com/HKUDS/Vibe-Trading/issues/1622 tracks policy registry and
@@ -133,6 +125,29 @@ ISIN-based .BA identity, allowed backtest evidence, and compaction evidence
 preservation before considering any generic upstream PR. Check open #1691
 (registry work) for overlap first. Only focused tests; no deployment for
 upstream PR preparation.
+
+## Post-sync audit 2026-10-11
+
+Compared fork `7bf92efd` with upstream `8e430079`. Removed as redundant (behaviour-identical):
+the fork's own `end_date` parser in `technical_indicators` (upstream's `date.fromisoformat`
+round-trip is equivalent and covered by the same negative tests), the duplicated
+`analysis_context` snapshot selection and `read_mode` variable in `portfolio/service.py`, an unused
+`hashlib` import, and ~100 lines of test classes duplicated by the merge in
+`tests/test_technical_indicator_tool.py`.
+
+Kept after comparison (not duplicates):
+
+| Item | Why it stays |
+|---|---|
+| `technical_indicators` fingerprint hashes provider provenance and `isoformat` bar labels; `read_identity` has `requested_start_date`/`latest_date`/`provenance` | Different value from upstream's bars-only fingerprint. Already served by prod images since 2026-10-09, so the format is not changed without a consumer audit (none found in Asistente Casa). |
+| `no_cache` on `technical_indicators` and `portfolio_summary` | Freshness escape hatch for replay after compaction; upstream has no equivalent. |
+| `portfolio_summary(view="compact")` and `_missing_snapshot` | Fork-only canonical ARS view and its error envelope. |
+| `ledger.py` skips generic flattening for `backtest` entirely | Stricter than upstream `_ENVELOPE_FIELDS` (which only drops top-level bookkeeping keys); both are needed. |
+| `_microcompact(preserve_tools=...)`, `preserve_during_microcompact`, replay visibility lease | Upstream's `context_compact.py` has only `preserve_tool_call_ids`. |
+| ISIN-verified `.BA`, repair contract, 0.5 % band, ASCII-colon formulas, proxy/forwarded IPs | Deliberate fork policy; see sections above. |
+
+Possible future upstream PRs (not opened): the `preserve_during_microcompact` opt-in and
+`replay_after_compaction` interplay; check upstream #1622/#1691 first.
 
 ## Provider identity, backtest evidence and microcompact (recovered 2026-10-09)
 

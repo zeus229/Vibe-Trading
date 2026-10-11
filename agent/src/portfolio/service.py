@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import io
 import json
 import socket
@@ -887,12 +886,7 @@ class PortfolioService:
         Returns:
             The sanitized context, or ``None`` when no usable snapshot exists.
         """
-        read_mode = "latest" if snapshot_id is None else "pinned"
-        snapshot = (
-            self.snapshot_by_id(snapshot_id)
-            if snapshot_id is not None
-            else self.latest()
-        )
+        snapshot = self.latest() if snapshot_id is None else self.snapshot_by_id(snapshot_id)
         if snapshot is None:
             return None
         total = _decimal(snapshot["totals"]["usd"])
@@ -951,7 +945,7 @@ class PortfolioService:
             "as_of": snapshot["created_at"],
             "valuation_version": snapshot.get("valuation_version"),
             "read_identity": {
-                "mode": read_mode,
+                "mode": "latest" if snapshot_id is None else "pinned",
                 "snapshot_id": snapshot.get("snapshot_id"),
                 "as_of": snapshot["created_at"],
                 "valuation_version": snapshot.get("valuation_version"),
