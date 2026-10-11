@@ -20,6 +20,27 @@ Still fork-only on top of those: `portfolio_summary` `view=compact` and `no_cach
 `latest_date`, plus `no_cache`; `preserve_during_microcompact` skip in `context_compact._microcompact`
 (`preserve_tools`) and the replay visibility lease.
 
+## Codex tools sent with `strict: false` (temporary fork fix, upstream pending)
+
+`_convert_tools` in `agent/src/providers/openai_codex.py` sends `"strict": False` on every converted tool.
+Upstream (`8e430079`) omits the key. **Temporary fork correction; remove it once upstream carries the same fix.**
+
+- **Problem:** with `strict` absent, the Codex Responses endpoint (`chatgpt.com/backend-api/codex/responses`) behaves as
+  strict. The model emits every schema property, using `""` for an optional string, so optional arguments can never be
+  omitted. `portfolio_summary` rejects a blank `snapshot_id` (`snapshot_not_found`, upstream #1769, which we keep
+  fail-closed) and the agent ended in `no_progress` after 8 retries with placeholders (session `ce36ca6e896b`).
+- **Reproduction (model `gpt-5.6-sol`, one request per variant, synthetic read-only tool):** without `strict` the model
+  generated `{"snapshot_id": "", "view": "extended", "no_cache": false}`; with `"strict": false` it generated `{}`.
+- **End-to-end validation (isolated candidate, copied data):** original prompt succeeded in 2 calls: `portfolio_summary`
+  latest without `snapshot_id`, then pinned to the returned id; same snapshot, `as_of`, 38 positions and totals.
+- **Not needed for the fix:** the `snapshot_id` description and `snapshot_not_found` `hint` patch was evaluated and did
+  not change the model's behaviour (8/8 blank or placeholder ids), so it is not part of the fork.
+- **Tests:** `tests/test_openai_codex_tool_schema.py`.
+- **Upstream:** branch `fix/codex-tools-non-strict` (commit `6e4b5e0`, DCO signed-off, based on upstream `8e430079`) is
+  prepared on the fork. **The PR is NOT published yet.** `src/providers/` is a protected area upstream, so an issue or prior
+  discussion may be needed first.
+- **Fork commit:** `46cb5432` (cherry-pick of `6e4b5e0`), deployed as image `prod-46cb5432`; rollback `prod-c5cbca64`.
+
 ## Grounding: derived-formula notes are fail-closed
 
 `_formula_in_note` (`agent/src/agent/grounding/policies.py`) treats an ASCII colon as the
