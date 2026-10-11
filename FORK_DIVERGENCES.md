@@ -174,3 +174,49 @@ inline formulas.
 Upstream-generic candidates: the microcompact opt-in attribute (`preserve_during_microcompact`) and the rule
 that a code-execution tool's envelope bookkeeping must not become grounding evidence. The ISIN identity is
 Asistente Casa specific and stays in the fork.
+
+## Follow-up backlog after cleanup (2026-10-10)
+
+Production at the end of the cleanup: fork `c5cbca643e1167744676275eadf262402c84276b`,
+image `vibe-trading:prod-c5cbca64` (production verification and container changes are
+outside this documentation commit). Upstream baseline `8e430079`.
+
+**Removed in the cleanup:** duplicate local `technical_indicators.end_date` parser,
+duplicate `analysis_context` snapshot selection/`read_mode`, unused portfolio
+`hashlib` import, and approximately 100 lines of tests duplicated by the upstream
+merge. PRs #1767, #1768, and #1769 are merged into upstream; their old contribution
+branches were archived and deleted. No parallel reimplementation should be added.
+
+**Still deliberate fork behavior:** provenance-inclusive indicators fingerprint
+and extra read identity fields; `no_cache`; portfolio compact view; stricter
+backtest evidence exclusion; microcompact preservation plus replay lease;
+ISIN-verified Argentina listings; grounding repair contract, 0.5% rounding
+and fail-closed labelled formulas; PPI/Asistente Casa read-only integration;
+reverse-proxy forwarding configuration. See the post-sync table above for detail.
+
+### Future evaluation: adopt upstream indicator fingerprint if equivalent
+
+Upstream #1768 hashes the interval and observed bars (date, close, volume),
+while the fork additionally hashes provenance and serializes date labels with
+`isoformat`. The two hash values are **not interchangeable** merely because
+the same bars were requested. Do not silently change the fingerprint contract.
+
+In a future isolated worktree, inventory all consumers (tool responses, research
+prompts, persisted records, replay/cache, Asistente Casa, tests). Compare both
+implementations with equal bars/provider, changed provenance but identical bars,
+timezone/index variations, missing/short volume, and changed bars. Explicitly
+decide whether provenance belongs only in `read_identity.provenance` while
+`dataset_fingerprint` matches upstream. Check whether extra read-identity fields
+are needed. If consumers and regressions demonstrate equivalence, remove the
+fork-specific hashing code, adopt upstream, and update golden tests/docs.
+Otherwise preserve and document the intentional differing identity. Do not
+combine this evaluation with a production update.
+
+### Grounding issue #1622: maintainer guidance pending
+
+Our [derived-operand coverage question](https://github.com/HKUDS/Vibe-Trading/issues/1622#issuecomment-6044292409)
+asks how to distinguish unsupported financial operands from legitimate scalar
+constants in formulas. There was no maintainer reply to that particular comment
+at the time of this note. Do not write a new behavioral grounding PR until
+the intended contract is clarified. A short, courteous follow-up in the issue
+is appropriate, without assuming a response deadline.
