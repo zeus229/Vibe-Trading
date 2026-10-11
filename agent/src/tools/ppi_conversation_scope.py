@@ -12,6 +12,7 @@ from typing import Any
 _CONVERSATIONAL_READS = frozenset({
     "consultar_cartera_actual",
     "consultar_mercado_ppi_instrumento",
+    "consultar_contexto_mercado_canonico",
 })
 # These existing tools stay available for scheduled research.
 _ORIGINAL_SCHEDULED_READS = frozenset({
