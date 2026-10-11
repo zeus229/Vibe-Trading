@@ -126,7 +126,7 @@ def _reorder_for_truncation_safety(context: dict[str, Any]) -> dict[str, Any]:
 
 def _missing_snapshot(snapshot_id: str | None) -> str:
     """Envelope for a missing pinned snapshot (error) or an empty store."""
-    if snapshot_id:
+    if snapshot_id is not None:
         return json.dumps(
             {
                 "status": "error",
@@ -234,22 +234,15 @@ class PortfolioSummaryTool(BaseTool):
         if view not in {"extended", "compact"}:
             return json.dumps({"status": "error", "message": "Unsupported portfolio view"})
         snapshot_id_raw = kwargs.get("snapshot_id")
-        snapshot_id = (
-            str(snapshot_id_raw).strip()
-            if snapshot_id_raw is not None and str(snapshot_id_raw).strip()
-            else None
-        )
+        snapshot_id = None if snapshot_id_raw is None else str(snapshot_id_raw).strip()
         service = PortfolioService()
+        pin = {} if snapshot_id is None else {"snapshot_id": snapshot_id}
         if view == "compact":
             from src.config.limits import TOOL_RESULT_LIMIT
             from src.portfolio.compact import CompactPortfolioError
 
             try:
-                context = (
-                    service.compact_analysis_context(snapshot_id=snapshot_id)
-                    if snapshot_id
-                    else service.compact_analysis_context()
-                )
+                context = service.compact_analysis_context(**pin)
             except CompactPortfolioError as exc:
                 return json.dumps({"status": "error", "message": str(exc)})
             if context is None:
@@ -263,11 +256,7 @@ class PortfolioSummaryTool(BaseTool):
                     }
                 )
             return result
-        context = (
-            service.analysis_context(snapshot_id=snapshot_id)
-            if snapshot_id
-            else service.analysis_context()
-        )
+        context = service.analysis_context(**pin)
         if context is None:
             return _missing_snapshot(snapshot_id)
         daily_contributors = _build_daily_contributors(context)

@@ -862,6 +862,106 @@
             "label": "トピック別セッション",
             "help": "グループの各トピックに専用のエージェントセッションを割り当てます。"
           }
+        },
+        "slack": {
+          "bot_token": {
+            "label": "Botトークン（xoxb-）",
+            "help": "Slack ボットユーザーの OAuth トークン（xoxb- で始まります）。サーバー側に保存され、ブラウザに返されることはありません。"
+          },
+          "app_token": {
+            "label": "Appトークン（xapp-）",
+            "help": "connections:write スコープを持つ Slack アプリレベルトークン（xapp- で始まります）。Socket Mode に必要です。サーバー側に保存され、ブラウザに返されることはありません。"
+          },
+          "user_token_read_only": {
+            "label": "ユーザートークン読み取り専用",
+            "help": "動作フラグ（認証情報ではありません）：ユーザートークンのアクセスを読み取り専用に保ちます。"
+          },
+          "reply_in_thread": {
+            "label": "スレッドで返信",
+            "help": "チャンネルに直接投稿する代わりに、元のメッセージのスレッドで返信します。"
+          },
+          "react_emoji": {
+            "label": "作業中リアクション",
+            "help": "エージェントの作業中、受信メッセージに付けるリアクション（デフォルトは eyes）。"
+          },
+          "done_emoji": {
+            "label": "完了リアクション",
+            "help": "タスク完了時に付けるリアクション（デフォルトは white_check_mark）。空欄で無し。"
+          },
+          "include_thread_context": {
+            "label": "スレッドのコンテキストを含める",
+            "help": "ボットがスレッドに初めて呼び出されたとき、それまでのスレッドの返信をコンテキストとして先頭に付けます。"
+          },
+          "thread_context_limit": {
+            "label": "スレッドコンテキストの上限",
+            "help": "コンテキストとして含めるスレッドメッセージの最大数（デフォルト 20）。"
+          },
+          "allow_from": {
+            "label": "許可する送信者",
+            "help": "エージェントと会話できる Slack ユーザー ID の許可リスト。DM とチャンネルのアクセスは DM ポリシーとグループポリシーでも制御されます。"
+          },
+          "group_policy": {
+            "label": "グループポリシー",
+            "help": "「mention」はチャンネルで @ メンションされたときのみ返信し、「open」はすべてのチャンネルメッセージに返信し、「allowlist」は下に列挙したチャンネルでのみ返信します。"
+          },
+          "group_allow_from": {
+            "label": "許可するチャンネル",
+            "help": "グループポリシーが「allowlist」の場合にボットが応答するチャンネル ID。"
+          },
+          "group_require_mention": {
+            "label": "許可チャンネルでメンションを要求",
+            "help": "「allowlist」ポリシーで、承認済みチャンネルでも @ メンションされたときのみ返信します。「mention」と「open」には影響しません。"
+          }
+        },
+        "discord": {
+          "token": {
+            "label": "ボットトークン",
+            "help": "Discord Developer Portal のボットトークンです（ユーザートークンや OAuth トークンではありません）。サーバー側に保存され、ブラウザに返されることはありません。"
+          },
+          "allow_from": {
+            "label": "許可する送信者",
+            "help": "エージェントと会話できる Discord ユーザー ID の許可リスト。空欄ですべて許可します。"
+          },
+          "allow_channels": {
+            "label": "許可するチャンネル",
+            "help": "ボットが応答する Discord チャンネル ID の許可リスト。空欄ですべてのチャンネルを許可します。"
+          },
+          "intents": {
+            "label": "ゲートウェイインテント",
+            "help": "ゲートウェイインテントのビットフィールド整数（デフォルト 37377 = GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT）。MESSAGE CONTENT は特権インテントで、Developer Portal で有効にしないとボットは接続できません。"
+          },
+          "group_policy": {
+            "label": "グループポリシー",
+            "help": "「mention」はサーバーのチャンネルで @ メンションされたときのみ返信し、「open」はすべてのチャンネルメッセージに返信します（いずれも許可リストに従います）。"
+          },
+          "read_receipt_emoji": {
+            "label": "既読リアクション",
+            "help": "受信メッセージにすぐ付ける確認用のリアクション（デフォルトは 👀）。返信が届くと削除されます。"
+          },
+          "working_emoji": {
+            "label": "作業中リアクション",
+            "help": "エージェントが作業中の間に付けるリアクション（デフォルトは 🔧）。作業中リアクションの遅延後に追加されます。"
+          },
+          "working_emoji_delay": {
+            "label": "作業中リアクションの遅延（秒）",
+            "help": "作業中リアクションを付けるまでの待機秒数。短い返信では表示されません（デフォルト 2.0）。"
+          },
+          "streaming": {
+            "label": "ストリーミング返信",
+            "help": "最終メッセージを一度に送信する代わりに、1 通の Discord メッセージを逐次編集して返信をストリーミングします。"
+          },
+          "proxy": {
+            "label": "プロキシ URL",
+            "help": "ゲートウェイ接続と API 呼び出しが経由する任意の HTTP プロキシ（例：http://host:port）。"
+          },
+          "proxy_username": {
+            "label": "プロキシのユーザー名",
+            "help": "プロキシのユーザー名（パスワードと組で設定してください。片方だけの場合は警告とともに無視されます）。サーバー側に保存され、ブラウザに返されることはありません。"
+          },
+          "proxy_password": {
+            "label": "プロキシのパスワード",
+            "help": "プロキシのパスワード（ユーザー名と組で設定してください。片方だけの場合は警告とともに無視されます）。サーバー側に保存され、ブラウザに返されることはありません。"
+          }
         }
       },
       "guides": {
@@ -914,6 +1014,16 @@
           "step4": "「認証情報と基本情報」から App ID と App Secret をコピーして、上の欄に貼り付けます。",
           "step5": "バージョンを作成してアプリを公開し（テナントの仕様により管理者の承認が必要な場合があります）、ここでチャンネルを有効にすると再起動不要で即座に反映されます。国際版 Lark のテナントはドメインを lark に設定してください。",
           "docsLabel": "Feishu Open Platform を開く"
+        },
+        "discord": {
+          "title": "Discord セットアップガイド",
+          "intro": "Discord ボットはボットトークンでゲートウェイに接続するため、公開 IP も Webhook も不要です。",
+          "step1": "Discord Developer Portal（discord.com/developers）でアプリケーションを作成します。",
+          "step2": "Bot ページを開き、トークンをリセットしてコピーします。",
+          "step3": "Privileged Gateway Intents で MESSAGE CONTENT INTENT を有効にします（デフォルトのインテントに必要です）。",
+          "step4": "bot（および applications.commands）スコープの OAuth2 招待 URL を生成し、ボットをサーバーに追加します。",
+          "step5": "ここにトークンを貼り付け、「接続テスト」をクリックしてからチャンネルを有効にします。",
+          "docsLabel": "Discord 開発者ドキュメントを開く"
         }
       }
     },
@@ -2032,7 +2142,9 @@
       "errorReconnect": "口座の再接続に失敗しました",
       "errorReconnectTimeout": "ブラウザー認証がタイムアウトしました。再接続し、ブローカー認証を速やかに完了してください。",
       "errorSaveSettings": "ポートフォリオ設定を保存できません",
-      "errorExport": "書き出しに失敗しました"
+      "errorExport": "書き出しに失敗しました",
+      "exportResearch": "調査用スナップショットを出力",
+      "researchSnapshotHint": "認証情報や口座番号を含めず、この観測を出力します。portfolio_summary でスナップショット ID を再利用できます。"
     },
     "metrics": {
       "total": "総資産",

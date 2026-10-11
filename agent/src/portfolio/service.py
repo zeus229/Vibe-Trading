@@ -726,42 +726,13 @@ class PortfolioService:
             return None
         if snapshot.get("valuation_version") != PORTFOLIO_VALUATION_VERSION:
             return None
-        return snapshot
-
-    @staticmethod
-    def _snapshot_read_identity(
-        snapshot: dict[str, Any],
-        *,
-        mode: str,
-    ) -> dict[str, Any]:
-        """Build a stable identity for the stored observation and projection."""
-        configuration = {
-            "valuation_version": snapshot.get("valuation_version"),
-            "accounts": [
-                {
-                    "source_id": row.get("source_id"),
-                    "profile_id": row.get("profile_id"),
-                    "broker": row.get("broker"),
-                    "portfolio_compatibility": row.get("portfolio_compatibility"),
-                }
-                for row in snapshot.get("accounts", [])
-                if isinstance(row, dict)
-            ],
+        # A removed or revoked connector's stored data stays hidden.
+        enabled = {source.id for source in self.settings_store.load().sources if source.enabled}
+        observed = {
+            str(account.get("source_id") or account.get("broker"))
+            for account in snapshot.get("accounts", [])
         }
-        canonical = json.dumps(
-            configuration,
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-            default=str,
-        ).encode("utf-8")
-        return {
-            "mode": mode,
-            "snapshot_id": snapshot.get("snapshot_id"),
-            "as_of": snapshot.get("created_at"),
-            "valuation_version": snapshot.get("valuation_version"),
-            "configuration_fingerprint": hashlib.sha256(canonical).hexdigest(),
-        }
+        return snapshot if observed <= enabled else None
 
     def reconnect_source(self, source_id: str) -> dict[str, Any]:
         """Run a source's interactive OAuth flow on explicit user request.
@@ -898,7 +869,7 @@ class PortfolioService:
         """Read one snapshot (latest, or pinned by id) and project its ARS composition."""
         from src.portfolio.compact import compact_snapshot
 
-        snapshot = self.snapshot_by_id(snapshot_id) if snapshot_id else self.latest()
+        snapshot = self.latest() if snapshot_id is None else self.snapshot_by_id(snapshot_id)
         return None if snapshot is None else compact_snapshot(snapshot)
 
     def analysis_context(self, snapshot_id: str | None = None) -> dict[str, Any] | None:
@@ -916,10 +887,10 @@ class PortfolioService:
         Returns:
             The sanitized context, or ``None`` when no usable snapshot exists.
         """
-        read_mode = "pinned" if snapshot_id else "latest"
+        read_mode = "latest" if snapshot_id is None else "pinned"
         snapshot = (
             self.snapshot_by_id(snapshot_id)
-            if snapshot_id
+            if snapshot_id is not None
             else self.latest()
         )
         if snapshot is None:
@@ -976,10 +947,15 @@ class PortfolioService:
                 }
             )
         return {
-            "as_of": snapshot["created_at"],
             "snapshot_id": snapshot.get("snapshot_id"),
+            "as_of": snapshot["created_at"],
             "valuation_version": snapshot.get("valuation_version"),
-            "read_identity": self._snapshot_read_identity(snapshot, mode=read_mode),
+            "read_identity": {
+                "mode": read_mode,
+                "snapshot_id": snapshot.get("snapshot_id"),
+                "as_of": snapshot["created_at"],
+                "valuation_version": snapshot.get("valuation_version"),
+            },
             "complete": snapshot["complete"],
             "totals": snapshot["totals"],
             "account_allocation": [

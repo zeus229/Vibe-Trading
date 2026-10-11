@@ -462,6 +462,8 @@ export const api = {
       `/correlation/regime?codes=${encodeURIComponent(codes)}&days=${encodeURIComponent(String(days))}`,
     ),
   getPortfolio: () => request<{ status: string; snapshot: PortfolioSnapshot | null }>("/api/portfolio"),
+  getPortfolioAnalysisContext: (snapshotId: string) =>
+    request<{ status: string; context: Record<string, unknown> }>(`/api/portfolio/analysis-context?snapshot_id=${encodeURIComponent(snapshotId)}`),
   refreshPortfolio: () => request<{ status: string; snapshot: PortfolioSnapshot }>("/api/portfolio/refresh", { method: "POST" }),
   getPortfolioRefreshStatus: () => request<{ status: string; refresh: PortfolioRefreshState }>("/api/portfolio/refresh-status"),
   reconnectPortfolioSource: (sourceId: string) =>
@@ -1002,6 +1004,8 @@ export interface ChannelFieldHint {
   secret: boolean;
   required: boolean;
   help_key?: string | null;
+  /** Closed set of valid values; the panel renders a <select> when present. */
+  choices?: string[];
 }
 
 export interface ChannelSecretStatus {

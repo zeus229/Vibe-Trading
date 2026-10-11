@@ -30,6 +30,12 @@ _TIMESTAMP_FIELDS = ("trade_date", "date", "datetime", "timestamp", "time", "ind
 
 _MAX_GENERIC_EVIDENCE = 2_000
 
+#: Top-level fields of a code-running tool's envelope (backtest, bash, ...). They
+#: describe the process, not the market, so they never become observed evidence.
+_ENVELOPE_FIELDS = frozenset(
+    {"exit_code", "returncode", "elapsed_seconds", "duration_seconds"}
+)
+
 # Only these CSV columns count; Volume, Adj Close etc. are ignored so the
 # contradiction check gains no values it would be willing to accept.
 _CSV_PRICE_COLUMNS = {
@@ -1585,6 +1591,8 @@ class _EvidenceMixin:
                 units = units if isinstance(units, dict) else {}
                 for key, item in value.items():
                     if str(key).casefold() in timestamp_fields:
+                        continue
+                    if not path and str(key).casefold() in _ENVELOPE_FIELDS:
                         continue
                     child_path = f"{path}.{key}" if path else str(key)
                     visit(

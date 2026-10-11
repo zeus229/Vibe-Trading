@@ -867,6 +867,106 @@
             "label": "Sesiones por tema",
             "help": "Asigna a cada tema del grupo su propia sesión del agente."
           }
+        },
+        "slack": {
+          "bot_token": {
+            "label": "Token del bot (xoxb-)",
+            "help": "El token OAuth de usuario bot de Slack (empieza por xoxb-). Se guarda en el servidor y nunca se devuelve al navegador."
+          },
+          "app_token": {
+            "label": "Token de la app (xapp-)",
+            "help": "El token de nivel de aplicación de Slack (empieza por xapp-) con el ámbito connections:write, necesario para Socket Mode. Se guarda en el servidor y nunca se devuelve al navegador."
+          },
+          "user_token_read_only": {
+            "label": "Token de usuario en solo lectura",
+            "help": "Indicador de comportamiento, no una credencial: mantiene el acceso con token de usuario en solo lectura."
+          },
+          "reply_in_thread": {
+            "label": "Responder en hilo",
+            "help": "Responder en un hilo bajo el mensaje original en lugar de publicar directamente en el canal."
+          },
+          "react_emoji": {
+            "label": "Emoji de procesamiento",
+            "help": "Emoji con el que se reacciona a un mensaje entrante mientras el agente trabaja (por defecto eyes)."
+          },
+          "done_emoji": {
+            "label": "Emoji de finalización",
+            "help": "Emoji con el que se reacciona cuando la tarea termina (por defecto white_check_mark). Déjalo vacío para no usar ninguno."
+          },
+          "include_thread_context": {
+            "label": "Incluir contexto del hilo",
+            "help": "Anteponer las respuestas anteriores del hilo como contexto la primera vez que el bot es incorporado a él."
+          },
+          "thread_context_limit": {
+            "label": "Límite de contexto del hilo",
+            "help": "Número máximo de mensajes del hilo incluidos como contexto (por defecto 20)."
+          },
+          "allow_from": {
+            "label": "Remitentes permitidos",
+            "help": "Lista blanca de IDs de usuario de Slack autorizados a hablar con el agente. El acceso a MD y canales también está controlado por la política de MD y la política de grupos."
+          },
+          "group_policy": {
+            "label": "Política de grupos",
+            "help": "\"mention\": responde solo cuando se menciona al bot en un canal; \"open\": responde a todos los mensajes del canal; \"allowlist\": responde solo en los canales enumerados abajo."
+          },
+          "group_allow_from": {
+            "label": "Canales permitidos",
+            "help": "IDs de canales en los que el bot responde cuando la política de grupos es \"allowlist\"."
+          },
+          "group_require_mention": {
+            "label": "Requerir mención en canales permitidos",
+            "help": "Con la política \"allowlist\", exigir además una @mención antes de responder en los canales aprobados. Sin efecto para \"mention\" u \"open\"."
+          }
+        },
+        "discord": {
+          "token": {
+            "label": "Token del bot",
+            "help": "El token del bot desde el portal de desarrolladores de Discord (no un token de usuario ni OAuth). Se guarda en el servidor y nunca se devuelve al navegador."
+          },
+          "allow_from": {
+            "label": "Remitentes permitidos",
+            "help": "Lista blanca opcional de IDs de usuario de Discord que pueden hablar con el agente. Déjala vacía para permitir a todos."
+          },
+          "allow_channels": {
+            "label": "Canales permitidos",
+            "help": "Lista blanca opcional de IDs de canales de Discord en los que el bot responde. Déjala vacía para permitir todos los canales."
+          },
+          "intents": {
+            "label": "Intents del gateway",
+            "help": "Campo de bits de intents del gateway como entero (por defecto 37377 = GUILDS | GUILD_MESSAGES | DIRECT_MESSAGES | MESSAGE_CONTENT). MESSAGE CONTENT es un intent privilegiado que debe activarse en el portal de desarrolladores o el bot no podrá conectarse."
+          },
+          "group_policy": {
+            "label": "Política de grupos",
+            "help": "\"mention\": responde solo cuando se menciona al bot con @ en un canal del servidor; \"open\": responde a todos los mensajes del canal (sin salir de las listas blancas)."
+          },
+          "read_receipt_emoji": {
+            "label": "Emoji de lectura",
+            "help": "Emoji con el que se acusa recibo de un mensaje entrante de inmediato (por defecto 👀); se retira cuando llega la respuesta."
+          },
+          "working_emoji": {
+            "label": "Emoji de procesamiento",
+            "help": "Emoji con el que se reacciona mientras el agente sigue trabajando (por defecto 🔧); se añade tras el retardo del emoji de procesamiento."
+          },
+          "working_emoji_delay": {
+            "label": "Retardo del emoji de procesamiento (s)",
+            "help": "Segundos que se esperan antes de añadir el emoji de procesamiento, para que las respuestas rápidas nunca lo muestren (por defecto 2.0)."
+          },
+          "streaming": {
+            "label": "Respuestas en streaming",
+            "help": "Transmitir la respuesta editando progresivamente un único mensaje de Discord en lugar de enviar un solo mensaje final."
+          },
+          "proxy": {
+            "label": "URL del proxy",
+            "help": "Proxy HTTP opcional por el que pasan la conexión al gateway y las llamadas a la API, p. ej. http://host:port."
+          },
+          "proxy_username": {
+            "label": "Usuario del proxy",
+            "help": "Usuario del proxy; debe indicarse junto con la contraseña del proxy o no indicarse: un par a medias se ignora con un aviso. Se guarda en el servidor y nunca se devuelve al navegador."
+          },
+          "proxy_password": {
+            "label": "Contraseña del proxy",
+            "help": "Contraseña del proxy; debe indicarse junto con el usuario del proxy o no indicarse: un par a medias se ignora con un aviso. Se guarda en el servidor y nunca se devuelve al navegador."
+          }
         }
       },
       "guides": {
@@ -919,6 +1019,16 @@
           "step4": "Copia el App ID y el App Secret desde Credenciales e información básica y pégalos en los campos de arriba.",
           "step5": "Crea una versión y publica la aplicación (con aprobación del administrador si tu tenant lo exige); después activa el canal: se aplica en caliente, sin reiniciar. En tenants internacionales de Lark, pon el dominio en lark.",
           "docsLabel": "Abrir la plataforma para desarrolladores de Feishu"
+        },
+        "discord": {
+          "title": "Guía de configuración de Discord",
+          "intro": "Los bots de Discord se conectan al gateway con un token de bot, así que no necesitas IP pública ni webhook.",
+          "step1": "Crea una aplicación en el portal de desarrolladores de Discord (discord.com/developers).",
+          "step2": "Abre la página Bot, restablece el token y cópialo.",
+          "step3": "En Privileged Gateway Intents, activa MESSAGE CONTENT INTENT (los intents por defecto lo requieren).",
+          "step4": "Genera una URL de invitación OAuth2 con el ámbito bot (y applications.commands) y añade el bot a tu servidor.",
+          "step5": "Pega aquí el token, pulsa «Probar conexión» y activa el canal.",
+          "docsLabel": "Abrir la documentación para desarrolladores de Discord"
         }
       }
     },
@@ -2032,7 +2142,9 @@
       "errorReconnect": "No se pudo volver a conectar la cuenta",
       "errorReconnectTimeout": "La autorización del navegador agotó el tiempo. Vuelve a conectar y completa pronto la autorización del bróker.",
       "errorSaveSettings": "No se pudieron guardar los ajustes de la cartera",
-      "errorExport": "Fallo al exportar"
+      "errorExport": "Fallo al exportar",
+      "exportResearch": "Exportar instantánea de análisis",
+      "researchSnapshotHint": "Exporta esta observación sin credenciales ni números de cuenta. Reutiliza su ID de instantánea en portfolio_summary."
     },
     "metrics": {
       "total": "Activos totales",

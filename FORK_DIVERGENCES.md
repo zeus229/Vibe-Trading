@@ -1,6 +1,24 @@
 # Fork divergences from HKUDS/Vibe-Trading
 
-Last upstream sync: 2026-10-09 (upstream `b1f6ce71`, fork `211a72cc`).
+Last upstream sync: 2026-10-10 (upstream `8e430079`, merged onto fork `bfc7a647`).
+
+## Absorbed by upstream in the 2026-10-10 sync (do not re-add)
+
+Upstream merged our PRs #1767, #1768 and #1769 (as `c87fb83e`, `a0208f17`, `5298755e`):
+
+- `portfolio_summary(snapshot_id=...)` + `read_identity` (mode, snapshot_id, as_of, valuation_version),
+  fail-closed `snapshot_not_found`, blank id fails closed, stored snapshot hidden when its source is
+  disabled. The fork's extra `configuration_fingerprint` was dropped to match upstream.
+- `technical_indicators(end_date=...)` strict boundary + `read_identity.dataset_fingerprint`.
+- Code-tool envelope bookkeeping (`exit_code`, `elapsed_seconds`...) is not grounding evidence
+  (`_ENVELOPE_FIELDS`).
+- Upstream also moved `_microcompact` into `agent/context_compact.py` and the identity/figures-block
+  checks into the grounding registry (`identity_checks.py`, `figures_checks.py`).
+
+Still fork-only on top of those: `portfolio_summary` `view=compact` and `no_cache`; the fork's
+`technical_indicators` fingerprint also hashes the provider provenance and reports `requested_start_date`/
+`latest_date`, plus `no_cache`; `preserve_during_microcompact` skip in `context_compact._microcompact`
+(`preserve_tools`) and the replay visibility lease.
 
 ## Grounding: derived-formula notes are fail-closed
 
@@ -47,7 +65,7 @@ the band to 1% was superseded by this policy and archived.
 
 ## Read identity and freshness (fork additions)
 
-- `portfolio_summary(snapshot_id=...)` reads one immutable stored snapshot (both `extended` and
+- (Absorbed by upstream 2026-10-10; see top.) `portfolio_summary(snapshot_id=...)` reads one immutable stored snapshot (both `extended` and
   `compact` views) and returns `snapshot_id` plus `read_identity` (mode, as_of, configuration
   fingerprint). A missing or incompatible id fails closed with `snapshot_not_found`; omitting it
   keeps the latest-snapshot behaviour.
