@@ -3348,7 +3348,23 @@ class _PolicyMixin:
                            for r in exact_records):
                     exact_records.append(record)
             reason = validate_operands(tree, exact_records, symbol, money=money)
-            return reason if reason else (tree._grounding_financial_value, operands, False)
+            # Our canonical adapter's *_pct fields encode percentage points.
+            # Resolve only exact cited leaves: never infer a scale from a
+            # similarly-valued field in the session or from an arbitrary tool.
+            percent_points = (
+                percent
+                and not normalized_x100
+                and bool(exact_records)
+                and all(
+                    record.tool.startswith("asistente_casa_")
+                    and record.unit == "ratio"
+                    and _is_percent_field(record.field.rsplit(".", 1)[-1])
+                    for record in exact_records
+                )
+            )
+            return reason if reason else (
+                tree._grounding_financial_value, operands, percent_points
+            )
         # Two instruments' bars and no resolved symbol: arithmetic anchored on
         # the session's pools, or on one instrument's prints the ref names,
         # would look anchored with nothing to anchor it to. Only evidence that
