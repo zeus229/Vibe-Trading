@@ -216,6 +216,12 @@ def _explicit_sign(text: str) -> int:
     return 1 if head == "+" else -1 if head == "-" else 0
 
 
+def _is_percent_field(name: str) -> bool:
+    """Whether a field name says its value is already in percentage points."""
+    lowered = name.lower()
+    return "percent" in lowered or "pct" in lowered or lowered.endswith("%")
+
+
 def _is_plain_count(figure: Figure) -> bool:
     """Whether a figure can be a count or a parameter the model chose.
 
@@ -3284,7 +3290,7 @@ class _PolicyMixin:
         money: bool = False,
         percent: bool = False,
         scalar_parameters: Sequence[float] = (),
-    ) -> tuple[float, list[float]] | str | None:
+    ) -> tuple[float, list[float], bool] | str | None:
         """Evaluate a declaration's note as an observation-anchored formula.
 
         Returns the ``(result, operands)`` pair when the note is arithmetic
@@ -3302,6 +3308,7 @@ class _PolicyMixin:
         if evaluated is None:
             return "formula_not_evaluable"
         result, operands, tree = evaluated
+        normalized_x100 = False
         # A percent claim may spell its final unit conversion explicitly.
         # Normalize ONLY an outer, trailing literal *100 back to a fraction;
         # do not broaden result matching or exempt any inner data operand.
@@ -3317,6 +3324,7 @@ class _PolicyMixin:
             result /= 100
             operands = operands[:-1]
             tree = ast.Expression(body=tree.body.left)
+            normalized_x100 = True
         # Exact generic financial refs are validated per operand, independently
         # of the identity of the resulting claim. Never borrow session pools.
         keys = [key.strip() for key in re.split(r"[,;]", declaration.ref) if key.strip()]
@@ -3340,7 +3348,7 @@ class _PolicyMixin:
                            for r in exact_records):
                     exact_records.append(record)
             reason = validate_operands(tree, exact_records, symbol, money=money)
-            return reason if reason else (tree._grounding_financial_value, operands)
+            return reason if reason else (tree._grounding_financial_value, operands, False)
         # Two instruments' bars and no resolved symbol: arithmetic anchored on
         # the session's pools, or on one instrument's prints the ref names,
         # would look anchored with nothing to anchor it to. Only evidence that
@@ -3391,10 +3399,75 @@ class _PolicyMixin:
             for operand in operands
         ):
             return "operand_not_observed"
-        return result, operands
+        points = (
+            percent
+            and not normalized_x100
+            and self._operands_read_as_points(
+                operands, symbol, records, scalar_parameters
+            )
+        )
+        return result, operands, points
+
+    def _operands_read_as_points(
+        self,
+        operands: Sequence[float],
+        symbol: str | None,
+        records: Sequence[EvidenceRecord],
+        scalar_parameters: Sequence[float],
+    ) -> bool:
+        """Whether every data operand anchored only to percent-named fields.
+
+        A field named ``changepercent`` already carries percentage points, so
+        a formula over such fields evaluates in points and a percent figure
+        must meet the result directly, not ``result * 100``. Conservative by
+        construction: an operand whose magnitude also appears under a
+        non-percent field makes the unit undecidable, and the caller keeps
+        the fraction reading.
+        """
+        data = [
+            operand
+            for operand in operands
+            if operand != 1
+            and not any(
+                math.isclose(abs(operand), abs(parameter), rel_tol=1e-12, abs_tol=0.0)
+                for parameter in scalar_parameters
+            )
+        ]
+        if not data:
+            return False
+        candidates = list(self._price_candidates(symbol, records))
+        candidates += [
+            record
+            for record in self._evidence
+            if record.status == "observed"
+            and record.value is not None
+            and record.tool in {"get_market_data", "bash"}
+            and (not symbol or record.symbol == symbol)
+        ]
+        candidates += [
+            record
+            for record in self._evidence
+            if record.status == "observed"
+            and record.value is not None
+            and _metric_kind_for_path(record.field) is not None
+            and (not symbol or not record.symbol or record.symbol == symbol)
+        ]
+        for operand in data:
+            saw_percent = saw_plain = False
+            for record in candidates:
+                if math.isclose(
+                    abs(float(record.value)), abs(operand), rel_tol=1e-9, abs_tol=1e-12
+                ):
+                    if _is_percent_field(record.field):
+                        saw_percent = True
+                    else:
+                        saw_plain = True
+            if not saw_percent or saw_plain:
+                return False
+        return True
 
     @staticmethod
-    def _result_matches(figure: Figure, result: float, note: str = "") -> bool:
+    def _result_matches(figure: Figure, result: float, note: str = "", *, points: bool = False) -> bool:
         """Whether a formula's result is the value the prose figure states.
 
         The band is half a unit of the last digit the PROSE was written with
@@ -3409,7 +3482,7 @@ class _PolicyMixin:
         targets = (
             {result}
             if figure.percent
-            and _has_explicit_percent_scale(note)
+            and (points or _has_explicit_percent_scale(note))
             and not _has_trailing_percent_factor(note)
             else {result * 100.0}
             if figure.percent
@@ -3500,8 +3573,8 @@ class _PolicyMixin:
                     **derive_hint,
                 )
             ]
-        result, _ = derivation
-        if self._result_matches(figure, result, declaration.note):
+        result, _, points = derivation
+        if self._result_matches(figure, result, declaration.note, points=points):
             # An equal result cannot introduce operands absent from the stated
             # arithmetic. Display scaling does not change financial coverage.
             derive_hint = self._deterministic_derive_metadata(figure, declaration)
@@ -3537,12 +3610,12 @@ class _PolicyMixin:
                     ]
             return []
         # Reported in the figure's own units, as ``_result_matches`` compares it.
-        scaled = result * 100.0 if figure.percent else result
+        scaled = (result if points else result * 100.0) if figure.percent else result
         shown = f"{scaled:.6g}%" if figure.percent else f"{scaled:.6g}"
         # "−1.51pp" beside "12.87% − 11.36%": the size is right and the formula
         # runs the other way. Still refused (the sign is part of the claim),
         # but said, or the model rewrites the number instead of the formula.
-        reversed_sign = self._result_matches(figure, -result)
+        reversed_sign = self._result_matches(figure, -result, declaration.note, points=points)
         return [
             self._figure_issue(
                 "numeric_claim_conflict",
