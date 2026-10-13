@@ -347,3 +347,11 @@ Existing fork tests already exercise distinct behavioral contracts rather than j
 3. **Future upstream grouping (NO PR now):** (A) multi-ref; (B) replay opt-in + portfolio replay schema; (C) evidence identity/row scoping; (D) correction retention/issue queue, later; (E) provider-neutral ISIN listing after local collision fix. Keep each contract independent unless reviewers request grouping.
 
 **Scope exclusion:** Risk ACCIONES and fork PR #71. Asistente Casa remains canonical, trading remains disabled. No E2E/production conclusions.
+
+### Candidate correction — verified listing collision safety (2026-10-13)
+
+- Branch `fix/isin-verified-listing-conflicts`, based on fork main `4dd67367`.
+- `grounding/identity.py` now collects qualifying `Yahoo + ISIN + verified + BYMA` mappings before constructing the portfolio locks. A single ISIN with multiple `.BA` symbols is marked `conflicting` (not last-row-wins). A single symbol assigned to multiple ISINs also marks the affected identities conflicting, including when the observations arrive in separate tool results. Conflicts stay closed on subsequent identical observations; singular verified mappings still lock normally.
+- Added `agent/tests/test_verified_portfolio_isin_conflicts.py` for unique listing, order-independence, cross-call contradictions, symbol collision, and ignored unverified mappings.
+- **NOT YET VM VALIDATED OR DEPLOYED.** Requires focused tests in detached HEAD, especially existing identity-gate tests and an offline production-shape count of duplicate verified ISIN/symbol mappings (only report counts/tickers with no private account data). Do not merge pending PASS. No upstream PR.
+- This is a fail-closed safety mitigation, not yet a generic solution for multiple legitimate listings of the same security. A future provider-neutral model should explicitly distinguish security ISIN from listing identity.
