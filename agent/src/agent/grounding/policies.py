@@ -3329,6 +3329,15 @@ class _PolicyMixin:
         # of the identity of the resulting claim. Never borrow session pools.
         keys = [key.strip() for key in re.split(r"[,;]", declaration.ref) if key.strip()]
         resolved = [self._referenced_one(key, None, None, pool_ambiguous=True) for key in keys]
+        # Do not silently discard empty or unresolved declared sources.
+        # In particular, a valid market-price pool must never stand in for
+        # "before; unknown", "before;" or an unknown exact call::field.
+        ref_parts = re.split(r"[,;]", declaration.ref)
+        if (len(ref_parts) > 1 or "::" in declaration.ref) and (
+            any(not part.strip() for part in ref_parts)
+            or any(item is None or (not item[0] and not item[1]) for item in resolved)
+        ):
+            return "no_evidence"
         generic_financial = any(
             record.identity_scope in {"entity", "aggregate"}
             and record.unit in {"money", "ratio"}
