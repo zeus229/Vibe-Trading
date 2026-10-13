@@ -166,3 +166,18 @@ def test_tool_source_asistente_casa_never_calls_generic_market_fetcher(monkeypat
     ))
     assert out["status"] == "ok"
     assert out["meta"]["source"] == "asistente-casa"
+
+
+def test_canonical_equity_risk_routing_policy_is_explicit():
+    from src.agent.context import _SYSTEM_PROMPT
+    from src.tools.asistente_casa_portfolio_risk_tool import AsistenteCasaPortfolioRiskXrayTool
+    canonical = "mcp_asistente_casa_consultar_riesgo_acciones_canonico"
+    assert canonical in _SYSTEM_PROMPT
+    assert canonical in AsistenteCasaPortfolioRiskXrayTool.description
+    assert "63, 126, 252, 504, or 756" in _SYSTEM_PROMPT
+    assert "risk_contribution_pct" in _SYSTEM_PROMPT
+    assert "correlation_matrix" in _SYSTEM_PROMPT
+    assert "CEDEARS" in _SYSTEM_PROMPT
+    assert "VaR/Expected Shortfall" in _SYSTEM_PROMPT
+    assert "Scheduled/ownerless" in _SYSTEM_PROMPT
+    assert "Risk X-Ray-only" in AsistenteCasaPortfolioRiskXrayTool.description
