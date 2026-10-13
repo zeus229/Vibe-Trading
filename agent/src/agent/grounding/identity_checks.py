@@ -85,3 +85,38 @@ def _identity_not_locked(ledger: Any, content: str) -> list[dict[str, Any]]:
             "message": (f"Instrument identity is {status}; a final market conclusion requires locked identity."),
         }
     ]
+
+
+@grounding_check(
+    name="portfolio-identity-conflict", phase="identity", order=0,
+    code="portfolio_identity_conflict",
+    description="Do not make market claims about symbols with contradictory verified ISIN mappings.",
+)
+def _portfolio_identity_conflict(ledger: Any, content: str) -> list[dict[str, Any]]:
+    blocked = ledger._portfolio_conflict_symbols()
+    # Unlike an upstream resolver shortlist, these observations contradict
+    # identity data. Only claims explicitly naming an affected security are
+    # blocked; unrelated holdings and generic portfolio prose remain usable.
+    for symbol in sorted(blocked):
+        root = symbol.rsplit(".", 1)[0]
+        # Only use a bare root when unambiguous among the affected listings.
+        roots = {item.rsplit(".", 1)[0] for item in blocked}
+        names = [symbol]
+        if sum(item.rsplit(".", 1)[0] == root for item in blocked) == 1:
+            names.append(root)
+        for name in names:
+            match = re.search(
+                r"(?<![A-Za-z0-9_.])" + re.escape(name) + r"(?![A-Za-z0-9_.])",
+                content, flags=re.IGNORECASE,
+            )
+            if match:
+                return [{
+                    "code": "portfolio_identity_conflict",
+                    "reason": "portfolio_identity_conflict",
+                    "symbol": symbol,
+                    "value": None,
+                    "role": None,
+                    "span": [match.start(), match.end()],
+                    "message": "Portfolio evidence contradicts the ISIN for this symbol; a ticker-only resolver result cannot settle it.",
+                }]
+    return []
