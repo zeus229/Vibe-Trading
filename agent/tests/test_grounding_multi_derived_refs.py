@@ -53,6 +53,18 @@ def test_derived_multi_refs_fail_closed_on_unknown_or_empty_source(tmp_path, ref
 
 
 def test_single_call_ref_contract_unchanged(tmp_path):
-    result = _ledger(tmp_path).validate_final_answer(_answer("before"))
-    assert not result.valid
-    assert any(issue.get("reason") == "operand_not_observed" for issue in result.issues)
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze AAPL.US")
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["AAPL.US"]},
+        result=json.dumps({
+            "AAPL.US": [
+                {"trade_date": "2026-08-03", "close": 100.0},
+                {"trade_date": "2026-09-02", "close": 112.4},
+            ]
+        }),
+        call_id="quote",
+        success=True,
+    )
+    result = ledger.validate_final_answer(_answer("quote"))
+    assert result.valid, result.issues
