@@ -1,9 +1,63 @@
 # Changelog
 
+- Strategy adaptation now binds each child to its own description, universe, date window and hashed backtest artifacts; scoped refresh preserves other strategies' evidence. Agent/MCP, CLI, authenticated REST and the Web welcome entry share the workflow.
+
 All notable changes to Vibe-Trading are documented in this file.
 This project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
+
+### Maintenance — 2026-10-13
+
+- extraETF Investments imports now feed portfolio snapshots, with explicit row-count/freshness checks, EUR reference-rate valuation, preserved account/ISIN identity, and non-executing allocation proposals across Web, REST, CLI and the portfolio tool.
+
+- Standalone validation preserves saved parameters and seeds across walk-forward, Monte Carlo and permutation tests (#1815).
+- Custom OpenAI-compatible providers use tested credentials in the OS vault, canonical model settings and the `provider custom` CLI; existing channel settings remain available (#1264).
+- Pixel Office shares a transactional manual task board across Web, CLI and the agent tool. Assignment does not imply execution, and ranks grant no trading permissions (#1616).
+- mStock Type B reads expose separate holdings, net-position books and raw fund limits. Orders remain disabled; unmapped account values are excluded from portfolio aggregation (#1675).
+- Gildata adds bounded China macro, announcement and broker-report research plus OTC fund NAV reads. NAV evidence is scoped to that tool's declared fields. HK raw-price caliber and exact CN index identity are preserved (#1485).
+
+### Maintenance — 2026-10-12
+
+- Preserve the original opening fill after scale-ins (#1780), use the book
+  immediately before terminal liquidation for Brinson attribution (#1782),
+  and start drawdown duration at the latest visit to the peak (#1784).
+  Three-statement projections honor the caller's balance tolerance throughout
+  the model (#1786); existing balance checks remain enforced.
+- Add ten SEC fundamental factors and three A-share valuation factors
+  (`val:pb`, `val:ps_ttm`, `val:dv_ttm`) via Tushare daily_basic (#1787, #1788,
+  #1789). The registry now has 475 factors, 17 in the fundamental family.
+  Date-only SEC filings become usable one bar later on the IC path (#1790,
+  #1794). Prior IC measurements using same-day filings need to be rerun.
+  XOM keeps its current SEC identity while pre-reorganization filings extend
+  its history. Basic shares never substitute for missing diluted shares.
+  Price-times-diluted-shares ratios are valuation proxies, not reported market
+  capitalization. Missing input data remains missing.
+- Add Brazil `.SA`/BRL routing, an equity engine, local B3/CVM/BCB/Tesouro
+  ingestion and the `get_br_market_data` tool, plus market selection and
+  labels in all nine UI languages (#1783). COTAHIST bars remain raw;
+  CVM statements contain latest revisions, not point-in-time evidence.
+  ZimaOS Compose and a fork publishing template require explicit setup;
+  the upstream repository gains no automatic publishing schedule.
+- Forward active attempt status, tool hints and opt-in reasoning to IM
+  channels, including Feishu CardKit (#1792). Final answers still pass
+  grounding before delivery; draft text and tool-result payloads stay private.
+- Complete write-target helper extraction with actual loop delegation (#1791,
+  #1624), preserving runtime model provenance. Clarify that connector profiles,
+  not the legacy config.readonly field, govern order access (#1793).
+
+### Maintenance — 2026-10-11
+
+- Reject unsupported live options before broker dispatch (#1773). This is a
+  guard fix; live options execution is not enabled.
+- Require evidence for every data operand in derived figures (#1622).
+  Chosen multipliers/divisors need an explicit parameter declaration and
+  matching visible label; arithmetic checks remain enforced.
+- Keep explicit offline/source-bound benchmarks on their selected loader and
+  report unresolved benchmarks (#1781). Distinguish entry/exit events so
+  break-even closes remain in trade artifacts and downstream analysis (#1779).
+- Preserve optional Codex tool arguments with explicit non-strict schemas
+  (#1785).
 
 ### Maintenance — 2026-10-10
 

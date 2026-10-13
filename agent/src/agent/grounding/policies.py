@@ -25,7 +25,7 @@ from src.agent.grounding.identity import (
 )
 from src.agent.grounding import identity_checks  # noqa: F401  (registers declared checks)
 from src.agent.grounding import figures_checks  # noqa: F401  (registers declared checks)
-from src.agent.grounding.registry import GROUNDING_CHECKS
+from src.agent.grounding.registry import GROUNDING_CHECKS, grounding_check
 from src.agent.grounding.evidence import (
     EvidenceRecord,
     _record_matches_entity,
@@ -110,6 +110,7 @@ _CURRENCY_ALIASES = {
     "CAD": ("cad", "c$", "加元", "加拿大元"),
     "GBP": ("gbp", "£", "英镑"),
     "VND": ("vnd", "₫", "越南盾"),
+    "BRL": ("brl", "r$", "real brasileiro", "reais", "巴西雷亚尔"),
     "ARS": ("ars", "ar$", "阿根廷比索"),
 }
 
@@ -523,15 +524,31 @@ def _has_explicit_percent_scale(note: str) -> bool:
     return bool(re.search(r"(?:×|✕|\*)\s*100(?:\.0+)?\b", note))
 
 
+def _has_trailing_percent_factor(note: str) -> bool:
+    """Whether the note's outer operation is the literal ``* 100`` unit factor.
+
+    Upstream's ``_derivation`` strips exactly this factor and compares the
+    remaining fraction as percentage points, so the result is already a fraction.
+    """
+    evaluated = _formula_in_note(note)
+    if evaluated is None:
+        return False
+    body = evaluated[2].body
+    return (
+        isinstance(body, ast.BinOp)
+        and isinstance(body.op, ast.Mult)
+        and isinstance(body.right, ast.Constant)
+        and _is_number(body.right.value)
+        and body.right.value == 100
+    )
+
+
 class _PolicyMixin:
     """Policy behaviour of :class:`GroundingLedger`."""
 
     def _validate_identity(self, content: str) -> list[dict[str, Any]]:
         """Validate aggregate state and listed/private contradictions."""
-        issues: list[dict[str, Any]] = []
-        issues.extend(GROUNDING_CHECKS.run("identity-not-locked", self, content))
-        issues.extend(GROUNDING_CHECKS.run("listed-identity-relabelled-private", self, content))
-        return issues
+        return GROUNDING_CHECKS.run_phase("identity", self, content)
 
     def _validate_figures(
         self,
@@ -550,7 +567,7 @@ class _PolicyMixin:
             One issue per figure that its role does not survive, plus one per
             malformed declaration line and the provenance findings.
         """
-        issues: list[dict[str, Any]] = GROUNDING_CHECKS.run("figures-block-malformed", self, content)
+        issues: list[dict[str, Any]] = GROUNDING_CHECKS.run_phase("declarations", self, content)
         records = self._comparable_price_records()
         # Symbol resolution is broader than price comparison. A session may hold
         # quotes for the primary listing and only non-price evidence for another
@@ -591,6 +608,36 @@ class _PolicyMixin:
         ]
         declaration_by_span = self._declarations_by_span(block, figures)
 
+        # The hidden declaration alone cannot turn invented data into a free
+        # coefficient. A chosen parameter needs a count declaration AND its
+        # value and label in the visible answer. No prose vocabulary decides
+        # its role; the same label-matching contract already protects citations.
+        scalar_parameters: list[float] = []
+        for parameter in figures:
+            declared = block.match(parameter.value, parameter.percent, parameter.digits)
+            if (
+                declared is None
+                or declared.role != "count"
+                or parameter.shape not in ("measured", "bare")
+                or parameter.currency
+                or parameter.column
+            ):
+                continue
+            line = positions[parameter.line][0] if 0 <= parameter.line < len(positions) else ""
+            # Citation tokens cover labels embedded in ordinary prose. Also
+            # accept a complete label in any script, including a short symbol
+            # such as "w"; it must not match a letter inside an unrelated word.
+            label = declared.note.strip()
+            label_visible = bool(label) and (
+                bool(_note_tokens(label) & _note_tokens(line))
+                or re.search(
+                    r"(?<![^\W\d_])" + re.escape(label) + r"(?![^\W\d_])",
+                    line,
+                    re.IGNORECASE,
+                ) is not None
+            )
+            if label_visible:
+                scalar_parameters.append(parameter.value / 100 if parameter.percent else parameter.value)
         checked_price = False
         for figure in figures:
             if figure.shape not in ("measured", "bare"):
@@ -609,94 +656,24 @@ class _PolicyMixin:
             ):
                 continue
             if declaration is not None:
-                written = self._written_symbol(
-                    content, figure, line_symbols, symbol_records
+                found = GROUNDING_CHECKS.run(
+                    "figure-symbol", self, content, figure, declaration, symbol, line_symbols, symbol_records,
                 )
-                if written and symbol and written != symbol:
-                    # A declaration names where a number came from; it cannot
-                    # move a figure the sentence attaches to another instrument.
-                    issues.append(
-                        self._figure_issue(
-                            "numeric_claim_conflict",
-                            figure,
-                            declaration.role,
-                            symbol,
-                            "symbol_mismatch",
-                            f"is declared for {symbol} but the answer writes it about {written}",
-                        )
-                    )
+                if found:
+                    issues.extend(found)
                     continue
             if declaration is None:
-                # A shape mismatch must not erase an existing derived intent.
-                # Association is only a candidate: repair still proves every ref
-                # and the complete formula before requiring preservation.
-                derived_candidates = [
-                    item for item in block.declarations
-                    if item.role == "derived" and item in block.compatible_declarations(
-                        figure.value, item.percent, figure.digits
-                    )
-                ]
-                if derived_candidates:
-                    repair = self._derived_ref_repair_metadata(
-                        figure, derived_candidates[0], symbol, records
-                    ) if len(derived_candidates) == 1 else {}
-                    issues.append(self._figure_issue(
-                        "figure_undeclared", figure, "derived", symbol, "undeclared",
-                        "has no compatible derived declaration in its written unit; "
-                        "repair the complete derivation or remove it",
-                        **repair,
-                    ))
-                    continue
-                found = self._check_observed(figure, None, symbol, records)
-                if block.present and found:
-                    # Declared, but as a fraction where the answer writes a
-                    # percent (or the reverse): still undeclared, since the
-                    # two are different assertions — but say so, or the model
-                    # reads "not declared" as a lie and repeats the draft.
-                    other_unit = _declared_in_other_unit(block, figure)
-                    undeclared_entity_hint = self._undeclared_entity_repair_metadata(
-                        figure
-                    )
-                    derive_hint = self._deterministic_derive_metadata(figure)
-                    issues.append(
-                        self._figure_issue(
-                            "figure_undeclared",
-                            figure,
-                            None,
-                            symbol,
-                            "undeclared",
-                            "is not declared in the figures block and is not an observed "
-                            "value; declare it as observed / derived / proposed / cited / "
-                            "count, or remove it",
-                            **(
-                                {
-                                    "declared_as": other_unit.value_text,
-                                    "declared_sign_differs": (other_unit.value < 0) != (figure.value < 0),
-                                }
-                                if other_unit
-                                else {}
-                            ),
-                            **undeclared_entity_hint,
-                            **derive_hint,
-                        )
-                    )
-                    continue
-                checked_price = True
+                found = GROUNDING_CHECKS.run("undeclared-figure", self, figure, symbol, records, block)
                 issues.extend(found)
+                # An undeclared figure rejected at the declaration boundary did
+                # not trigger provenance in the original walk.
+                if not any(issue["code"] == "figure_undeclared" for issue in found):
+                    checked_price = True
                 continue
             role = declaration.role
-            if figure.column and role != "observed":
-                issues.append(
-                    self._figure_issue(
-                        "numeric_claim_conflict",
-                        figure,
-                        role,
-                        symbol,
-                        "cited_as_observed" if role == "cited" else "role_in_price_column",
-                        f"is declared {role}, but it sits in the {figure.column} column, "
-                        "which holds observed prints only",
-                    )
-                )
+            found = GROUNDING_CHECKS.run("figure-price-column", self, figure, role, symbol)
+            if found:
+                issues.extend(found)
                 continue
             if role == "count":
                 posing = (
@@ -707,7 +684,7 @@ class _PolicyMixin:
                 if not _is_plain_count(figure) or posing:
                     checked_price = True
                     issues.extend(
-                        self._count_as_observed(
+                        GROUNDING_CHECKS.run("figure-count", self,
                             figure,
                             declaration,
                             symbol,
@@ -728,21 +705,21 @@ class _PolicyMixin:
                     else ""
                 )
                 issues.extend(
-                    self._check_cited(figure, declaration, symbol, declared_observed, line)
+                    GROUNDING_CHECKS.run("figure-cited", self, figure, declaration, symbol, declared_observed, line)
                 )
                 continue
             checked_price = True
             if role == "derived":
                 issues.extend(
-                    self._check_derived(figure, declaration, symbol, records)
+                    GROUNDING_CHECKS.run("figure-derived", self, figure, declaration, symbol, records, scalar_parameters)
                 )
                 continue
             if role == "proposed":
                 issues.extend(
-                    self._check_proposed(figure, declaration, symbol, records)
+                    GROUNDING_CHECKS.run("figure-proposed", self, figure, declaration, symbol, records, scalar_parameters)
                 )
                 continue
-            issues.extend(self._check_observed(figure, declaration, symbol, records))
+            issues.extend(GROUNDING_CHECKS.run("figure-observed", self, figure, declaration, symbol, records))
         market_records = self._price_records()
         if checked_price and market_records:
             issues.extend(self._validate_price_provenance(content, market_records))
@@ -911,6 +888,97 @@ class _PolicyMixin:
 
         return resolved
 
+    @grounding_check(name="figure-symbol", code="numeric_claim_conflict",
+                     description="A declaration cannot move a figure to another instrument.")
+    def _check_figure_symbol(self, content, figure, declaration, symbol, line_symbols, symbol_records):
+        written = self._written_symbol(
+            content, figure, line_symbols, symbol_records
+        )
+        if written and symbol and written != symbol:
+            # A declaration names where a number came from; it cannot
+            # move a figure the sentence attaches to another instrument.
+            return [
+                self._figure_issue(
+                    "numeric_claim_conflict",
+                    figure,
+                    declaration.role,
+                    symbol,
+                    "symbol_mismatch",
+                    f"is declared for {symbol} but the answer writes it about {written}",
+                )
+            ]
+        return []
+
+    @grounding_check(name="undeclared-figure", code="figure_undeclared",
+                     description="An undeclared measurement must be observed in this session.", additional_codes=('numeric_claim_conflict', 'numeric_claim_unavailable'))
+    def _check_undeclared_figure(self, figure, symbol, records, block):
+        # A shape mismatch must not erase an existing derived intent.
+        # Association is only a candidate: repair still proves every ref
+        # and the complete formula before requiring preservation.
+        derived_candidates = [
+            item for item in block.declarations
+            if item.role == "derived" and item in block.compatible_declarations(
+                figure.value, item.percent, figure.digits
+            )
+        ]
+        if derived_candidates:
+            repair = self._derived_ref_repair_metadata(
+                figure, derived_candidates[0], symbol, records
+            ) if len(derived_candidates) == 1 else {}
+            return [self._figure_issue(
+                "figure_undeclared", figure, "derived", symbol, "undeclared",
+                "has no compatible derived declaration in its written unit; "
+                "repair the complete derivation or remove it",
+                **repair,
+            )]
+        found = self._check_observed(figure, None, symbol, records)
+        if block.present and found:
+            # Declared, but as a fraction where the answer writes a
+            # percent (or the reverse): still undeclared, since the
+            # two are different assertions — but say so, or the model
+            # reads "not declared" as a lie and repeats the draft.
+            other_unit = _declared_in_other_unit(block, figure)
+            return [
+                self._figure_issue(
+                    "figure_undeclared",
+                    figure,
+                    None,
+                    symbol,
+                    "undeclared",
+                    "is not declared in the figures block and is not an observed "
+                    "value; declare it as observed / derived / proposed / cited / "
+                    "count, or remove it",
+                    **(
+                        {
+                            "declared_as": other_unit.value_text,
+                            "declared_sign_differs": (other_unit.value < 0) != (figure.value < 0),
+                        }
+                        if other_unit
+                        else {}
+                    ),
+                    **self._undeclared_entity_repair_metadata(figure),
+                    **self._deterministic_derive_metadata(figure),
+                )
+            ]
+        return found
+
+    @grounding_check(name="figure-price-column", code="numeric_claim_conflict",
+                     description="An OHLC column can contain only observed prints.")
+    def _check_figure_column(self, figure, role, symbol):
+        if figure.column and role != "observed":
+            return [
+                self._figure_issue(
+                    "numeric_claim_conflict",
+                    figure,
+                    role,
+                    symbol,
+                    "cited_as_observed" if role == "cited" else "role_in_price_column",
+                    f"is declared {role}, but it sits in the {figure.column} column, "
+                    "which holds observed prints only",
+                )
+            ]
+        return []
+
     @staticmethod
     def _figure_issue(
         code: str,
@@ -1007,7 +1075,8 @@ class _PolicyMixin:
 
         if declaration.role == "derived":
             derivation = self._derivation(
-                declaration, None, self._evidence, money=figure.currency
+                declaration, None, self._evidence, money=figure.currency,
+                percent=figure.percent,
             )
             if (
                 not isinstance(derivation, str)
@@ -1735,16 +1804,20 @@ class _PolicyMixin:
             return {}
         repaired = replace(declaration, percent=figure.percent, note=formula,
                            ref="; ".join(dict.fromkeys(refs)))
-        result = self._derivation(repaired, symbol, records, money=figure.currency)
+        result = self._derivation(
+            repaired, symbol, records, money=figure.currency, percent=figure.percent
+        )
         if not isinstance(result, tuple) or not self._result_matches(figure, result[0], formula):
             return {}
         # Make a fraction-to-display conversion explicit in the repair note,
         # then prove that complete formula again with the same operand gate.
         matched, scaled = self._strict_written_match(figure, result[0])
-        if matched and scaled:
+        if matched and scaled and not _has_trailing_percent_factor(formula):
             formula = f"({formula}) * 100"
             repaired = replace(repaired, note=formula)
-            result = self._derivation(repaired, symbol, records, money=figure.currency)
+            result = self._derivation(
+            repaired, symbol, records, money=figure.currency, percent=figure.percent
+        )
             if not isinstance(result, tuple) or not self._result_matches(figure, result[0], formula):
                 return {}
         return {"derive_formula": formula,
@@ -2367,6 +2440,9 @@ class _PolicyMixin:
                     return _nearest(figure.value, values)
         return _nearest(figure.value, fallback)
 
+    @grounding_check(name="figure-count", code="numeric_claim_conflict",
+                     additional_codes=("numeric_claim_unavailable",),
+                     description="Validate the count figure contract against evidence.")
     def _count_as_observed(
         self,
         figure: Figure,
@@ -2830,6 +2906,9 @@ class _PolicyMixin:
             "replacement_source_call_id": source_call,
         }
 
+    @grounding_check(name="figure-observed", code="numeric_claim_conflict",
+                     additional_codes=("numeric_claim_unavailable",),
+                     description="Validate the observed figure contract against evidence.")
     def _check_observed(
         self,
         figure: Figure,
@@ -3203,13 +3282,19 @@ class _PolicyMixin:
         records: Sequence[EvidenceRecord],
         *,
         money: bool = False,
+        percent: bool = False,
+        scalar_parameters: Sequence[float] = (),
     ) -> tuple[float, list[float]] | str | None:
         """Evaluate a declaration's note as an observation-anchored formula.
 
         Returns the ``(result, operands)`` pair when the note is arithmetic
-        over at least two operands, at least one of which the run observed and
-        every added or subtracted term of which holds an observed operand;
-        otherwise the reason it is not.
+        over at least two operands. Data operands must be observed; chosen
+        scalar parameters must be declared and visible. Every added or
+        subtracted term still needs an observed anchor. Literal 1 is the
+        multiplicative identity (also used in ratio-minus-one expressions),
+        and square/cube exponents belong to the operator, not the operands.
+        A percent claim's explicit trailing *100 is normalized as a unit
+        conversion before checking the remaining data operands.
         """
         if declaration is None or not declaration.note.strip():
             return "no_formula"
@@ -3217,6 +3302,21 @@ class _PolicyMixin:
         if evaluated is None:
             return "formula_not_evaluable"
         result, operands, tree = evaluated
+        # A percent claim may spell its final unit conversion explicitly.
+        # Normalize ONLY an outer, trailing literal *100 back to a fraction;
+        # do not broaden result matching or exempt any inner data operand.
+        # Numeric magnitude elsewhere never decides whether an operand is data.
+        if (
+            percent
+            and isinstance(tree.body, ast.BinOp)
+            and isinstance(tree.body.op, ast.Mult)
+            and isinstance(tree.body.right, ast.Constant)
+            and _is_number(tree.body.right.value)
+            and tree.body.right.value == 100
+        ):
+            result /= 100
+            operands = operands[:-1]
+            tree = ast.Expression(body=tree.body.left)
         # Exact generic financial refs are validated per operand, independently
         # of the identity of the resulting claim. Never borrow session pools.
         keys = [key.strip() for key in re.split(r"[,;]", declaration.ref) if key.strip()]
@@ -3281,6 +3381,16 @@ class _PolicyMixin:
             return "no_symbol" if unattributed else "formula_not_anchored"
         if _unanchored_term(tree, observed):
             return "additive_operand_not_observed"
+        if any(
+            not observed(operand)
+            and operand != 1
+            and not any(
+                math.isclose(abs(operand), abs(parameter), rel_tol=1e-12, abs_tol=0.0)
+                for parameter in scalar_parameters
+            )
+            for operand in operands
+        ):
+            return "operand_not_observed"
         return result, operands
 
     @staticmethod
@@ -3298,7 +3408,9 @@ class _PolicyMixin:
         half_unit = _written_half_unit(figure.digits or figure.text)
         targets = (
             {result}
-            if figure.percent and _has_explicit_percent_scale(note)
+            if figure.percent
+            and _has_explicit_percent_scale(note)
+            and not _has_trailing_percent_factor(note)
             else {result * 100.0}
             if figure.percent
             else {result, result * 100.0}
@@ -3311,12 +3423,16 @@ class _PolicyMixin:
             if not sign or target * sign >= 0
         )
 
+    @grounding_check(name="figure-derived", code="numeric_claim_conflict",
+                     additional_codes=("numeric_claim_unavailable",),
+                     description="Validate the derived figure contract against evidence.")
     def _check_derived(
         self,
         figure: Figure,
         declaration: Declaration | None,
         symbol: str | None,
         records: Sequence[EvidenceRecord],
+        scalar_parameters: Sequence[float] = (),
     ) -> list[dict[str, Any]]:
         """A derived figure must be the arithmetic its note states."""
         if declaration is not None and figure.symbol:
@@ -3341,7 +3457,10 @@ class _PolicyMixin:
                             **canonical_summary,
                         )
                     ]
-        derivation = self._derivation(declaration, symbol, records, money=figure.currency)
+        derivation = self._derivation(
+            declaration, symbol, records, money=figure.currency, percent=figure.percent,
+            scalar_parameters=scalar_parameters,
+        )
         if isinstance(derivation, str):
             derive_hint = self._derived_ref_repair_metadata(
                 figure, declaration, symbol, records
@@ -3367,7 +3486,12 @@ class _PolicyMixin:
                     symbol,
                     derivation,
                     operand_message or (
-                        "is declared derived, but its note adds or subtracts an operand "
+                        "uses a data operand this session did not observe. Fetch the missing "
+                        "data; do not relabel a numerator or denominator as a parameter. "
+                        "For a genuinely chosen coefficient, declare its value as count and "
+                        "show that value and its note label in the answer"
+                        if derivation == "operand_not_observed"
+                        else "is declared derived, but its note adds or subtracts an operand "
                         "this session did not observe"
                         if derivation == "additive_operand_not_observed"
                         else "is declared derived, but its note is not arithmetic over at "
@@ -3432,12 +3556,16 @@ class _PolicyMixin:
             )
         ]
 
+    @grounding_check(name="figure-proposed", code="numeric_claim_conflict",
+                     additional_codes=("numeric_claim_unavailable",),
+                     description="Validate the proposed figure contract against evidence.")
     def _check_proposed(
         self,
         figure: Figure,
         declaration: Declaration | None,
         symbol: str | None,
         records: Sequence[EvidenceRecord],
+        scalar_parameters: Sequence[float] = (),
     ) -> list[dict[str, Any]]:
         """A proposed level (entry, target, stop) is derived or inside the observed range.
 
@@ -3470,7 +3598,10 @@ class _PolicyMixin:
                     "instrument and nothing attributes it to one",
                 )
             ]
-        derivation = self._derivation(declaration, symbol, records, money=figure.currency)
+        derivation = self._derivation(
+            declaration, symbol, records, money=figure.currency, percent=figure.percent,
+            scalar_parameters=scalar_parameters,
+        )
         if not isinstance(derivation, str) and self._result_matches(figure, derivation[0]):
             return []
         candidates = self._price_candidates(symbol, records)
@@ -3504,6 +3635,9 @@ class _PolicyMixin:
             )
         ]
 
+    @grounding_check(name="figure-cited", code="numeric_claim_conflict",
+                     additional_codes=("numeric_claim_unavailable",),
+                     description="Validate the cited figure contract against evidence.")
     def _check_cited(
         self,
         figure: Figure,
@@ -3581,13 +3715,8 @@ class _PolicyMixin:
                 matches.add(identity)
         return next(iter(matches)) if len(matches) == 1 else None
 
-    def _validate_price_provenance(
-        self,
-        content: str,
-        records: Sequence[EvidenceRecord],
-    ) -> list[dict[str, Any]]:
-        """Require canonical symbol, actual source, and quote currency in output."""
-        issues: list[dict[str, Any]] = []
+    def _provenance_scope(self, content, records):
+        """Resolve the original symbol-scoped provenance pool without changing it."""
         folded = content.casefold()
         symbols = sorted({record.symbol for record in records if record.symbol})
         # ``_scan_symbols`` canonicalizes, so an answer that writes Shanghai as
@@ -3598,6 +3727,20 @@ class _PolicyMixin:
             for symbol in symbols
             if symbol in written or symbol.casefold() in folded
         ]
+        target_symbols = set(mentioned or (symbols if len(symbols) == 1 else []))
+        target_records = [
+            record
+            for record in records
+            if not target_symbols or record.symbol in target_symbols
+        ]
+
+        return folded, symbols, mentioned, target_records
+
+    @grounding_check(name="canonical-symbol-surfaced", code="canonical_symbol_not_surfaced", phase="provenance", order=0,
+                     description="Require canonical symbol surfaced for a checked price.")
+    def _check_canonical_symbol_surfaced(self, content, records):
+        issues = []
+        folded, symbols, mentioned, target_records = self._provenance_scope(content, records)
         if not mentioned:
             issues.append(
                 {
@@ -3614,13 +3757,13 @@ class _PolicyMixin:
                     ),
                 }
             )
-        target_symbols = set(mentioned or (symbols if len(symbols) == 1 else []))
-        target_records = [
-            record
-            for record in records
-            if not target_symbols or record.symbol in target_symbols
-        ]
+        return issues
 
+    @grounding_check(name="data-source-surfaced", code="data_source_not_surfaced", phase="provenance", order=1,
+                     description="Require data source surfaced for a checked price.")
+    def _check_data_source_surfaced(self, content, records):
+        issues = []
+        folded, symbols, mentioned, target_records = self._provenance_scope(content, records)
         sources = sorted(
             {
                 record.source
@@ -3654,6 +3797,13 @@ class _PolicyMixin:
                 }
             )
 
+        return issues
+
+    @grounding_check(name="quote-currency-surfaced", code="currency_not_surfaced", phase="provenance", order=2,
+                     description="Require quote currency surfaced for a checked price.")
+    def _check_quote_currency_surfaced(self, content, records):
+        issues = []
+        folded, symbols, mentioned, target_records = self._provenance_scope(content, records)
         currencies = sorted(
             {record.currency for record in target_records if record.currency}
         )
@@ -3680,6 +3830,10 @@ class _PolicyMixin:
                 }
             )
         return issues
+
+    def _validate_price_provenance(self, content, records):
+        """Walk declared provenance checks only after a price was checked."""
+        return GROUNDING_CHECKS.run_phase("provenance", self, content, records)
 
     @staticmethod
     def _currency_is_surfaced(currency: str, content: str) -> bool:

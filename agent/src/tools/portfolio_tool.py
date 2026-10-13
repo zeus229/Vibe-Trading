@@ -156,7 +156,7 @@ class PortfolioSummaryTool(BaseTool):
         "Use view=compact for composition and scenarios: it returns all ARS holdings, "
         "country/type aggregates, explicit cash and one snapshot identity within the result budget. "
         "Read the latest sanitized snapshot of the user's locally configured "
-        "read-only brokerage accounts. Returns deterministic totals, "
+        "read-only brokerage accounts and explicitly imported holdings. Returns deterministic totals, "
         "daily_change (the portfolio's aggregate daily price move: pct, "
         "coverage_pct, source, method — use this directly, verbatim, for "
         "'how much did my portfolio move today' questions; never recompute "
@@ -214,6 +214,10 @@ class PortfolioSummaryTool(BaseTool):
                 ),
                 "default": False,
             },
+            "target_weights": {
+                "type": "object", "additionalProperties": {"type": "number"},
+                "description": "Optional user-defined allocation fractions summing to 1, keyed by holdings canonical_id or CASH. Requires snapshot_id. Returns value-only proposals; never sends orders. Do not invent user targets.",
+            },
         },
         "required": [],
     }
@@ -262,7 +266,12 @@ class PortfolioSummaryTool(BaseTool):
         daily_contributors = _build_daily_contributors(context)
         if daily_contributors is not None:
             context = {**context, "daily_contributors": daily_contributors}
-        return json.dumps(
-            {"status": "ok", "context": _reorder_for_truncation_safety(context)},
-            ensure_ascii=False,
-        )
+        response: dict[str, Any] = {"status": "ok", "context": _reorder_for_truncation_safety(context)}
+        if kwargs.get("target_weights") is not None:
+            if not snapshot_id:
+                return json.dumps({"status": "error", "message": "target_weights requires snapshot_id"})
+            try:
+                response["proposal"] = service.rebalance(snapshot_id, kwargs["target_weights"])
+            except ValueError as exc:
+                return json.dumps({"status": "error", "message": str(exc)})
+        return json.dumps(response, ensure_ascii=False)

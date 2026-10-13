@@ -676,6 +676,8 @@ _REGISTERED_PRICE_INDICATORS: dict[str, tuple[str, ...]] = {
 }
 
 
+_FUND_NAV_PRICE_FIELDS = frozenset({"unit_nav", "accumulated_nav", "adjusted_nav"})
+
 def _is_registered_price_indicator(tool: str, path: str) -> bool:
     """Whether a tool registered this leaf as a price-denominated level.
 
@@ -686,10 +688,15 @@ def _is_registered_price_indicator(tool: str, path: str) -> bool:
     Returns:
         True when the tool has a registration whose prefix the path matches.
     """
+    leaf = str(path or "").strip()
+    if tool == "get_fund_nav":
+        # Only this tool's dated, exactly resolved fund rows expose these
+        # levels. A generic nav field or daily growth is not a price.
+        match = re.fullmatch(r"funds\.[0-9]{6}\.OF\.rows\[[0-9]+\]\.([a-z_]+)", leaf)
+        return bool(match and match.group(1) in _FUND_NAV_PRICE_FIELDS)
     prefixes = _REGISTERED_PRICE_INDICATORS.get(str(tool or ""))
     if not prefixes:
         return False
-    leaf = str(path or "").strip()
     for prefix in prefixes:
         if leaf == prefix:
             return True
@@ -1406,10 +1413,12 @@ class _EvidenceMixin:
         arguments: Mapping[str, Any],
         payload: dict[str, Any] | None,
         call_id: str,
+        *,
+        tool_name: str = "get_market_data",
     ) -> None:
         """Convert full OHLCV payloads into source-linked evidence rows."""
         if payload is None:
-            self._record_tool_failure("get_market_data", call_id, "malformed JSON result")
+            self._record_tool_failure(tool_name, call_id, "malformed JSON result")
             return
         requested_source = str(arguments.get("source") or "auto")
         provenance = payload.get("_provenance")
@@ -1456,7 +1465,7 @@ class _EvidenceMixin:
                     self._evidence.append(
                         EvidenceRecord(
                             call_id=call_id,
-                            tool="get_market_data",
+                            tool=tool_name,
                             symbol=symbol,
                             source=actual_source,
                             timestamp=timestamp,
@@ -1475,7 +1484,7 @@ class _EvidenceMixin:
                 self._evidence.append(
                     EvidenceRecord(
                         call_id=call_id,
-                        tool="get_market_data",
+                        tool=tool_name,
                         symbol=symbol,
                         source=requested_source,
                         timestamp=None,

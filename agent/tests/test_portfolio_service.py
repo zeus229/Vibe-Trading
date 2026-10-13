@@ -390,8 +390,8 @@ def test_unrated_balance_currency_fails_only_that_source(tmp_path):
 
 def test_display_currency_without_production_rate_is_rejected_on_save(tmp_path):
     store = PortfolioSettingsStore(tmp_path / "portfolio.json")
-    with pytest.raises(ValueError, match="EUR.*neither a production FX rate nor a native valuation path"):
-        store.save({"display_currency": "EUR", "sources": []})
+    with pytest.raises(ValueError, match="KRW.*neither a production FX rate nor a native valuation path"):
+        store.save({"display_currency": "KRW", "sources": []})
 
 
 def test_failed_source_is_excluded_from_totals_and_reports_its_last_success(tmp_path):
@@ -970,3 +970,17 @@ def test_a_pinned_read_refuses_a_snapshot_valued_under_another_contract(tmp_path
     service.store.save_snapshot({**snapshot, "snapshot_id": "old-contract", "valuation_version": 1})
 
     assert service.analysis_context(snapshot_id="old-contract") is None
+
+
+@pytest.mark.parametrize("rate,expected", [("8", "800"), ("7.5", "750.0"), (None, None), ("NaN", None), (0, None)])
+def test_history_uses_the_saved_hkd_rate(tmp_path, rate, expected):
+    store = PortfolioStore(tmp_path / "history.sqlite3")
+    store.save_snapshot({
+        "snapshot_id": "snapshot", "created_at": "2026-10-13T00:00:00Z",
+        "complete": True, "totals": {"usd": 100, "cny": 700},
+        "fx": {"usd_hkd": rate},
+    })
+    point = store.history()[0]
+    assert point["total_hkd"] == expected
+    assert point["total_usd"] == "100"
+    assert point["total_cny"] == "700"

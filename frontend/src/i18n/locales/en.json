@@ -26,7 +26,8 @@
       "correlation": "Compare how assets move together.",
       "scheduled": "Repeat a research task on a schedule.",
       "runtime": "Check broker connections and trading runtime status.",
-      "settings": "Configure models, data sources, and broker connections."
+      "settings": "Configure models, data sources, and broker connections.",
+      "pixelOffice": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions."
     },
     "instructions": {
       "reports": "Ask the research assistant to backtest a strategy first, then open its results here. Download PDFs and other chat-generated documents from the original conversation.",
@@ -36,7 +37,8 @@
       "correlation": "Enter at least two asset symbols, choose a lookback window, then select Compute.",
       "scheduled": "Enter a research instruction, choose its cadence, and save. The local scheduler must be enabled for jobs to run; delivery also needs a configured channel.",
       "runtime": "Configure a broker connection in Settings or Portfolio first. Available trading actions depend on that broker's capabilities and your authorization.",
-      "settings": "Configure a model to start. Add data sources or broker connections as your task needs them; public-market research does not require a broker account."
+      "settings": "Configure a model to start. Add data sources or broker connections as your task needs them; public-market research does not require a broker account.",
+      "pixelOffice": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions."
     }
   },
   "layout": {
@@ -66,7 +68,8 @@
     "sidebar": "Vibe-Trading sidebar",
     "mainNavigation": "Main navigation",
     "about": "About",
-    "sessionsLoadFailed": "Cannot load conversations."
+    "sessionsLoadFailed": "Cannot load conversations.",
+    "pixelOffice": "Pixel Office"
   },
   "runtime": {
     "monitorBadge": "Runtime Monitor",
@@ -396,7 +399,10 @@
       "shadowDeltaPrompt": "Run a shadow backtest for the last 90 days and break down where my PnL diverged from the shadow (rule violations, early exits, missed signals)",
       "shadowReport": "Generate Shadow Report",
       "shadowReportDesc": "A shareable 8-part report: your account curve, risk-adjusted return, and where each gain came from",
-      "shadowReportPrompt": "Render the shadow report and give me the URL — lead with the you-vs-shadow delta"
+      "shadowReportPrompt": "Render the shadow report and give me the URL — lead with the you-vs-shadow delta",
+      "adaptStrategy": "Adapt a registered strategy",
+      "adaptStrategyDesc": "Keep its signal, test a new universe",
+      "adaptStrategyPrompt": "Help me adapt a registered strategy to a new universe and date window. First list strategies and inspect the parent evidence; ask me for any missing strategy ID, instruments, dates and sizing. Preserve the signal, generate the child code, backtest it, and report only its own refreshed evidence."
     },
     "taskSubtitle": "Ask about a stock, a strategy, or your portfolio — I'll pull the data, run the numbers, and show every step.",
     "quickActions": "Quick actions",
@@ -443,8 +449,10 @@
     "reasoningEffortLow": "Low",
     "reasoningEffortMedium": "Medium",
     "reasoningEffortHigh": "High",
+    "reasoningEffortXhigh": "Extra high",
     "reasoningEffortMax": "Max",
     "reasoningEffortDesc": "Controls reasoning depth on supported models. Higher levels may improve complex analysis but can take longer; unsupported providers may ignore this setting. None (explicit) sends the field with reasoning disabled — some OpenAI models need that to use tools.",
+    "reasoningEffortReset": "The selected model does not support {{level}}; reset to provider default.",
     "useDefaultModel": "Use default model",
     "useDefaultUrl": "Use default URL",
     "dataSourcesDesc": "Configure external data sources for the backtesting engine.",
@@ -1049,7 +1057,7 @@
       "noMarkets": "No market data sources are registered.",
       "howItWorksTitle": "How it works",
       "howItWorks": "For auto-detected symbols, sources are tried top to bottom; a source that fails falls through to the next one. Saving applies immediately — no restart needed.",
-      "caliberCaveat": "Caliber caveat: sources differ in adjustment basis — e.g. Yahoo serves raw (unadjusted) OHLC while Tencent/Eastmoney/Tushare/BaoStock serve adjusted prices — so a reordered chain can change backtest numbers.",
+      "caliberCaveat": "Sources can use different price adjustments. Check the returned adjustment/provenance and run-card warnings; changing source order can change backtest results.",
       "markets": {
         "a_share": "A-Shares (China)",
         "us_equity": "US Equities",
@@ -1059,6 +1067,7 @@
         "ca_equity": "Canada Equities",
         "vietnam_equity": "Vietnam Equities",
         "ar_equity": "Argentina Equities",
+        "br_equity": "Brazil Equities",
         "uk_equity": "UK Equities",
         "index": "Indices",
         "crypto": "Crypto",
@@ -1104,7 +1113,7 @@
     "authentication": "Authentication",
     "apiKey": "API key",
     "tushareTokenDesc": "Used for China A-share, futures, fund, and macro data. If unset, the project falls back to AKShare where available.",
-    "gildataTokenDesc": "Optional Gildata (Hundsun Juyuan) feed for China A-shares. When set, it joins the tail of the A-share fallback chain with forward-adjusted daily bars."
+    "gildataTokenDesc": "Optional Gildata data: adjusted A-share daily bars, raw HK/index bars, OTC fund NAVs, and China macro, announcement and research tools."
   },
   "qveris": {
     "title": "QVeris Tool Marketplace",
@@ -1389,6 +1398,7 @@
         "futures": "Futures",
         "forex": "Forex",
         "ar_equity": "Argentina equity",
+        "br_equity": "Brazil equity",
         "uk_equity": "UK equity",
         "vietnam_equity": "Vietnam equity",
         "other": "Other"
@@ -2127,7 +2137,7 @@
       "badge": "Local read-only · Multi-account",
       "title": "Portfolio",
       "subtitle": "One valuation across the enabled read-only connections. An account that cannot be read is reported as an error and left out of the totals.",
-      "fxFresh": "USD/CNY {{rate}} · live rate",
+      "fxFresh": "USD/CNY {{rate}} · reference rate",
       "fxCached": "USD/CNY {{rate}} · cached rate",
       "manageAccounts": "Manage accounts",
       "exportCsv": "Export CSV",
@@ -2294,6 +2304,30 @@
       "accountDeactivated": " · deactivated",
       "accountSave": "Use this account",
       "accountSaved": "Account saved."
+    },
+    "imports": {
+      "title": "Import extraETF Investments",
+      "hint": "Holdings only, without cash or live prices. File modification time is not a price observation; ISINs have no resolved trading venue.",
+      "file": "Investments CSV",
+      "count": "Expected holdings count (confirm in extraETF)",
+      "age": "Maximum file age (days)",
+      "overlap": "Select disjoint sources. An extraETF view may already include accounts connected elsewhere here.",
+      "import": "Import file",
+      "importing": "Importing…",
+      "success": "Imported. Add this export from the available sources above, then save and refresh.",
+      "source": "File import",
+      "mtime": "File modified: {{time}}",
+      "expires": "Expires: {{time}}",
+      "tooLarge": "The import limit is 4 MiB."
+    },
+    "rebalance": {
+      "title": "Allocation proposal",
+      "hint": "Enter target percentages totalling 100%. Changes are amounts for review only; no orders, quantities, taxes or fees are calculated.",
+      "target": "{{id}} target (%)",
+      "generate": "Calculate proposal",
+      "current": "Current value",
+      "targetValue": "Target value",
+      "change": "Value change"
     }
   },
   "analysis": {
@@ -2343,5 +2377,75 @@
     "selectedFactor": "Selected factor: {{id}}. Only this factor will be evaluated.",
     "fundamentalsRequirement": "Fundamental factors need PIT SEC financial statements and a US stock universe (S&P 500).",
     "noEvaluableFactors": "No factors could be evaluated. Try a longer history and check the factor’s required fields and stock universe."
+  },
+  "customProviders": {
+    "loadFailed": "Failed to load custom providers",
+    "testPassed": "Provider test passed",
+    "testFailed": "Provider test failed",
+    "saved": "Provider saved in the local credential vault",
+    "saveFailed": "Provider save failed",
+    "activationFailed": "Provider activation failed",
+    "title": "Custom OpenAI-compatible providers",
+    "description": "Add a provider with a compatible chat-completions API. The test sends a short model request; after it succeeds, the key is saved in the OS credential vault.",
+    "keyPrivate": "Key never displayed",
+    "active": "Active",
+    "keyStored": "Key stored",
+    "activate": "Activate",
+    "empty": "No custom providers yet. Add one below and test it before saving.",
+    "add": "Add provider",
+    "id": "Provider ID",
+    "idHint": "Lowercase letters, numbers, dots, dashes, or underscores.",
+    "label": "Display name",
+    "labelPlaceholder": "My provider",
+    "baseUrl": "API Base URL",
+    "urlHint": "Use the API root. Do not include an API key in the URL.",
+    "model": "Model",
+    "key": "API key",
+    "keyPlaceholder": "Enter key for one-time test",
+    "testing": "Testing…",
+    "test": "Test connection",
+    "saving": "Saving…",
+    "save": "Save tested provider",
+    "saveHint": "Save unlocks only after a successful test. Activation is a separate confirmed action.",
+    "confirm": "Activate {{label}} for new agent requests?",
+    "activated": "{{label}} is now active",
+    "preview": "Test passed: {{preview}}",
+    "error": "Provider test failed: {{error}}",
+    "waiting": "The provider is taking longer than usual ({{seconds}}s). The request will continue until the server timeout."
+  },
+  "pixelOffice": {
+    "title": "Pixel Office",
+    "description": "Plan and assign research tasks. Assignment does not start execution; ranks are labels and grant no trading permissions.",
+    "refresh": "Refresh",
+    "loading": "Loading office…",
+    "unavailable": "Office unavailable. Try refreshing.",
+    "floor": "Office floor",
+    "taskCount": "Open tasks: {{count}}",
+    "board": "Task board",
+    "empty": "No tasks yet.",
+    "assignee": "Assignee",
+    "unassigned": "Unassigned",
+    "result": "Completion result",
+    "complete": "Record completion",
+    "create": "Create task",
+    "taskTitle": "Task title",
+    "instructions": "Instructions",
+    "priority": "Priority",
+    "ranksTitle": "Organizational ranks",
+    "priorities": {
+      "low": "Low",
+      "normal": "Normal",
+      "high": "High"
+    },
+    "statuses": {
+      "queued": "Queued",
+      "assigned": "Assigned",
+      "completed": "Completed"
+    },
+    "ranks": {
+      "Operator": "Operator",
+      "Senior": "Senior",
+      "Lead": "Lead"
+    }
   }
 }

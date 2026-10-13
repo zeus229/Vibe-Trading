@@ -400,9 +400,11 @@ def _load_trades(run_dir: Path) -> List[TradeRecord]:
     if df.empty:
         return []
 
-    # trades.csv has entry+exit row pairs; extract exit rows (they have pnl != 0)
+    # New artifacts identify exits explicitly, including break-even trades.
+    # Unmarked historical/other-engine files retain their legacy convention.
     trades = []
-    exit_rows = df[df["pnl"] != 0].reset_index(drop=True)
+    exit_mask = df["event"].eq("exit") if "event" in df.columns else df["pnl"].ne(0)
+    exit_rows = df[exit_mask].reset_index(drop=True)
     for _, row in exit_rows.iterrows():
         hold = pd.to_numeric(row.get("holding_bars"), errors="coerce")
         if pd.isna(hold):
@@ -492,6 +494,7 @@ def main(run_dir: Path) -> Dict[str, Any]:
     """Run all three validations on existing backtest artifacts.
 
     Reads equity.csv, trades.csv, and config.json from run_dir.
+    Runs all three tools with saved validation settings, defaulting missing ones.
 
     Args:
         run_dir: Directory with artifacts/ subdirectory.
@@ -499,7 +502,7 @@ def main(run_dir: Path) -> Dict[str, Any]:
     Returns:
         Validation results dict.
     """
-    # Load config for initial_cash
+    # Load initial cash and saved validation settings.
     config_path = run_dir / "config.json"
     if config_path.exists():
         config = json.loads(config_path.read_text(encoding="utf-8"))
@@ -510,11 +513,13 @@ def main(run_dir: Path) -> Dict[str, Any]:
     equity = _load_equity(run_dir)
     trades = _load_trades(run_dir)
 
-    results = {
-        "monte_carlo": monte_carlo_test(trades, initial_capital),
-        "bootstrap": bootstrap_sharpe_ci(equity),
-        "walk_forward": walk_forward_analysis(equity, trades),
-    }
+    # Standalone validation always runs all tools, even when the original run
+    # enabled only a subset. Reuse dispatcher defaults and parameter guards.
+    settings = {name: {} for name in ("monte_carlo", "bootstrap", "walk_forward")}
+    saved_settings = config.get("validation")
+    if isinstance(saved_settings, dict):
+        settings.update(saved_settings)
+    results = run_validation({"validation": settings}, equity, trades, initial_capital)
 
     out = run_dir / "artifacts" / "validation.json"
     safe_results = write_validation_json(out, results)
