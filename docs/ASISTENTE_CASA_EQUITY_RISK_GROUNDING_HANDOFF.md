@@ -122,3 +122,33 @@ then run **one** authenticated conversational Risk ACCIONES scenario requiring
 all 13 Euler contributions and the full 13×13 matrix in the final response.
 If the response still drops valid figures, investigate remaining correction
 semantics and PR #71 separately; do not assert that #1622 alone fixed it.
+
+## Authenticated E2E after upstream #1622: FAIL (2026-10-13)
+
+User-reported single production E2E: session `21303f2cdf3a`, attempt
+`058b4f46655f`, image `prod-1d906e68`. Bearer authentication PASS;
+canonical `consultar_riesgo_acciones_canonico(window=252)` invoked exactly
+once, 13/13 assets, 100% coverage; no X-Ray substitution. Ledger captured
+246 numeric leaves including 13 risk contributions and all 169 matrix cells,
+but their evidence records lacked `symbol` despite indexed asset paths,
+and `_pct` leaves were labeled `ratio`.
+
+The 6,690-character initial draft contained both complete tables but no
+`figures` block/exact refs. First grounding rejected 251 claims (247
+`no_evidence`, four `value_mismatch`); correction emitted a 708-character
+qualitative response with **0/13 contributions and 0/169 correlations**.
+Final grounding accepted that shortened response. Model said it lacked the
+exact call ID; that claim is an observation, not proof of what the correction
+prompt actually contained (prompt absent from trace). Service stayed healthy,
+trading remained disabled.
+
+**Decision:** upstream #1622 alone did not resolve numeric delivery; retain
+PR #71 unmerged. Valid figures were *not* previously approved by grounding,
+so the clean-figure preservation mechanism does not apply. Inspect exact
+call-ID candidate propagation, aggregate vs indexed per-symbol evidence,
+percentage units, and the declaration/correction contract without weakening
+fail-closed behavior. Reproduce with an isolated deterministic fixture first,
+then one authenticated E2E after a reviewed candidate. No additional broad
+test campaign. Private runtime evidence paths:
+`/home/vibe/.vibe-trading/sessions/21303f2cdf3a/trace.jsonl`,
+`/home/vibe/.vibe-trading/runs/20261013_140250_57_d2b483/artifacts/grounding_evidence.json`.
