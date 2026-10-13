@@ -347,3 +347,12 @@ Existing fork tests already exercise distinct behavioral contracts rather than j
 3. **Future upstream grouping (NO PR now):** (A) multi-ref; (B) replay opt-in + portfolio replay schema; (C) evidence identity/row scoping; (D) correction retention/issue queue, later; (E) provider-neutral ISIN listing after local collision fix. Keep each contract independent unless reviewers request grouping.
 
 **Scope exclusion:** Risk ACCIONES and fork PR #71. Asistente Casa remains canonical, trading remains disabled. No E2E/production conclusions.
+
+## 2026-10-13 — upstream issue #1820: percent-unit double scaling
+
+- New upstream report: https://github.com/HKUDS/Vibe-Trading/issues/1820 — a declared `-1.89%` with evidence/formula already in **percentage-point units** (`-1.89`) may be rejected and a 100x number accepted. Reporter cites production correction loops; those logs were not independently reviewed here.
+- Confirmed at upstream `300c6aa6`: `grounding/policies.py::_result_matches(figure, result)` uses `{result * 100}` unconditionally for `figure.percent`.
+- **Fork has a relevant but narrower existing exception:** `_result_matches(figure, result, note="")` chooses `{result}` only when `_has_explicit_percent_scale(note)` and **not** `_has_trailing_percent_factor(note)`; otherwise it still multiplies by 100. This cannot be claimed to solve issue #1820 globally. In particular, the explicit trailing `*100` path and observed percent-unit fields require independent probes.
+- Do NOT blindly accept both `result` and `result*100`: doing so without trustworthy field units can authorize 100x-wrong figures. Evaluate evidence `unit`/field metadata and exact note arithmetic; fail closed if unresolved.
+- Add focused regression matrix before any generic percent-policy PR: observed percent-unit `15.1` claimed `15.1%`; same input falsely claimed `1510%`; fractional `0.151` claimed `15.1%`; derived result `-1.89` with explicit trailing `*100`; already-percent-point result `-1.89` without trailing scale; Spanish decimal comma and negative sign. Run against upstream and fork with identical synthetic evidence, checking valid/reason and avoiding entire-agent E2E.
+- Keep this work **separate** from ISIN candidate `fix/isin-verified-listing-conflicts` (different files/contracts), but include it in the consolidated grounding/PR planning. Current user instruction: no upstream PR creation yet. No runtime, production, or trading changes.
