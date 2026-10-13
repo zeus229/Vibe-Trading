@@ -413,3 +413,30 @@ This is a **GitHub source inspection, not an executed offline VM differential te
 6. **Risk PR #71:** independent draft, keep separate from stage A; existing live E2E validation gate unchanged.
 
 **Stage A completion gate:** execute equal synthetic fixtures against both pinned SHAs in detached checkouts, capture verdict/issue reason, actual referenced call IDs and correction outcomes; inspect upstream test coverage before declaring the multiple-ref candidate obsolete. No broad suites required. No secrets, write APIs, runtime deployment, or trading. Do not describe this source checkpoint as runtime PASS.
+
+### Stage A — executed differential validation, operator report (2026-10-13)
+
+**Supersedes the preceding source-only checkpoint where it inferred strict fail-closed multiple-reference behavior from code.** This section records an offline VM report supplied by the operator; evidence scripts/JSON were retained in a VM-local `/tmp/claude-1000/.../scratchpad/diff/` path, not committed. GitHub source was previously inspected, but these executed results have not been independently rerun by ChatGPT. Fork `7a06d9710365fed6763aded784086d1ca7f1f8d4`; upstream `54f43595597e823facc3daae095aa9d671e058e8`; candidate `02808424` based on upstream `300c6aa6`. Identical synthetic fixtures, detached worktrees cleaned; no production changes or private data; `PPI_TRADING_DISABLED=True`.
+
+| Invariant / dependency | Upstream observed | Fork observed | Decision and closure gate |
+|---|---|---|---|
+| Observed/missing operands, declared scalar constants | PASS | PASS | RESOLVED for tested cases; **limitation**: either side allows missing value declared visibly as `count` parameter, so parameter label semantics remain unproved |
+| Fractions, final outer `*100`, negatives, Spanish `12,4%`, downward 100x | PASS | PASS | RESOLVED in tested shapes; do not weaken this |
+| Percentage-point derived `0.82% | derived | 0.52 + 0.30` | FAIL `derivation_result_mismatch` | same FAIL | PENDING #1820 / P1: unit-aware derived interpretation |
+| False upward scale `0.52 → 52%`, `15.1 → 1510%` | FAIL: accepts wrong 100x | same FAIL | PENDING #1820 / P1: fail closed when unit metadata says percentage points; highest numeric integrity risk |
+| Percent-point derived with two exact refs from same call | FAIL `no_evidence` | PASS | KEEP fork / P1; test source resolution across same/different call IDs |
+| Multiple refs, positive and one valid ref | 2/6 PASS | 2/6 PASS | Current upstream/fork do **not** reject unknown or empty refs reliably: `before;unknown`, `unknown;after`, `before;`, `;after` all yielded `valid=True`; also `ghost::close` and nonexistent fields passed. **Corrects earlier assertion that fork strictly rejects every bad exact ref.** |
+| Candidate multi-ref `02808424` (six target cases) | Not ported to current head | Not integrated | **6/6 PASS on candidate's old base** and rejects unknown field / ghost ref; KEEP candidate, NEEDS VALIDATION after non-destructive port to upstream head / P1 |
+| Correction rejects loss of required reparable figure | FAIL, silently releases | PASS, `CorrectionContract.missing_figures` reports `20.36` | KEEP fork; for >24 issues fork identifies all six omitted from bounded prompt; upstream releases. Clean non-required figures are not hard-mandatory by design |
+| Cross-entity ALPHA/BETA claim using wrong row | FAIL, accepts | PASS `entity_ref_needs_scoped_claim` | KEEP fork entity isolation; investigate intentional `aggregate_ref_needs_unscoped_claim` distinction separately, not this bug |
+
+**Suites reported:** fork 1,904 passed; upstream 1,110 passed. Additional fork tests run against upstream: 66 passed, 73 failed (not all failure reasons triaged; many tied to missing entity isolation). `ast.parse` passed for 33/31 agent Python files; `py_compile` **not run**. `git diff --check` clean. No full correction loop, E2E, real tool evidence, complete suite, frontend, Docker or production validation. Same-call refs behavior and nonmarket redact-mode discrepancy not yet explained. The existing working checkout had 44 pre-existing uncommitted entries; untouched.
+
+**Classification / next actions:**
+1. **BLOCK simplification** of identity, correction and derived-ref fork behavior. Upstream is not behavior-equivalent.
+2. **P1a numeric safety:** design a strict percentage-unit contract for #1820 with positive/negative, fractional, already-percent, locale and 100x adversarial fixtures, using trustworthy evidence field-unit provenance. Never accept `result` and `result*100` indiscriminately.
+3. **P1b evidence integrity:** preserve and non-destructively re-port the small `02808424` multi-ref fix against current upstream; rerun six original fixtures + ghost/nonexistent fields + same-call two refs, then decide whether a *generic* upstream PR is justified. No upstream PR yet.
+4. **P1c preservation:** keep `CorrectionContract` and entity isolation; only revisit after upstream gains equivalent tested guarantees.
+5. **Separate follow-ups, not Stage A blockers:** assess `aggregate_ref_needs_unscoped_claim` false rejects and loop/E2E correction behavior. Fork PR #71 stays an independent workstream.
+
+**Stage A verdict:** offline differential stage COMPLETE for specified synthetic scope with documented FAILs and limitations; no permission implied to merge, deploy, or modify functional code. Recommended first functional implementation: #1820 100x false-positive prevention in a single fork candidate with focused VM validation and an upstream-generic reproducer, then the separate multi-ref candidate. Actual production exposure remains unverified.
