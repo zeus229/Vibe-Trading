@@ -123,6 +123,10 @@ export interface CorrelationRegimeResponse {
 }
 
 export interface PortfolioPosition {
+  portfolio_id?: string;
+  portfolio_name?: string;
+  source_mtime?: string;
+  instrument_id_kind?: string;
   source_id?: string;
   profile_id?: string;
   source_label?: string;
@@ -168,6 +172,8 @@ export interface PortfolioConnectorCompatibility {
  * as history — never as a current valuation.
  */
 export interface PortfolioAccount {
+  source_kind?: "connection" | "extraetf";
+  import_metadata?: { source_mtime: string; expires_at: string; as_of_source: string } | null;
   source_id?: string;
   profile_id?: string;
   label?: string;
@@ -224,10 +230,11 @@ export interface PortfolioSnapshot {
     coverage_pct?: number | null;
     trading_date?: string | null;
   } | null;
-  fx: { usd_cny: number; usd_hkd: number; rates?: Record<string, number>; fetched_at: string; stale: boolean };
+  fx: { as_of?: string | null; source?: string; usd_cny: number; usd_hkd: number; rates?: Record<string, number>; fetched_at: string; stale: boolean };
   accounts: PortfolioAccount[];
   positions: PortfolioPosition[];
   combined_holdings?: Array<{
+    canonical_id?: string;
     symbol: string;
     market_value_usd: number;
     asset_type?: string;
@@ -239,11 +246,21 @@ export interface PortfolioSnapshot {
 }
 
 export interface PortfolioHistoryPoint {
+  total_eur?: string | null;
   id: string;
   created_at: string;
   complete: number;
   total_usd: string;
   total_cny: string;
+  /** Historical HKD value at this snapshot’s FX rate; absent means unavailable. */
+  total_hkd?: string | null;
+}
+
+export interface RebalanceProposal {
+  mode: "proposal_only";
+  snapshot_id: string;
+  currency: string;
+  rows: Array<{ canonical_id: string; current_value: number; target_value: number; change_value: number }>;
 }
 
 export interface PortfolioRefreshState {
@@ -263,6 +280,7 @@ export interface PortfolioReconnectState {
 }
 
 export interface PortfolioSourceSettings {
+  source_kind?: "connection" | "extraetf";
   connection_id: string;
   label: string;
   enabled: boolean;
@@ -276,13 +294,14 @@ export interface PortfolioSettings {
 }
 
 export interface PortfolioSourceCatalogItem {
+  source_kind?: "connection" | "extraetf";
   id: string;
   connection_id: string;
   profile_id: string;
   connector: string;
   label: string;
-  environment: "paper" | "live";
-  transport: "local_tws" | "remote_mcp" | "broker_sdk" | "local_plugin";
+  environment: "paper" | "live" | "import";
+  transport: "local_tws" | "remote_mcp" | "broker_sdk" | "local_plugin" | "file_import";
   capabilities: string[];
   readonly: boolean;
   notes: string;
@@ -292,7 +311,7 @@ export interface PortfolioSourceCatalogItem {
   credential_fields: CredentialField[];
   credential_status: Record<string, boolean>;
   credentials_configured: boolean;
-  portfolio_compatibility: PortfolioConnectorCompatibility;
+  portfolio_compatibility: PortfolioConnectorCompatibility | null;
 }
 
 export interface CredentialField {
@@ -314,6 +333,7 @@ export interface ConnectorOnboarding {
 }
 
 export interface LocalConnection {
+  portfolio_eligible?: boolean;
   id: string;
   profile_id: string;
   label: string;
@@ -335,6 +355,7 @@ export interface LocalConnection {
 }
 
 export interface ReadonlyConnectionProfile {
+  portfolio_eligible?: boolean;
   id: string;
   connector: string;
   label: string;
@@ -450,6 +471,9 @@ function appendQueryParam(url: string, key: string, value: string): string {
 }
 
 export const api = {
+  getPixelOffice: () => request<OfficeSnapshot>("/api/pixel-office"),
+  updatePixelOffice: (action: "create" | "assign" | "complete" | "rank", arguments_: Record<string, unknown>) =>
+    request<OfficeSnapshot>("/api/pixel-office/actions", { method: "POST", body: JSON.stringify({ action, arguments: arguments_ }) }),
   uploadFile,
   getCorrelationAnalysis: (codes: string, days: number, method: "pearson" | "spearman", includeRegime: boolean, signal?: AbortSignal) =>
     request<CorrelationAnalysisResponse>(`/correlation/analysis?${new URLSearchParams({ codes, days: String(days), method, include_regime: String(includeRegime) })}`, { signal }),
@@ -506,6 +530,10 @@ export const api = {
       `/api/connections/${encodeURIComponent(connectionId)}`,
       { method: "DELETE" },
     ),
+  importExtraEtf: (payload: { csv_text: string; label: string; source_mtime: string; expected_positions: number; max_age_days: number }) =>
+    request<{ status: string; import: { id: string } }>("/api/portfolio/imports/extraetf", { method: "POST", body: JSON.stringify(payload) }),
+  proposePortfolioRebalance: (snapshotId: string, targetWeights: Record<string, number>) =>
+    request<{ status: string; proposal: RebalanceProposal }>("/api/portfolio/rebalance", { method: "POST", body: JSON.stringify({ snapshot_id: snapshotId, target_weights: targetWeights }) }),
   getPortfolioHistory: (limit = 180) =>
     request<{ status: string; history: PortfolioHistoryPoint[] }>(`/api/portfolio/history?limit=${encodeURIComponent(String(limit))}`),
   downloadPortfolioCsv: async () => {
@@ -610,6 +638,25 @@ export const api = {
       method: "POST",
       body: JSON.stringify(settings),
     }),
+  listCustomProviders: () =>
+    request<{ status: string; providers: CustomProviderProfile[] }>("/settings/custom-providers"),
+  testCustomProvider: (settings: { base_url: string; model: string; api_key: string }) =>
+    request<CustomProviderTestResponse>("/settings/custom-providers/test", {
+      method: "POST",
+      body: JSON.stringify(settings),
+    }),
+  saveCustomProvider: (settings: CustomProviderSaveRequest) =>
+    request<{ status: string; provider: CustomProviderProfile }>("/settings/custom-providers", {
+      method: "POST",
+      body: JSON.stringify(settings),
+    }),
+  activateCustomProvider: (profileId: string) =>
+    request<{ status: string; active_id: string; model: string; base_url: string }>(
+      `/settings/custom-providers/${encodeURIComponent(profileId)}/activate`, {
+        method: "POST",
+        body: JSON.stringify({ confirm: true }),
+      },
+    ),
   getDataSourceSettings: () => request<DataSourceSettings>("/settings/data-sources"),
   updateDataSourceSettings: (settings: UpdateDataSourceSettingsRequest) =>
     request<DataSourceSettings>("/settings/data-sources", {
@@ -869,6 +916,8 @@ export interface LLMProviderOption {
   api_key_required: boolean;
   auth_type?: string;
   login_command?: string | null;
+  /** Reasoning effort levels the provider accepts, besides "" (provider default). */
+  reasoning_efforts?: string[];
 }
 
 export interface LLMSettings {
@@ -904,6 +953,33 @@ export interface ListLLMModelsRequest {
   provider: string;
   base_url?: string;
   api_key?: string;
+  refresh?: boolean;
+}
+
+export interface CustomProviderProfile {
+  id: string;
+  label: string;
+  base_url: string;
+  model: string;
+  api_key_configured: boolean;
+  active: boolean;
+  last_tested_at?: string | null;
+}
+
+export interface CustomProviderTestResponse {
+  status: "ok";
+  test_id: string;
+  response_preview: string;
+  latency_ms: number;
+}
+
+export interface CustomProviderSaveRequest {
+  id: string;
+  label: string;
+  base_url: string;
+  model: string;
+  api_key: string;
+  test_id: string;
 }
 
 export interface LLMModelsResponse {
@@ -915,6 +991,8 @@ export interface LLMModelsResponse {
     | "api_key_required"
     | "model_list_unavailable"
     | null;
+  /** Model id -> reasoning effort levels it accepts; empty means none. */
+  effort_levels?: Record<string, string[]> | null;
 }
 
 export interface SourceOrderEntry {
@@ -1355,6 +1433,7 @@ export type SectorAssetClass =
   | "kr_equity"
   | "ca_equity"
   | "ar_equity"
+  | "br_equity"
   | "uk_equity"
   | "vietnam_equity"
   | "index"
@@ -2005,4 +2084,10 @@ export interface ToolTrailItem {
   preview?: string;
   call_id?: string;
   timestamp?: number;
+}
+
+export interface OfficeSnapshot {
+  mode: "manual_planning";
+  agents: { id: string; name: string; role: string; color: string; rank: "Operator" | "Senior" | "Lead"; load: number }[];
+  tasks: { id: string; title: string; description: string; priority: "low" | "normal" | "high"; assigned_to: string | null; status: "queued" | "assigned" | "completed"; result: string }[];
 }

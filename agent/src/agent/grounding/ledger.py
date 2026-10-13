@@ -316,6 +316,16 @@ class GroundingLedger(
 
         if self._pending_recovery is not None and tool_name == self._pending_recovery["action"]:
             self._pending_recovery = None
+        if tool_name == "get_br_market_data":
+            # This tool serves B3 identifiers; bare native tickers must not be
+            # mistaken for US symbols by generic evidence ingestion.
+            tickers = arguments.get("tickers")
+            if isinstance(tickers, list):
+                arguments = {**arguments, "tickers": [
+                    str(ticker).strip().upper() if str(ticker).strip().upper().endswith(".SA")
+                    else str(ticker).strip().upper() + ".SA"
+                    for ticker in tickers
+                ]}
         self._track_session_symbols(arguments, result)
         self._note_model_write(tool_name, arguments, payload)
         if (
@@ -340,6 +350,23 @@ class GroundingLedger(
             self._ingest_resolution(arguments, payload, call_id)
         elif tool_name == "get_market_data":
             self._ingest_market_data(arguments, payload, call_id)
+        elif (tool_name == "get_br_market_data" and payload is not None
+              and isinstance(payload.get("data"), dict)
+              and payload["data"].get("action") == "quotes"):
+            data = payload["data"]
+            if data.get("currency") == "BRL":
+                quotes: dict[str, Any] = {"_provenance": {}}
+                for row in data.get("rows", []):
+                    if not isinstance(row, dict) or not row.get("ticker"):
+                        continue
+                    ticker = str(row["ticker"]).strip().upper()
+                    symbol = ticker if ticker.endswith(".SA") else ticker + ".SA"
+                    quotes.setdefault(symbol, []).append({
+                        key: row[key] for key in ("trade_date", "open", "high", "low", "close", "volume")
+                        if key in row
+                    })
+                    quotes["_provenance"][symbol] = {"source": "b3_cotahist", "quote_currency": "BRL"}
+                self._ingest_market_data(arguments, quotes, call_id, tool_name=tool_name)
         elif tool_name == "read_file" and payload is not None:
             self._ingest_engine_table(payload, call_id)
         elif tool_name == "read_run_artifact" and payload is not None:
@@ -398,11 +425,12 @@ class GroundingLedger(
         self._ingest_run_dir_ohlc_csvs()
         block = parse_figures_block(content)
         figures = scan_figures(content, block)
+        self._active_check_findings: list[dict[str, Any]] = []
         self._active_block = block
         self._active_figures = figures
         issues: list[dict[str, Any]] = []
         issues.extend(self._validate_identity(content))
-        issues.extend(GROUNDING_CHECKS.run("unsourced-symbol-figures", self, content))
+        issues.extend(GROUNDING_CHECKS.run_phase("answer", self, content))
         issues.extend(self._validate_figures(content, block, figures))
         issues = self._dedupe_issues(issues)
         result = ValidationResult(
@@ -420,11 +448,10 @@ class GroundingLedger(
                 "content_sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
                 "valid": result.valid,
                 "issues": issues,
-                # Names let a run card say which declared checks fired without
-                # re-running the gate; inline rules carry codes only until migrated.
-                "fired_checks": GROUNDING_CHECKS.names_for_codes(
-                    {str(issue.get("code") or "") for issue in issues}
-                ),
+                # Attribute the predicates that actually returned a finding;
+                # role checks share issue codes and must not implicate each other.
+                "fired_checks": list(dict.fromkeys(row["name"] for row in self._active_check_findings)),
+                "check_findings": self._active_check_findings,
                 "figures_block": block.raw,
             }
         )

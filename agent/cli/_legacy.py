@@ -3008,9 +3008,11 @@ def cmd_provider_login(provider: str) -> int:
     normalized = provider.strip().lower().replace("_", "-")
     if normalized in {"copilot", "github-copilot"}:
         return _login_copilot()
+    if normalized == "claude-cli":
+        return _login_claude_cli()
     if normalized != "openai-codex":
         console.print(
-            "[red]Unknown OAuth provider.[/red] Supported: openai-codex, copilot"
+            "[red]Unknown OAuth provider.[/red] Supported: openai-codex, copilot, claude-cli"
         )
         return EXIT_USAGE_ERROR
     try:
@@ -3059,6 +3061,23 @@ def _login_copilot() -> int:
         "[yellow]No GitHub credential found.[/yellow]\n"
         "Run [bold]copilot[/bold] and sign in, run [bold]gh auth login[/bold], "
         "or set [bold]COPILOT_GITHUB_TOKEN[/bold]."
+    )
+    return EXIT_RUN_FAILED
+
+
+def _login_claude_cli() -> int:
+    """Report the local Claude Code CLI login used by the claude-cli provider."""
+    from src.providers.claude_cli import get_claude_cli_auth_status
+
+    logged_in, method = get_claude_cli_auth_status()
+    if logged_in:
+        console.print(f"[green]Claude Code CLI is logged in[/green]  [dim]{method}[/dim]")
+        return EXIT_SUCCESS
+
+    console.print(
+        f"[yellow]Claude Code CLI is not logged in[/yellow] ({method}).\n"
+        "Run [bold]claude auth login[/bold], or set [bold]CLAUDE_CLI_PATH[/bold] "
+        "to the claude executable."
     )
     return EXIT_RUN_FAILED
 
@@ -4179,6 +4198,10 @@ def _print_portfolio_snapshot(snapshot: dict[str, Any]) -> None:
             rich_escape(str(row.get("last_success_at") or "never")),
         )
     console.print(accounts)
+    for row in snapshot.get("accounts", []):
+        if row.get("import_metadata"):
+            meta = row["import_metadata"]
+            console.print(f"extraETF file mtime: {rich_escape(meta['source_mtime'])}; expires: {rich_escape(meta['expires_at'])}; holdings only, no cash")
 
     holdings = Table(title="Holdings (combined across sources)", box=box.SIMPLE_HEAVY, show_lines=False)
     holdings.add_column("Symbol")
@@ -4306,6 +4329,40 @@ def _dispatch_portfolio(args: argparse.Namespace) -> int:
         return cmd_portfolio_refresh()
     if sub == "sources":
         return cmd_portfolio_sources()
+    if sub == "import-extraetf":
+        from datetime import datetime, timezone
+        from src.portfolio.imports import MAX_IMPORT_BYTES
+        try:
+            path = Path(args.file).expanduser()
+            with path.open("rb") as handle:
+                data = handle.read(MAX_IMPORT_BYTES + 1)
+                modified = os.fstat(handle.fileno()).st_mtime
+            if len(data) > MAX_IMPORT_BYTES:
+                raise ValueError("extraETF export exceeds the 4 MiB import limit")
+            instance = _portfolio_service()
+            imported = instance.settings_store.import_store.create(
+                csv_text=data.decode("utf-8-sig"), label=args.label,
+                source_mtime=datetime.fromtimestamp(modified, timezone.utc).isoformat(),
+                expected_positions=args.expected_positions, max_age_days=args.max_age_days,
+            )
+            if args.select:
+                settings = instance.settings()
+                settings["sources"].append({"connection_id": imported["id"], "source_kind": "extraetf",
+                                            "label": imported["label"], "include_cash": False})
+                instance.save_settings(settings)
+            console.print_json(data=imported)
+            return 0
+        except (ValueError, OSError) as exc:
+            console.print(f"[red]{rich_escape(str(exc))}[/red]")
+            return 1
+    if sub == "rebalance":
+        try:
+            target = json.loads(Path(args.targets).read_text())
+            console.print_json(data=_portfolio_service().rebalance(args.snapshot_id, target))
+            return 0
+        except (ValueError, OSError) as exc:
+            console.print(f"[red]{rich_escape(str(exc))}[/red]")
+            return 1
     console.print(f"[red]Unknown portfolio subcommand: {sub}[/red]")
     return EXIT_USAGE_ERROR
 
@@ -4486,7 +4543,7 @@ def cmd_connector_setup(
     from src.trading.connections import (
         ConnectionStore,
         credential_field_catalog,
-        is_portfolio_connection_profile,
+        is_readonly_connection_profile,
         requires_account_selection,
     )
     from src.trading.profiles import profile_by_id
@@ -4494,8 +4551,8 @@ def cmd_connector_setup(
 
     try:
         profile = profile_by_id(profile_id)
-        if not is_portfolio_connection_profile(profile):
-            raise ValueError(f"{profile.id} is not a read-only portfolio profile")
+        if not is_readonly_connection_profile(profile):
+            raise ValueError(f"{profile.id} is not a read-only connection profile")
         local_id = str(connection_id or f"{profile.connector}-{profile.environment}").strip().lower()
         store = ConnectionStore()
         connection = store.ensure(local_id, profile.id, label or profile.label)
@@ -4808,6 +4865,9 @@ def _enum_text(value: Any) -> str:
 
 
 def _print_connector_account(result: dict[str, Any]) -> int:
+    if result.get("valuation_basis") == "margin_limits_not_net_liquidation":
+        console.print_json(data=result)
+        return EXIT_SUCCESS
     accounts = ", ".join(result.get("accounts", [])) or "(none)"
     rows = result.get("summary", [])
     # broker_sdk connectors (Longbridge, …) return a ``balances`` list instead of
@@ -4879,12 +4939,16 @@ def cmd_connector_account(
     port: int | None = None,
     client_id: int | None = None,
     account: str | None = None,
+    connection_id: str | None = None,
 ) -> int:
     """Print account summary from a connector profile."""
     from src.trading.service import get_account
 
     try:
-        result = get_account(_profile_id(profile_id), host=host, port=port, client_id=client_id, account=account)
+        options = {"host": host, "port": port, "client_id": client_id, "account": account}
+        if connection_id is not None:
+            options["connection_id"] = connection_id
+        result = get_account(_profile_id(profile_id), **options)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Connector account failed:[/red] {exc}")
         return EXIT_RUN_FAILED
@@ -4901,18 +4965,25 @@ def cmd_connector_positions(
     port: int | None = None,
     client_id: int | None = None,
     account: str | None = None,
+    connection_id: str | None = None,
 ) -> int:
     """Print positions from a connector profile."""
     from src.trading.service import get_positions
 
     try:
-        result = get_positions(_profile_id(profile_id), host=host, port=port, client_id=client_id, account=account)
+        options = {"host": host, "port": port, "client_id": client_id, "account": account}
+        if connection_id is not None:
+            options["connection_id"] = connection_id
+        result = get_positions(_profile_id(profile_id), **options)
     except Exception as exc:  # noqa: BLE001
         console.print(f"[red]Connector positions failed:[/red] {exc}")
         return EXIT_RUN_FAILED
     if result.get("status") == "error":
         console.print(f"[red]{rich_escape(str(result.get('error')))}[/red]")
         return EXIT_RUN_FAILED
+    if result.get("valuation_basis") == "broker_books_unaggregated":
+        console.print_json(data=result)
+        return EXIT_SUCCESS
     rows = result.get("positions", [])
     if not rows:
         # Not the broker_sdk flat shape — try the remote-MCP nested shape
@@ -5294,6 +5365,7 @@ def _dispatch_connector(args: argparse.Namespace) -> int:
             port=args.port,
             client_id=args.client_id,
             account=args.account,
+            **({"connection_id": args.connection_id} if getattr(args, "connection_id", None) else {}),
         )
     if sub == "positions":
         return cmd_connector_positions(
@@ -5302,6 +5374,7 @@ def _dispatch_connector(args: argparse.Namespace) -> int:
             port=args.port,
             client_id=args.client_id,
             account=args.account,
+            **({"connection_id": args.connection_id} if getattr(args, "connection_id", None) else {}),
         )
     if sub == "orders":
         return cmd_connector_orders(
@@ -5409,11 +5482,16 @@ def _build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--port", type=int, default=8000, help="Listen port")
     serve_parser.add_argument("--dev", action="store_true", help="Start the Vite dev server")
 
+    office_parser = subparsers.add_parser("office", help="Manage the shared research task board")
+    office_parser.add_argument("office_args", nargs=argparse.REMAINDER)
+
     provider_parser = subparsers.add_parser("provider", help="Manage OAuth providers")
     provider_subparsers = provider_parser.add_subparsers(dest="provider_command")
     login_parser = provider_subparsers.add_parser("login", help="Authenticate with an OAuth provider")
     login_parser.add_argument("provider", help="OAuth provider name, e.g. openai-codex")
     provider_subparsers.add_parser("doctor", help="Print redacted provider diagnostics")
+    from cli.custom_providers import configure_parser as configure_custom_providers
+    configure_custom_providers(provider_subparsers.add_parser("custom", help="Manage tested custom model endpoints"))
 
     # QVERIS-INTEGRATION
     data_parser = subparsers.add_parser("data", help="Manage data routing mode")  # QVERIS-INTEGRATION
@@ -5532,6 +5610,15 @@ def _build_parser() -> argparse.ArgumentParser:
     portfolio_subparsers.add_parser(
         "refresh", help="Read every enabled source now, store a new snapshot, and print it"
     )
+    import_parser = portfolio_subparsers.add_parser("import-extraetf", help="Import a local Investments CSV; never executes trades")
+    import_parser.add_argument("file")
+    import_parser.add_argument("--label", required=True)
+    import_parser.add_argument("--expected-positions", required=True, type=int)
+    import_parser.add_argument("--max-age-days", required=True, type=int)
+    import_parser.add_argument("--select", action="store_true", help="Add this import to selected portfolio sources")
+    rebalance_parser = portfolio_subparsers.add_parser("rebalance", help="Value-only proposal for a pinned snapshot")
+    rebalance_parser.add_argument("--snapshot-id", required=True)
+    rebalance_parser.add_argument("--targets", required=True, help="JSON file mapping canonical_id (or CASH) to target fraction")
     portfolio_subparsers.add_parser(
         "sources", help="List local read-only connections and whether the portfolio uses them"
     )
@@ -5623,10 +5710,12 @@ def _build_parser() -> argparse.ArgumentParser:
     connector_account = connector_subparsers.add_parser("account", help="Read account summary")
     _add_connector_profile_arg(connector_account)
     _add_connector_local(connector_account)
+    connector_account.add_argument("--connection-id", default=None)
 
     connector_positions = connector_subparsers.add_parser("positions", help="Read current positions")
     _add_connector_profile_arg(connector_positions)
     _add_connector_local(connector_positions)
+    connector_positions.add_argument("--connection-id", default=None)
 
     connector_orders = connector_subparsers.add_parser("orders", help="Read open orders")
     _add_connector_profile_arg(connector_orders)
@@ -6541,11 +6630,18 @@ def main(argv: list[str] | None = None) -> int:
         )
     if args.command == "serve":
         return serve_main(raw_argv[1:])
+    if args.command == "office":
+        from src.pixel_agents.cli import main as office_main
+        office_main(args.office_args)
+        return 0
     if args.command == "provider":
         if args.provider_command == "login":
             return cmd_provider_login(args.provider)
         if args.provider_command == "doctor":
             return cmd_provider_doctor()
+        if args.provider_command == "custom":
+            from cli.custom_providers import run as run_custom_providers
+            return run_custom_providers(args)
         console.print("[red]provider requires a subcommand.[/red] Try: vibe-trading provider doctor")
         return EXIT_USAGE_ERROR
     if args.command == "channels":

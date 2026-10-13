@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { RebalanceProposal } from "@/components/portfolio/RebalanceProposal";
 import { useTranslation } from "react-i18next";
 import {
   AlertTriangle,
@@ -67,6 +68,18 @@ function money(value: number | null | undefined, currency: string = "USD") {
   }).format(value);
 }
 
+/** Convert only with the FX observation stored on this snapshot. */
+function displayValue(
+  usd: number | null | undefined, cny: number | null | undefined,
+  currency: string, fx: PortfolioSnapshot["fx"] | undefined,
+): number | null {
+  if (currency === "CNY" && cny != null && Number.isFinite(cny)) return cny;
+  if (usd == null || !Number.isFinite(usd)) return null;
+  if (currency === "USD") return usd;
+  const rate = currency === "CNY" ? fx?.usd_cny : currency === "HKD" ? fx?.usd_hkd : fx?.rates?.[currency];
+  return rate != null && Number.isFinite(rate) && rate > 0 ? usd * rate : null;
+}
+
 function quantity(value: number | null | undefined) {
   if (value == null || !Number.isFinite(value)) return "—";
   return new Intl.NumberFormat(uiLocale(), { maximumFractionDigits: 8 }).format(value);
@@ -104,11 +117,11 @@ function slicePercentage(percent: number) {
   return percentage(percent / 100);
 }
 
-/** Compact USD tick label for the history axis, e.g. "$120K" / "1,2 Mio. $". */
-function compactUsd(value: number) {
+/** Compact tick label for the history axis, e.g. "$120K" / "¥12万". */
+function compactMoney(value: number, currency: string = "USD") {
   return new Intl.NumberFormat(uiLocale(), {
     style: "currency",
-    currency: "USD",
+    currency,
     notation: "compact",
     maximumFractionDigits: 1,
   }).format(value);
@@ -291,14 +304,14 @@ export function Portfolio() {
     if (nativeDisplay) {
       return row.native_currency === displayCurrency ? (row.market_value_native ?? 0) : 0;
     }
-    return displayCurrency === "CNY" ? (row.market_value_cny ?? 0) : (row.market_value_usd ?? 0);
+    return displayValue(row.market_value_usd, row.market_value_cny, displayCurrency, snapshot?.fx) ?? 0;
   };
   const accountDisplayValue = (row: PortfolioAccount) => {
     if (row.total_display != null) return row.total_display;
     if (nativeDisplay) {
       return row.native_currency === displayCurrency ? (row.total_native ?? 0) : 0;
     }
-    return displayCurrency === "CNY" ? (row.total_cny ?? 0) : (row.total_usd ?? 0);
+    return displayValue(row.total_usd, row.total_cny, displayCurrency, snapshot?.fx) ?? 0;
   };
 
   const positions = useMemo(() => {
@@ -375,7 +388,7 @@ export function Portfolio() {
     ? snapshot.totals.display
     : nativeDisplay
       ? (snapshot?.totals.native_by_currency?.[displayCurrency] ?? null)
-      : displayCurrency === "CNY" ? snapshot?.totals.cny : snapshot?.totals.usd;
+      : displayValue(snapshot?.totals.usd, snapshot?.totals.cny, displayCurrency, snapshot?.fx);
 
   return (
     <div className="min-h-screen p-4 sm:p-6 lg:p-8">
@@ -388,9 +401,9 @@ export function Portfolio() {
             </div>
             <h1 className="text-3xl font-semibold tracking-tight">{t("portfolio.page.title")}</h1>
             <p className="mt-2 text-sm text-muted-foreground">{t("portfolio.page.subtitle")}</p>
-            {snapshot && !nativeDisplay ? (
+            {snapshot?.fx && !nativeDisplay && Number.isFinite(snapshot.fx.usd_cny) ? (
               <p className="mt-2 text-xs text-muted-foreground">
-                {t(snapshot.fx.stale ? "portfolio.page.fxCached" : "portfolio.page.fxFresh", { rate: snapshot.fx.usd_cny.toFixed(4) })}
+                {t(snapshot.fx.stale ? "portfolio.page.fxCached" : "portfolio.page.fxFresh", { rate: snapshot.fx.usd_cny.toFixed(4) })}{snapshot.fx.as_of ? ` · ${snapshot.fx.as_of}` : ""}
               </p>
             ) : null}
           </div>
@@ -479,7 +492,7 @@ export function Portfolio() {
               </div>
               <div className="grid gap-3 lg:grid-cols-3">
                 {snapshot.accounts.map((account) => (
-                  <AccountCard key={account.source_id ?? account.broker} account={account} active={sourceFilter === (account.source_id ?? account.broker)} displayCurrency={displayCurrency} onClick={() => { const id = account.source_id ?? account.broker; setSourceFilter((current) => current === id ? "all" : id); }} onReconnect={account.reconnect_required && account.source_id ? () => void reconnectSource(account.source_id!) : undefined} onRetry={!account.reconnect_required ? () => void refresh() : undefined} busy={refreshing || reconnectingSource === (account.source_id ?? account.broker)} actionsDisabled={refreshing || reconnectingSource !== null} />
+                  <AccountCard key={account.source_id ?? account.broker} account={account} active={sourceFilter === (account.source_id ?? account.broker)} displayCurrency={displayCurrency} fx={snapshot.fx} onClick={() => { const id = account.source_id ?? account.broker; setSourceFilter((current) => current === id ? "all" : id); }} onReconnect={account.reconnect_required && account.source_id ? () => void reconnectSource(account.source_id!) : undefined} onRetry={!account.reconnect_required ? () => void refresh() : undefined} busy={refreshing || reconnectingSource === (account.source_id ?? account.broker)} actionsDisabled={refreshing || reconnectingSource !== null} />
                 ))}
               </div>
             </section>
@@ -499,15 +512,16 @@ export function Portfolio() {
                       const weight = comparable && (totalDisplay ?? 0) > 0 ? displayedValue / (totalDisplay ?? 1) : 0;
                       const pnl = nativeDisplay
                         ? (row.native_currency === displayCurrency ? row.unrealized_pnl_native : null)
-                        : row.unrealized_pnl_usd;
-                      return <tr key={`${row.source_id ?? row.broker}-${row.symbol}`} className="hover:bg-muted/20"><Td><div className="font-medium">{row.source_label ?? row.broker.toUpperCase()}</div><div className="mt-1 text-xs"><BrokerBadge broker={row.broker} /></div></Td><Td><div className="font-medium">{row.symbol}</div><div className="max-w-52 truncate text-xs text-muted-foreground">{row.name}</div></Td><Td><span className="capitalize text-muted-foreground">{row.asset_type}</span></Td><Td>{quantity(row.quantity)}</Td><Td><div>{price(row.cost_price)}</div><div className="text-xs text-muted-foreground">{price(row.market_price)}</div></Td><Td><div className="font-medium">{row.priced && comparable ? money(displayedValue, displayCurrency) : "—"}</div><div className="text-xs text-muted-foreground">{row.priced ? (row.native_currency ?? row.currency) : t("portfolio.holdings.unpriced")}</div></Td><Td>{row.priced && comparable ? percentage(weight) : "—"}</Td><Td><span className={row.daily_change_pct == null ? "text-muted-foreground" : row.daily_change_pct >= 0 ? "text-positive" : "text-danger"}>{percentagePoints(row.daily_change_pct)}</span></Td><Td><span className={pnl == null ? "text-muted-foreground" : pnl >= 0 ? "text-positive" : "text-danger"}>{pnl == null ? "—" : money(pnl, displayCurrency)}</span></Td><Td><DataBadge priced={row.priced} /></Td></tr>;
+                        : displayValue(row.unrealized_pnl_usd, undefined, displayCurrency, snapshot.fx);
+                      return <tr key={`${row.source_id ?? row.broker}-${row.portfolio_id ?? ""}-${row.symbol}`} className="hover:bg-muted/20"><Td><div className="font-medium">{row.source_label ?? row.broker.toUpperCase()}</div><div className="mt-1 text-xs"><BrokerBadge broker={row.broker} /></div></Td><Td><div className="font-medium">{row.symbol}</div><div className="max-w-52 truncate text-xs text-muted-foreground">{row.name}</div>{row.portfolio_id && <div className="text-xs text-muted-foreground">{row.portfolio_name} · {row.portfolio_id}</div>}{row.source_mtime && <div className="text-xs text-muted-foreground">{t("portfolio.imports.mtime", { time: dateTime(row.source_mtime) })}</div>}</Td><Td><span className="capitalize text-muted-foreground">{row.asset_type}</span></Td><Td>{quantity(row.quantity)}</Td><Td><div>{price(row.cost_price)}</div><div className="text-xs text-muted-foreground">{price(row.market_price)}</div></Td><Td><div className="font-medium">{row.priced && comparable ? money(displayedValue, displayCurrency) : "—"}</div><div className="text-xs text-muted-foreground">{row.priced ? (row.native_currency ?? row.currency) : t("portfolio.holdings.unpriced")}</div></Td><Td>{row.priced && comparable ? percentage(weight) : "—"}</Td><Td><span className={row.daily_change_pct == null ? "text-muted-foreground" : row.daily_change_pct >= 0 ? "text-positive" : "text-danger"}>{percentagePoints(row.daily_change_pct)}</span></Td><Td><span className={pnl == null ? "text-muted-foreground" : pnl >= 0 ? "text-positive" : "text-danger"}>{pnl == null ? "—" : money(pnl, displayCurrency)}</span></Td><Td><DataBadge priced={row.priced} /></Td></tr>;
                     })}
                   </tbody>
                 </table>
               </div>
             </section>
 
-            {nativeDisplay ? null : <HistoryChart history={history} />}
+            <RebalanceProposal key={snapshot.snapshot_id} snapshot={snapshot} />
+            {nativeDisplay ? null : <HistoryChart history={history} currency={displayCurrency} />}
 
             <section className="rounded-xl border bg-card p-5">
               <div className="mb-4 flex items-center gap-2"><KeyRound className="h-4 w-4 text-muted-foreground" /><h2 className="font-semibold">{t("portfolio.credentials.title")}</h2></div>
@@ -583,15 +597,12 @@ function RefreshProgress({ state, settings }: { state: PortfolioRefreshState; se
  * it renders the failure, the error text and the last successful read time
  * instead of a value, so nothing on the card suggests it is part of the total.
  */
-function AccountCard({ account, active, displayCurrency, onClick, onReconnect, onRetry, busy, actionsDisabled }: { account: PortfolioAccount; active: boolean; displayCurrency: string; onClick: () => void; onReconnect?: () => void; onRetry?: () => void; busy: boolean; actionsDisabled: boolean }) {
+function AccountCard({ account, active, displayCurrency, fx, onClick, onReconnect, onRetry, busy, actionsDisabled }: { account: PortfolioAccount; active: boolean; displayCurrency: string; fx: PortfolioSnapshot["fx"]; onClick: () => void; onReconnect?: () => void; onRetry?: () => void; busy: boolean; actionsDisabled: boolean }) {
   const { t } = useTranslation();
   const failed = account.status === "error";
   const nativeDisplay = account.native_currency === displayCurrency;
-  const displayValue = account.total_display ?? (
-    nativeDisplay ? account.total_native :
-    displayCurrency === "USD" ? account.total_usd :
-    displayCurrency === "CNY" ? account.total_cny :
-    null
+  const accountDisplay = account.total_display ?? (
+    nativeDisplay ? account.total_native : displayValue(account.total_usd, account.total_cny, displayCurrency, fx)
   );
   return <div role="button" tabIndex={0} onClick={onClick} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onClick(); }} className={`cursor-pointer rounded-xl border bg-card p-5 transition ${active ? "border-primary ring-1 ring-primary/20" : "hover:border-primary/40"}`}>
     <div className="flex items-center justify-between gap-3">
@@ -605,9 +616,9 @@ function AccountCard({ account, active, displayCurrency, onClick, onReconnect, o
       </>
     ) : (
       <>
-        <div className="mt-4 text-2xl font-semibold">{money(displayValue, displayCurrency)}</div>
-        <div className="mt-1 text-xs text-muted-foreground">{nativeDisplay ? account.native_currency ?? displayCurrency : displayCurrency === "CNY" ? money(account.total_usd) : displayCurrency === "USD" ? money(account.total_cny, "CNY") : "—"} · {t("portfolio.accounts.positions", { count: account.position_count ?? 0 })}</div>
-        <div className="mt-4 flex items-center justify-between border-t pt-3 text-xs"><span className="text-positive">{t("portfolio.accounts.fresh")}</span><span className="text-muted-foreground">{dateTime(account.last_success_at)}</span></div>
+        <div className="mt-4 text-2xl font-semibold">{money(accountDisplay, displayCurrency)}</div>
+        <div className="mt-1 text-xs text-muted-foreground">{nativeDisplay ? account.native_currency ?? displayCurrency : displayCurrency === "USD" ? money(account.total_cny, "CNY") : money(account.total_usd)} · {t("portfolio.accounts.positions", { count: account.position_count ?? 0 })}</div>
+        <div className="mt-4 flex items-center justify-between border-t pt-3 text-xs"><span className="text-positive">{account.source_kind === "extraetf" ? t("portfolio.imports.source") : t("portfolio.accounts.fresh")}</span><span className="text-muted-foreground">{dateTime(account.import_metadata?.source_mtime ?? account.last_success_at)}</span></div>
       </>
     )}
     {failed && account.error ? <p className="mt-3 line-clamp-2 text-xs text-muted-foreground" title={account.error}>{account.error}</p> : null}
@@ -630,6 +641,7 @@ function DataBadge({ priced }: { priced: boolean }) {
 function CredentialCard({ account }: { account: PortfolioAccount }) {
   const { t } = useTranslation();
   const auth = account.auth;
+  if (account.source_kind === "extraetf") return <div className="rounded-lg border p-4"><div className="font-medium">{account.label}</div><p className="mt-2 text-sm">{t("portfolio.imports.hint")}</p>{account.import_metadata && <><p className="mt-2 text-xs">{t("portfolio.imports.mtime", { time: dateTime(account.import_metadata.source_mtime) })}</p><p className="text-xs">{t("portfolio.imports.expires", { time: dateTime(account.import_metadata.expires_at) })}</p></>}</div>;
   const renewal = auth?.renewal === "automatic"
     ? t("portfolio.credentials.renewalAutomatic")
     : auth?.renewal === "session"
@@ -680,7 +692,7 @@ function AllocationPie({ title, data, centerLabel, currency = "USD", onSelect }:
   return <div className="rounded-xl border bg-card p-5"><h2 className="font-semibold">{title}</h2><div ref={ref} className="h-80 w-full" /></div>;
 }
 
-function HistoryChart({ history }: { history: PortfolioHistoryPoint[] }) {
+function HistoryChart({ history, currency = "USD" }: { history: PortfolioHistoryPoint[]; currency?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const { t, i18n: instance } = useTranslation();
   const dark = useThemeDark();
@@ -697,16 +709,16 @@ function HistoryChart({ history }: { history: PortfolioHistoryPoint[] }) {
         backgroundColor: theme.tooltipBg,
         borderColor: theme.tooltipBorder,
         textStyle: { color: theme.tooltipText },
-        formatter: (items: Array<{ dataIndex: number; value: number }>) => { const item = items[0]; const row = rows[item.dataIndex]; return `${dateTime(row?.created_at)}<br/>${money(Number(item?.value))}`; },
+        formatter: (items: Array<{ dataIndex: number; value: number }>) => { const item = items[0]; const row = rows[item.dataIndex]; return `${dateTime(row?.created_at)}<br/>${money(item?.value == null ? null : Number(item.value), currency)}`; },
       },
       xAxis: { type: "category", boundaryGap: false, data: rows.map((row) => new Date(row.created_at).toLocaleString(uiLocale(), { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })), axisLabel: { color: theme.textColor, hideOverlap: true }, axisLine: { lineStyle: { color: theme.gridColor } } },
-      yAxis: { type: "value", scale: true, axisLabel: { color: theme.textColor, formatter: compactUsd }, splitLine: { lineStyle: { color: theme.gridColor, opacity: 0.45 } } },
-      series: [{ type: "line", data: rows.map((row) => Number(row.total_usd)), smooth: true, symbol: rows.length < 30 ? "circle" : "none", lineStyle: { width: 2, color: "#4f6edb" }, itemStyle: { color: "#4f6edb" }, areaStyle: { color: "rgba(79,110,219,0.10)" } }],
+      yAxis: { type: "value", scale: true, axisLabel: { color: theme.textColor, formatter: (v: number) => compactMoney(v, currency) }, splitLine: { lineStyle: { color: theme.gridColor, opacity: 0.45 } } },
+      series: [{ type: "line", data: rows.map((row) => { const value = currency === "USD" ? row.total_usd : currency === "CNY" ? row.total_cny : currency === "HKD" ? row.total_hkd : currency === "EUR" ? row.total_eur : null; return value == null ? null : Number(value); }), smooth: true, symbol: rows.length < 30 ? "circle" : "none", lineStyle: { width: 2, color: "#4f6edb" }, itemStyle: { color: "#4f6edb" }, areaStyle: { color: "rgba(79,110,219,0.10)" } }],
     });
     const resize = () => chart.resize();
     window.addEventListener("resize", resize);
     return () => { window.removeEventListener("resize", resize); chart.dispose(); };
-  }, [history, dark, instance.language]);
+  }, [history, dark, instance.language, currency]);
   return <section className="rounded-xl border bg-card p-5">
     <div className="flex items-start justify-between gap-3">
       <div><h2 className="font-semibold">{t("portfolio.history.title")}</h2><p className="mt-1 text-xs text-muted-foreground">{t("portfolio.history.hint")}</p></div>

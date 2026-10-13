@@ -156,7 +156,8 @@ class LLMConfig(_EnvBase):
     """LLM provider and generation parameters.
 
     Sources: ``src/providers/llm.py``, ``src/providers/chat.py``,
-    ``src/providers/openai_codex.py``, ``src/preflight.py``.
+    ``src/providers/openai_codex.py``, ``src/providers/claude_cli.py``,
+    ``src/preflight.py``.
     """
 
     langchain_provider: str = Field(alias="LANGCHAIN_PROVIDER", default="openai")
@@ -167,6 +168,9 @@ class LLMConfig(_EnvBase):
     # preflight could not tell a missing key from a working one and the failure
     # surfaced as an opaque 401 at the first call instead (#1223).
     anthropic_api_key: str = Field(alias="ANTHROPIC_API_KEY", default="")
+    langchain_max_tokens: int | None = Field(
+        alias="LANGCHAIN_MAX_TOKENS", default=None, gt=0
+    )
     anthropic_max_tokens: int | None = Field(alias="ANTHROPIC_MAX_TOKENS", default=None, gt=0)
     timeout_seconds: int = Field(alias="TIMEOUT_SECONDS", default=120)
     max_retries: int = Field(alias="MAX_RETRIES", default=2)
@@ -179,6 +183,15 @@ class LLMConfig(_EnvBase):
     openai_codex_base_url: str = Field(
         alias="OPENAI_CODEX_BASE_URL",
         default="https://chatgpt.com/backend-api/codex/responses",
+    )
+    claude_cli_path: str = Field(alias="CLAUDE_CLI_PATH", default="")
+    # A convenience filter, not a security boundary: live orders are still bound
+    # by the mandate gate whatever this list hides.
+    claude_cli_deny_tool_prefixes: str = Field(
+        alias="CLAUDE_CLI_DENY_TOOL_PREFIXES", default="trading_,etoro_"
+    )
+    claude_cli_bash_policy: str = Field(
+        alias="CLAUDE_CLI_BASH_POLICY", default="python-only"
     )
     openai_model: str = Field(alias="OPENAI_MODEL", default="")
     vibe_trading_disable_http_proxy: EnvBool = Field(
@@ -216,6 +229,8 @@ class DataConfig(_EnvBase):
         alias="GILDATA_BASE_URL",
         default="https://api.gildata.com/mcp-servers/aidata-assistant-srv-rawapi",
     )
+    # Standard-version (srv-tool) NL research endpoint — see src/tools/gildata_srv.py.
+    gildata_srv_tool_url: str = Field(alias="GILDATA_SRV_TOOL_URL", default="")
     fred_api_key: str = Field(alias="FRED_API_KEY", default="")
     vibe_trading_iwencai_key: str = Field(alias="VIBE_TRADING_IWENCAI_KEY", default="")
     vibe_trading_sec_ua: str = Field(alias="VIBE_TRADING_SEC_UA", default="")
@@ -232,6 +247,16 @@ class DataConfig(_EnvBase):
     vibe_trading_sec_ftd_files: int = Field(alias="VIBE_TRADING_SEC_FTD_FILES", default=1)
     vibe_trading_openalex_mailto: str = Field(alias="VIBE_TRADING_OPENALEX_MAILTO", default="")
     vibe_tw_stock_db: str = Field(alias="VIBE_TW_STOCK_DB", default="")
+    # Brazilian official data (B3 COTAHIST, CVM, BCB, Tesouro Direto), synced
+    # by ``vibe-trading br-data sync`` into one SQLite file. Empty = default
+    # ``~/.vibe-trading/br-data/br_data.db``.
+    vibe_br_data_db: str = Field(alias="VIBE_BR_DATA_DB", default="")
+    # First COTAHIST year a sync downloads (B3 publishes from 1986).
+    vibe_br_cotahist_start_year: int = Field(alias="VIBE_BR_COTAHIST_START_YEAR", default=2015)
+    # First year of CVM fund daily reports / company filings a sync downloads.
+    vibe_br_cvm_start_year: int = Field(alias="VIBE_BR_CVM_START_YEAR", default=2022)
+    # Local time (HH:MM, America/Sao_Paulo) of the daily sync in daemon mode.
+    vibe_br_sync_time: str = Field(alias="VIBE_BR_SYNC_TIME", default="21:30")
     vibe_trading_data_cache: EnvBool = Field(alias="VIBE_TRADING_DATA_CACHE", default=False)
     vibe_trading_data_cache_root: str = Field(alias="VIBE_TRADING_DATA_CACHE_ROOT", default="")
     aliyun_iqs_api_key: str = Field(alias="ALIYUN_IQS_API_KEY", default="")
@@ -259,6 +284,7 @@ class DataConfig(_EnvBase):
     market_data_order_kr_equity: str = Field(alias="MARKET_DATA_ORDER_KR_EQUITY", default="")
     market_data_order_ca_equity: str = Field(alias="MARKET_DATA_ORDER_CA_EQUITY", default="")
     market_data_order_ar_equity: str = Field(alias="MARKET_DATA_ORDER_AR_EQUITY", default="")
+    market_data_order_br_equity: str = Field(alias="MARKET_DATA_ORDER_BR_EQUITY", default="")
     market_data_order_uk_equity: str = Field(alias="MARKET_DATA_ORDER_UK_EQUITY", default="")
     market_data_order_vietnam_equity: str = Field(alias="MARKET_DATA_ORDER_VIETNAM_EQUITY", default="")
     market_data_order_crypto: str = Field(alias="MARKET_DATA_ORDER_CRYPTO", default="")
