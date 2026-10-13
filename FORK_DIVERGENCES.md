@@ -370,3 +370,7 @@ Existing fork tests already exercise distinct behavioral contracts rather than j
 - **Gate:** test replay lease wrapper + all direct real loop callers, indicator SHA invariants and provenance, stable pinned snapshot and revoked source cases, 2522 focused tests minus/update two obsolete assertions, diff check and compilation. Report any regression instead of changing versioned code on VM.
 
 Do not merge or deploy until the candidate passes VM validation. Keep `PPI_TRADING_DISABLED=True`.
+
+### Candidate validation update — 2026-10-13
+
+Claude validated candidate `ed394f7e` against XALL: exact same source diff (79 changed source lines, zero discrepancies), `git diff --check` and compilation PASS, 2,520 of 2,522 targeted tests PASS. Only two outdated replay-lease tests failed; all 11 differential probes matched expected changes. The two tests in `test_readonly_replay_after_microcompact.py` have now been adapted in GitHub to explicitly pass pending lease IDs and assert that writes clear replay cache/readiness while leaving lease consumption to the next model request. **These GitHub test changes remain unvalidated on the VM.** Repeat targeted suite before integration; no production deploy or upstream PR.
