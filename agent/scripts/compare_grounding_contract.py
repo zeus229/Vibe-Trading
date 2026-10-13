@@ -70,6 +70,50 @@ def probe_case(spec, root):
     return {"case": name, "valid": bool(result.valid), "issues": issues}
 
 
+
+def probe_native_quote(name, *, value, expression, with_evidence=True):
+    """Native upstream fixture, copied from test_grounding_formula_note.py."""
+    with TemporaryDirectory(prefix="vibe-native-quote-") as temporary:
+        ledger = GroundingLedger(
+            run_dir=Path(temporary), user_message="Analyze AAPL.US"
+        )
+        if with_evidence:
+            ledger.ingest_tool_result(
+                tool_name="get_market_data",
+                arguments={"codes": ["AAPL.US"]},
+                result=json.dumps({
+                    "AAPL.US": [
+                        {"trade_date": "2026-08-03", "close": 100.0},
+                        {"trade_date": "2026-09-02", "close": 112.4},
+                    ]
+                }),
+                call_id="quote",
+                success=True,
+            )
+        answer = (
+            f"AAPL.US (USD) cumulative return: {value}.\n\n"
+            f"```figures\n{value} | derived | {expression} | quote\n```"
+        )
+        result = ledger.validate_final_answer(answer)
+        return {
+            "case": name, "valid": bool(result.valid),
+            "issues": [{
+                "role": issue.get("role"),
+                "reason": issue.get("reason"),
+                "preservable": bool(issue.get("derived_repair_verified")),
+                "operand_ref_count": len(issue.get("derive_operand_refs") or ()),
+            } for issue in result.issues],
+        }
+
+
+NATIVE_CASES = (
+    ("native_valid", "12.4%", "scenario result: (112.4 - 100.0) / 100.0", True),
+    ("native_wrong_result", "99.0%", "scenario result: (112.4 - 100.0) / 100.0", True),
+    ("native_unobserved_addend", "13.4%", "scenario result: (112.4 - 100.0 + 1) / 100.0", True),
+    ("native_missing_evidence", "12.4%", "scenario result: (112.4 - 100.0) / 100.0", False),
+    ("native_trailing_text", "12.4%", "scenario result: (112.4 - 100.0) / 100.0, explanation", True),
+)
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
@@ -77,6 +121,7 @@ def main():
     with TemporaryDirectory(prefix="vibe-grounding-probe-") as temporary:
         root = Path(temporary)
         report = [probe_case(case, root) for case in CASES]
+        report.extend(probe_native_quote(name, value=value, expression=expression, with_evidence=observed) for name, value, expression, observed in NATIVE_CASES)
     result = {"schema": "vibe_grounding_comparison_v1", "cases": report}
     encoded = json.dumps(result, sort_keys=True, indent=2)
     if opts.output:
