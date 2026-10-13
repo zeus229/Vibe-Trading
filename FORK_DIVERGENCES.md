@@ -281,3 +281,18 @@ Compared upstream `300c6aa6989fcf2ec1cb052c89237b48fabdb524` and fork `1d906e68d
 Existing fork tests already exercise distinct behavioral contracts rather than just implementation: `test_grounding_derived_repair_coverage.py` (missing numerator/denominator, same-valued entity ambiguity, chosen scalars), `test_grounding_derived_preservation_gate.py` (complete repair/revalidation, mixed scope, snapshot/unit mismatch), and `test_grounding_note_formula_extraction.py` (reject text after ASCII-colon formula and preserve only complete labelled arithmetic). Do not duplicate these tests for a ceremonial audit.
 
 **Decision:** no executable deletion currently proven behavior-equivalent. There is no safe code candidate or need for VM tests at this stage. Next engineering gate requires a *paired fixture run* in isolated detached worktrees (one upstream baseline and one fork), normalizing expected native issue codes while comparing: acceptance/rejection, authoritative call references, refusal to derive from unobserved financial operands, preservation after correction, and replay visibility. Scope to five to ten carefully selected cases; no full campaign. Only then create a single cleanup branch if an exact overlap is demonstrated. Keep all Asistente Casa-specific behavior, ISIN locks, and disabled-trading policy unchanged. No Risk ACCIONES or PR #71 work here.
+
+## Focused native-vs-fork probe candidate (2026-10-13)
+
+Candidate branch `test/grounding-upstream-contract-probe` includes `agent/scripts/compare_grounding_contract.py`, a **read-only, nine-case** probe with deterministic synthetic holdings and one tool call. It records acceptance, issue reasons and whether a derived correction is marked preservable. This is **diagnostic coverage**, not an assertion that the implementations are equivalent and not an executable cleanup yet. Neither trading nor portfolio providers are called.
+
+Compare exactly upstream `300c6aa6989fcf2ec1cb052c89237b48fabdb524` and the fork candidate in two **detached worktrees**, without creating any extra branches. Run the same probe from each, with `PYTHONPATH` pointing to each checkout's `agent` directory, and compare JSON outputs. Inspect differences manually: the probe deliberately does not normalize away issue details that may carry a safety contract. Do not claim PASS merely because both invocations ran.
+
+Classification for upstream proposals **after** recorded differences:
+1. `derived` financial-operand and complete-correction references: generic, valuable if genuinely absent from native #1622; narrow tests and contribution; upstream issue #1622 discussion before code PR.
+2. Correction retention across >24 issues / exact references: generic candidate only for demonstrated disappearing verified claims; match native correction lifecycle before proposing.
+3. Microcompact tool opt-in and replay visibility lease: generic API candidate independent of Asistente Casa; preserve in fork until model consumes restored evidence, then consider a small upstream PR.
+4. Verified ISIN-to-listing lock: generic extension of existing extraETF/broker `instrument_id` and identity gate; do not duplicate ISIN parsing. Separate proposal from grounding.
+5. Deliberate ASCII colon strictness, rounding band and provider-provenance hashing are **policy/contract differences**, not automatically bugs to pitch upstream.
+
+**Hold point:** analyze and report the nine differences before any functional code removal. Risk ACCIONES, fork PR #71, production deploy and trading stay out of scope.
