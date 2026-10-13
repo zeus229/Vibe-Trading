@@ -20,7 +20,7 @@ Still fork-only on top of those: `portfolio_summary` `view=compact` and `no_cach
 `latest_date`, plus `no_cache`; `preserve_during_microcompact` skip in `context_compact._microcompact`
 (`preserve_tools`) and the replay visibility lease.
 
-## Codex tools sent with `strict: false` (temporary fork fix, upstream pending)
+## Codex tools sent with `strict: false` (absorbed by upstream #1785 on 2026-10-11)
 
 `_convert_tools` in `agent/src/providers/openai_codex.py` sends `"strict": False` on every converted tool.
 Upstream (`8e430079`) omits the key. **Temporary fork correction; remove it once upstream carries the same fix.**
@@ -241,3 +241,13 @@ constants in formulas. There was no maintainer reply to that particular comment
 at the time of this note. Do not write a new behavioral grounding PR until
 the intended contract is clarified. A short, courteous follow-up in the issue
 is appropriate, without assuming a response deadline.
+
+## Audit 2026-10-13 — upstream `300c6aa6` / fork `1d906e68`
+
+- Upstream #1785 already includes the Codex optional-arguments fix. The fork and upstream at the cited SHAs have **identical blob SHA `9826a3cfea8991dfe2c96f373d814fa120274e2b`** for `agent/src/providers/openai_codex.py`. Keep `strict: false` as **native upstream behavior**, not a local patch; no code deletion is warranted.
+- Upstream #1622 added derived data-operand evidence checks and explicit declared parameter requirements (2026-10-11 changelog). The fork still has `agent/src/agent/grounding/derived.py`, absent at upstream `300c6aa6`; **do not delete it** until differential contract tests establish equivalence for provenance, mixed scope, unavailable operands, and coefficient labels.
+- `context_compact.py` has different blobs (fork `a836e07dcf8606b41e1b8751427bea924e9ca6a5`, upstream `9ee81bc045ded3835c11d2782fd658c282121523`); fork adds `preserve_during_microcompact`. Upstream's existing preserved call IDs are not by themselves proof of equivalent replay visibility. Keep this behavior pending a focused replay/microcompact trace.
+- Existing #1767/#1768/#1769 upstream absorption and the 2026-10-11 duplicate-code cleanup remain valid. Do not re-implement those capabilities.
+- Scope excluded here: Risk ACCIONES incident and fork PR #71. Trading remains disabled; all Asistente Casa integrations remain read-only.
+
+**Decision:** confirmed redundancy at this point is documentation/classification of the Codex patch, *not an executable duplicate* to remove. Do not create a code branch solely for audit or launch a broad test suite. Before a functional cleanup, compare the current native/fork grounding correction, reference, derived, and replay contracts using paired fixtures, and create one focused candidate only where a behavior-identical replacement is proven.
