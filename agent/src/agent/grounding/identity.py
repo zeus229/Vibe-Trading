@@ -451,6 +451,20 @@ class ToolAuthorization:
 class _IdentityMixin:
     """Identity behaviour of :class:`GroundingLedger`."""
 
+    def _portfolio_conflict_symbols(self) -> set[str]:
+        """Qualified symbols tainted by contradictory verified portfolio identities.
+
+        These are not resolver shortlists: selecting one candidate by ticker
+        cannot disprove conflicting ISIN observations.
+        """
+        return {
+            _normalize_symbol(candidate.get("symbol"))
+            for key, record in self._identities.items()
+            if key.startswith("portfolio:") and record.status == "portfolio_conflict"
+            for candidate in record.candidates
+            if isinstance(candidate, Mapping) and candidate.get("symbol")
+        }
+
     def authorize_tool_call(
         self,
         tool_name: str,
@@ -505,6 +519,21 @@ class _IdentityMixin:
 
         self._identity_required = True
         self._buffer_output = True
+        blocked = self._portfolio_conflict_symbols()
+        conflicted = tuple(
+            symbol for symbol in symbols
+            if symbol in blocked or any(
+                self._match_authorized_symbol(symbol, {candidate}) is not None
+                for candidate in blocked
+            )
+        )
+        if conflicted:
+            return ToolAuthorization(
+                allowed=False,
+                error_code="identity_conflict",
+                message="Verified portfolio mappings disagree on this symbol's ISIN; a symbol search alone cannot resolve the contradiction.",
+                symbols=conflicted,
+            )
         authorized = {_normalize_symbol(item) for item in batch_authorized_symbols}
         frozen_status = batch_identity_status or self.identity_status
         if frozen_status != "locked" or not authorized:
@@ -748,7 +777,7 @@ class _IdentityMixin:
             ):
                 self._identities[key] = IdentityRecord(
                     query=record.query,
-                    status="ambiguous",
+                    status="portfolio_conflict",
                     source_tool_call_id=call_id,
                     source=list(record.source),
                     candidates=list(record.candidates),
@@ -764,7 +793,7 @@ class _IdentityMixin:
             )
             all_symbols = symbols | previous_symbols
             conflict = (
-                bool(existing and existing.status == "ambiguous")
+                bool(existing and existing.status == "portfolio_conflict")
                 or len(all_symbols) != 1
                 or any(len(symbol_isins[symbol]) != 1 for symbol in symbols)
             )
@@ -777,7 +806,7 @@ class _IdentityMixin:
                 # replace a previously settled identity with a different one.
                 self._identities[key] = IdentityRecord(
                     query=isin,
-                    status="ambiguous",
+                    status="portfolio_conflict",
                     source_tool_call_id=call_id,
                     source=["asistente-casa:provider_identity"],
                     candidates=candidates,
