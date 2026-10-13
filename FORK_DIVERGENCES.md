@@ -371,3 +371,14 @@ Claude reran `a9c1d3c5`: 502 targeted tests PASS, clean YPFD calls/answers remai
 Updated candidate now uses a **portfolio-specific** `portfolio_conflict` status, deliberately excluded from the generic resolver's `ambiguous` shortlist supersession. Conflicting symbols are blocked in market-tool authorization even if a later independent `search_symbol` locks the ticker; unrelated symbols retain their tool authorization. A narrowly scoped identity grounding check rejects final prose that directly names a conflicted ticker, without changing upstream shortlist semantics or broadly rejecting portfolio totals. Added focused regressions. A partial corrected re-read in the *same run* stays fail-closed; a new run from corrected canonical evidence can lock again.
 
 **Unverified revised code — DO NOT MERGE:** must run existing grounding registry/identity suites, original S1-S7 and explicit resolver-before/after contradiction probes. Check final-answer scope, clean counts without ticker, and whether the distinct status participates correctly in persistence/serialization. Review the decision to block both legitimate BYMA currency-listing variants conservatively; implement a provider-neutral distinct-listing model in separate work if needed.
+
+### Revision after VM FAIL at `f3bdcc6a` — registry and portfolio-only state
+
+Local report: 502 focal tests passed and 2 failed in `test_grounding_registry.py` because new declared check lacked expected ordering and pass/fail fixture. With `portfolio_conflict` as only identity record, aggregate `identity_status` defaulted to `unresolved`: generic summaries blocked and `recovery_action` erroneously suggested `search_symbol`. Also a direct refusal naming the conflicted ticker was rejected.
+
+Candidate fixes on the same branch:
+- Treat aggregate containing only `portfolio_conflict` as `ambiguous` (without altering per-ISIN records or upstream resolver shortlist behavior). Generic text can be released; no futile resolver recovery; affected symbol authorization remains blocked.
+- Register `portfolio-identity-conflict` in the check order and add a true/false ledger fixture.
+- Exempt only a narrowly recognized *standalone* no-analysis explanation naming the ticker; market claims or appended trade conclusions still fail.
+- Add tests for generic summary without other locked symbols, no futile recovery, refusal vs appended recommendation.
+- **Not VM tested**, so do not merge or deploy before repeat focused tests and probes; do not treat issue #1820 percent scaling as part of this branch.
