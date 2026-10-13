@@ -189,10 +189,14 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
     name = "asistente_casa_portfolio_risk_xray"
 
     description = (
-        "PREFERRED tool for VaR, Expected Shortfall, volatility, drawdown, "
-        "concentration, diversification, or correlation of the user's CURRENT "
-        "Asistente Casa portfolio (the real, canonical Argentine brokerage "
-        "account) — for ACCIONES and CEDEARS. Use this INSTEAD of the generic "
+        "PREFERRED for VaR, Expected Shortfall, diversification ratio and other "
+        "Risk X-Ray-only metrics, and for CEDEARS risk. For ACCIONES "
+        "volatility, correlation matrix, Euler risk contributions and exactly "
+        "63/126/252/504/756 daily returns, prefer the MCP tool "
+        "mcp_asistente_casa_consultar_riesgo_acciones_canonico when available "
+        "in authenticated conversational sessions; preserve its returned figures "
+        "without recomputing or merging unlike methodologies. "
+        "Use this INSTEAD of the generic "
         "portfolio_risk_xray whenever the request is about 'mi cartera real', "
         "'mis datos reales', or the account already loaded through the "
         "asistente-casa connector: this tool resolves holdings, weights and "
