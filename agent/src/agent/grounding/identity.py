@@ -748,7 +748,7 @@ class _IdentityMixin:
             ):
                 self._identities[key] = IdentityRecord(
                     query=record.query,
-                    status="conflicting",
+                    status="ambiguous",
                     source_tool_call_id=call_id,
                     source=list(record.source),
                     candidates=list(record.candidates),
@@ -764,7 +764,7 @@ class _IdentityMixin:
             )
             all_symbols = symbols | previous_symbols
             conflict = (
-                bool(existing and existing.status == "conflicting")
+                bool(existing and existing.status == "ambiguous")
                 or len(all_symbols) != 1
                 or any(len(symbol_isins[symbol]) != 1 for symbol in symbols)
             )
@@ -777,7 +777,7 @@ class _IdentityMixin:
                 # replace a previously settled identity with a different one.
                 self._identities[key] = IdentityRecord(
                     query=isin,
-                    status="conflicting",
+                    status="ambiguous",
                     source_tool_call_id=call_id,
                     source=["asistente-casa:provider_identity"],
                     candidates=candidates,
