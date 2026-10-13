@@ -246,7 +246,10 @@ def test_agent_loop_sends_replay_before_consuming_its_visibility_lease(
     assert "RESULT_PROBE" in delivered["content"]
     assert "metric_alpha" in delivered["content"]
     assert "metric_beta" in delivered["content"]
-    assert loop._readonly_replay_visibility_pending == set()
+    # Upstream invalidates cache and readiness; the model consumes the lease.
+    assert loop._readonly_replay_cache == {}
+    assert loop._readonly_replay_ready == set()
+    assert loop._readonly_replay_visibility_pending == {"replay-1"}
 
     events = TraceWriter.read(run_dir)
     assert sum(event["type"] == "tool_result_replayed" for event in events) == 1
@@ -580,7 +583,10 @@ def test_replay_visibility_lease_survives_microcompact_until_model_consumes_it()
             }
         )
 
-    loop._microcompact_and_unblock(messages, trace, 2)
+    loop._microcompact_and_unblock(
+        messages, trace, 2,
+        preserve_tool_call_ids=loop._readonly_replay_visibility_pending,
+    )
     replay_message = next(
         msg for msg in messages if msg.get("tool_call_id") == "replay-visible"
     )
@@ -592,15 +598,23 @@ def test_replay_visibility_lease_survives_microcompact_until_model_consumes_it()
     loop._consume_readonly_replay_visibility(messages, trace, 3)
     assert "replay-visible" not in loop._readonly_replay_visibility_pending
 
-    loop._microcompact_and_unblock(messages, trace, 4)
+    loop._microcompact_and_unblock(
+        messages, trace, 4,
+        preserve_tool_call_ids=loop._readonly_replay_visibility_pending,
+    )
     assert replay_message["content"].startswith("[CLEARED FROM CONTEXT:")
     assert any(event["type"] == "replay_visibility_consumed" for event in trace.events)
 
 
-def test_write_invalidation_clears_pending_replay_visibility_lease():
+def test_write_invalidation_clears_replay_cache_and_leaves_lease_to_consumption():
     registry = _ReadAndWriteRegistry()
     loop = _loop(registry)
     loop._readonly_replay_visibility_pending.add("replay-1")
+    args = {"url": "https://example.test/report"}
+    key = loop._identical_call_key("read_url", args)
+    assert key is not None
+    loop._readonly_replay_cache[key] = '{"status":"ok"}'
+    loop._readonly_replay_ready.add(key)
 
     loop._process_tool_calls(
         [SimpleNamespace(name="bash", arguments={"command": "echo changed"}, id="w1")],
