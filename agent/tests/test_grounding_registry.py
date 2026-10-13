@@ -136,6 +136,7 @@ def test_declared_checks_cover_identity_and_figure_slices_in_order() -> None:
     assert [d["name"] for d in GROUNDING_CHECKS.describe()] == [
         "listed-identity-relabelled-private",
         "identity-not-locked",
+        "portfolio-identity-conflict",
         "figures-block-malformed",
         "unsourced-symbol-figures",
         "figure-symbol", "undeclared-figure", "figure-price-column",
@@ -204,6 +205,7 @@ def test_fired_checks_name_the_identity_and_figure_slices(tmp_path: Path) -> Non
 PAIRS = {
     "listed-identity-relabelled-private": ("listed", "GLD is a listed fund.", "GLD is a private company."),
     "identity-not-locked": ("identity", "GLD is a listed fund.", "机器人ETF 可以买入。"),
+    "portfolio-identity-conflict": ("portfolio_conflict", "La cartera tiene posiciones.", "GGAL.BA muestra tendencia alcista."),
     "figures-block-malformed": ("market", HDR, HDR + "\n```figures\nbad row\n```"),
     "unsourced-symbol-figures": ("market", HDR, HDR + " 000858.SZ costs 15.20 CNY."),
     "figure-symbol": ("multi", "510300.SH akshare CNY close 3.912." + _block("3.912 | observed | 510300.SH close | c3"),
@@ -240,6 +242,23 @@ def test_declared_check_fixture_pair(tmp_path, name):
             ledger = _ledger_with_invalidated_identity(path)
         elif kind in {"identity", "listed"}:
             ledger = _ledger_with_locked_listed_identity(path)
+        elif kind == "portfolio_conflict":
+            ledger = GroundingLedger(run_dir=path, user_message="Analyze portfolio")
+            ledger._ingest_trusted_portfolio_identities(
+                {"context": {"holdings_native": {"ACCIONES": [
+                    {
+                        "source_instrument_type": "ACCIONES",
+                        "market": "BYMA",
+                        "isin": "AR0000000001",
+                        "provider_identity": {
+                            "provider": "yahoo", "resolution": "isin", "verified": True,
+                            "resolved_by_isin": "AR0000000001", "symbol": symbol,
+                        },
+                    }
+                    for symbol in ("GGAL.BA", "GGALD.BA")
+                ]}}},
+                "call_portfolio",
+            )
         elif kind == "multi":
             ledger = _multi_ledger(path, MARKET_A, MARKET_C)
         else:
