@@ -161,3 +161,6 @@ def test_conflict_refusal_is_not_a_trading_claim(tmp_path):
     mixed = refusal + " GGAL.BA muestra tendencia alcista."
     assert any(issue.get("reason") == "portfolio_identity_conflict"
                for issue in ledger.revalidate(mixed).issues)
+    recommendation = refusal + " Recomiendo mantener."
+    assert any(issue.get("reason") == "portfolio_identity_conflict"
+               for issue in ledger.revalidate(recommendation).issues)
