@@ -251,3 +251,18 @@ is appropriate, without assuming a response deadline.
 - Scope excluded here: Risk ACCIONES incident and fork PR #71. Trading remains disabled; all Asistente Casa integrations remain read-only.
 
 **Decision:** confirmed redundancy at this point is documentation/classification of the Codex patch, *not an executable duplicate* to remove. Do not create a code branch solely for audit or launch a broad test suite. Before a functional cleanup, compare the current native/fork grounding correction, reference, derived, and replay contracts using paired fixtures, and create one focused candidate only where a behavior-identical replacement is proven.
+
+## 2026-10-13 — ISIN upstream audit and generic contribution candidate
+
+Audited upstream `HKUDS/Vibe-Trading@300c6aa6` directly:
+
+- `agent/src/entities/models.py`: `instrument_id` explicitly accepts stable identifiers including ISIN.
+- `agent/src/portfolio/extraetf.py`: parses/validates ISIN identifiers and emits `instrument_id_kind=isin`, with checksum metadata; does **not** establish tradable listing/venue.
+- `agent/src/portfolio/service.py`: groups exported positions using an `ISIN:<id>`-style key and explicitly excludes unresolved ISIN/venue identities from price-series risk tools (`_canonical_symbol` and warning path). The upstream already implements the *fail-closed unresolved listing* half of our intended semantics.
+- `agent/src/trading/connectors/trading212/sdk.py` extracts provider ISIN; Brazil `br_data/store.py` stores ISIN.
+- Upstream `agent/src/agent/grounding/identity.py` does not yet contain the fork's `record_portfolio_...` ISIN-verification path: our fork locks a .BA symbol only when authoritative provider metadata says `resolution=isin`, `verified=true`, `resolved_by_isin` equals holding ISIN, and the provider is Yahoo. Fork `portfolio/service.py` carries that verified mapping in `provider_identity`.
+- Therefore **ISIN awareness is native; evidence-backed ISIN -> market-qualified quote identity is still a fork addition**. Do **not** frame an upstream proposal as "add ISIN support". Potential generic contribution: a provider-neutral *verified listing resolution* contract, with source, observed ISIN, resolved ISIN, market, qualified quote symbol, verification status, and fail-closed ambiguity, integrated with upstream's existing identity ledger and extraETF unresolved-venue rule.
+- Proposed differential fixtures before any PR: same ISIN listed in two venues, same ticker different instruments, missing market, provider claims wrong ISIN, unverified persisted mapping, verified single-market resolution, CEDEAR/underlying distinct ISIN, mixed broker/import holdings. Ensure no brokerage/trading capability changes. Avoid embedding `asistente-casa`, PPI or `.BA` into generic implementation. Discuss scope first in upstream issue #1171/#1170 or the corresponding identity tracker to avoid duplicate surface.
+- Status: **investigate / candidate for future upstream PR**. No generic upstream PR published. Preserve local ISIN verified lock until equivalent cross-provider behavior is shipped and proved.
+
+Other fork-vs-upstream priorities: native Codex optional schema is already identical (no removal); grounding `derived.py` remains fork-only while upstream #1622 has partially overlapping scalar/operand checks (requires paired fixture comparison); microcompact opt-in and replay lease remain distinct (do not delete until visibility equivalence verified); native snapshot/end_date and code envelope #1767-#1769 remain absorbed. Keep Risk ACCIONES / fork PR #71 out of scope.
