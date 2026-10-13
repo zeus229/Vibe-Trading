@@ -98,11 +98,11 @@ def _portfolio_identity_conflict(ledger: Any, content: str) -> list[dict[str, An
     # conclusion. Keep this exemption narrow: a second sentence or a claim
     # following the refusal must still be checked against the symbols.
     refusal = re.fullmatch(
-        r"\\s*(?:No puedo analizar|No se puede analizar|Cannot analyze|Unable to analyze)"
-        r"\\s+([A-Za-z0-9_.]+)\\s+(?:porque|because)\\s+"
+        r"\s*(?:No puedo analizar|No se puede analizar|Cannot analyze|Unable to analyze)"
+        r"\s+([A-Za-z0-9_.]+)\s+(?:porque|because)\s+"
         r"(?:su identidad es contradictoria|hay un conflicto de identidad|"
         r"its identity is conflicting|its identity is unresolved)"
-        r"\\.?(?:\\s*)",
+        r"\.?(?:\s*)",
         content, flags=re.IGNORECASE,
     )
     if refusal and any(
