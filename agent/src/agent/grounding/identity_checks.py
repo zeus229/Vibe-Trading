@@ -94,6 +94,22 @@ def _identity_not_locked(ledger: Any, content: str) -> list[dict[str, Any]]:
 )
 def _portfolio_identity_conflict(ledger: Any, content: str) -> list[dict[str, Any]]:
     blocked = ledger._portfolio_conflict_symbols()
+    # A standalone explanation of an unavailable identity is not a market
+    # conclusion. Keep this exemption narrow: a second sentence or a claim
+    # following the refusal must still be checked against the symbols.
+    refusal = re.fullmatch(
+        r"\\s*(?:No puedo analizar|No se puede analizar|Cannot analyze|Unable to analyze)"
+        r"\\s+([A-Za-z0-9_.]+)\\s+(?:porque|because)\\s+"
+        r"(?:su identidad es contradictoria|hay un conflicto de identidad|"
+        r"its identity is conflicting|its identity is unresolved)"
+        r"\\.?(?:\\s*)",
+        content, flags=re.IGNORECASE,
+    )
+    if refusal and any(
+        refusal.group(1).upper() in {symbol, symbol.rsplit(".", 1)[0]}
+        for symbol in blocked
+    ):
+        return []
     # Unlike an upstream resolver shortlist, these observations contradict
     # identity data. Only claims explicitly naming an affected security are
     # blocked; unrelated holdings and generic portfolio prose remain usable.
