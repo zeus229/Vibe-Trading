@@ -18,10 +18,12 @@ _BASE_READS = [
     "consultar_attribution_cartera_scope",
 ]
 _MACRO = "consultar_contexto_mercado_canonico"
+_EQUITY_RISK = "consultar_riesgo_acciones_canonico"
 _CONVERSATIONAL_READS = {
     "consultar_cartera_actual",
     "consultar_mercado_ppi_instrumento",
     _MACRO,
+    _EQUITY_RISK,
 }
 _REMOTE_TOOLS = [
     "consultar_performance_cartera_scope",
@@ -29,6 +31,7 @@ _REMOTE_TOOLS = [
     "consultar_cartera_actual",
     "consultar_mercado_ppi_instrumento",
     _MACRO,
+    _EQUITY_RISK,
 ]
 
 
@@ -80,7 +83,7 @@ def test_scheduled_and_ownerless_allowlists_are_unchanged_and_strip_macro() -> N
     # A macro entry accidentally present in the shared config is still removed
     # from non-conversational scopes, while the two original reads are retained.
     scoped = scope_asistente_casa_agent_config(
-        _config(_BASE_READS + [_MACRO]), conversational=False
+        _config(_BASE_READS + [_MACRO, _EQUITY_RISK]), conversational=False
     )
     assert scoped.mcp_servers["asistente_casa"].enabled_tools == _BASE_READS
 
@@ -94,6 +97,7 @@ def test_wildcard_is_narrowed_before_any_session_can_discover_mcp_tools() -> Non
         assert "*" not in allowed
         assert set(_BASE_READS) <= allowed
         assert (_MACRO in allowed) is conversational
+        assert (_EQUITY_RISK in allowed) is conversational
 
 
 def test_discovery_preserves_reads_and_denies_macro_direct_call_for_scheduled(monkeypatch) -> None:
@@ -124,6 +128,11 @@ def test_discovery_preserves_reads_and_denies_macro_direct_call_for_scheduled(mo
         "mcp_asistente_casa_consultar_performance_cartera_scope",
         "mcp_asistente_casa_consultar_attribution_cartera_scope",
     }
+    denied_risk = json.loads(
+        registry.execute("mcp_asistente_casa_consultar_riesgo_acciones_canonico", {"window": 252})
+    )
+    assert denied_risk["status"] == "error"
+    assert "not found" in denied_risk["error"]
     denied = json.loads(
         registry.execute(
             "mcp_asistente_casa_consultar_contexto_mercado_canonico", {}
@@ -154,3 +163,4 @@ def test_conversation_discovery_adds_macro_without_changing_existing_reads(monke
     )
     discovered = {wrapper.name.removeprefix("mcp_asistente_casa_") for wrapper in wrappers}
     assert discovered == set(_BASE_READS) | _CONVERSATIONAL_READS
+    assert "mcp_asistente_casa_consultar_riesgo_acciones_canonico" in {w.name for w in wrappers}
