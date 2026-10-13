@@ -38,7 +38,7 @@ def test_one_verified_listing_stays_locked(tmp_path):
 def test_two_qualified_listings_for_same_isin_do_not_choose_last(tmp_path, reverse):
     ledger = GroundingLedger(run_dir=tmp_path, user_message="Portfolio")
     rows = [row("AR0000000001", "GGAL.BA"), row("AR0000000001", "GGALD.BA")]
-    ingest(ledger, *reversed(rows) if reverse else rows)
+    ingest(ledger, *(list(reversed(rows)) if reverse else rows))
     record = state(ledger, "AR0000000001")
     assert record.status == "conflicting"
     assert record.symbol is None
