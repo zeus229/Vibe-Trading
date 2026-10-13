@@ -138,3 +138,26 @@ def test_symbol_search_cannot_supersede_portfolio_conflict(tmp_path):
     assert all(state(ledger, isin).status == "portfolio_conflict"
                for isin in ("AR0000000001", "AR0000000002"))
     assert "GGAL.BA" in ledger._portfolio_conflict_symbols()
+
+
+def test_portfolio_conflict_only_allows_generic_summary_without_resolver_recovery(tmp_path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="Summarize my portfolio")
+    ingest(ledger, row("AR0000000001", "GGAL.BA"),
+           row("AR0000000001", "GGALD.BA"))
+    assert ledger.identity_status == "ambiguous"
+    generic = ledger.validate_final_answer("La cartera contiene varias posiciones.")
+    assert not any(issue.get("reason") == "identity_not_locked" for issue in generic.issues)
+    assert ledger.recovery_action(generic) is None
+    assert not ledger.validate_final_answer("GGAL.BA muestra tendencia alcista.").valid
+
+
+def test_conflict_refusal_is_not_a_trading_claim(tmp_path):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze GGAL.BA")
+    ingest(ledger, row("AR0000000001", "GGAL.BA"),
+           row("AR0000000001", "GGALD.BA"))
+    refusal = "No puedo analizar GGAL.BA porque su identidad es contradictoria."
+    assert not any(issue.get("reason") == "portfolio_identity_conflict"
+                   for issue in ledger.validate_final_answer(refusal).issues)
+    mixed = refusal + " GGAL.BA muestra tendencia alcista."
+    assert any(issue.get("reason") == "portfolio_identity_conflict"
+               for issue in ledger.revalidate(mixed).issues)
