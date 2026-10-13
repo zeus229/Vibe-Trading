@@ -246,10 +246,7 @@ def test_agent_loop_sends_replay_before_consuming_its_visibility_lease(
     assert "RESULT_PROBE" in delivered["content"]
     assert "metric_alpha" in delivered["content"]
     assert "metric_beta" in delivered["content"]
-    # Upstream invalidates cache and readiness; the model consumes the lease.
-    assert loop._readonly_replay_cache == {}
-    assert loop._readonly_replay_ready == set()
-    assert loop._readonly_replay_visibility_pending == {"replay-1"}
+    assert loop._readonly_replay_visibility_pending == set()
 
     events = TraceWriter.read(run_dir)
     assert sum(event["type"] == "tool_result_replayed" for event in events) == 1
@@ -625,4 +622,7 @@ def test_write_invalidation_clears_replay_cache_and_leaves_lease_to_consumption(
         1,
     )
 
-    assert loop._readonly_replay_visibility_pending == set()
+    # Upstream invalidates replay cache/readiness; the next model request consumes the lease.
+    assert loop._readonly_replay_cache == {}
+    assert loop._readonly_replay_ready == set()
+    assert loop._readonly_replay_visibility_pending == {"replay-1"}
