@@ -143,41 +143,17 @@ def _compute_volume_stats(
 
 
 def _dataset_fingerprint(
-    close: pd.Series,
-    volume: pd.Series | None,
-    provenance: dict[str, Any] | None,
-    *,
-    interval: str,
+    close: pd.Series, volume: pd.Series | None, interval: str
 ) -> str:
-    """Return a stable identity for the exact bars used by the indicators."""
-    rows: list[list[Any]] = []
-    for position in range(len(close)):
-        index_value = close.index[position]
-        if isinstance(close.index, pd.DatetimeIndex):
-            label = pd.Timestamp(index_value).isoformat()
-        else:
-            label = str(index_value)
-        close_value = float(close.iloc[position])
-        volume_value: float | None = None
-        if volume is not None and position < len(volume):
-            raw_volume = volume.iloc[position]
-            if pd.notna(raw_volume):
-                volume_value = float(raw_volume)
-        rows.append([label, close_value, volume_value])
-
-    payload = {
-        "interval": interval,
-        "bars": rows,
-        "provenance": provenance if isinstance(provenance, dict) else {},
-    }
-    canonical = json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        separators=(",", ":"),
-        default=str,
-    ).encode("utf-8")
-    return hashlib.sha256(canonical).hexdigest()
+    """SHA-256 of the exact bars (date, close, volume) the indicators use."""
+    volumes = volume.tolist() if volume is not None else []
+    volumes += [None] * (len(close) - len(volumes))
+    bars = [
+        [str(label), float(price), None if pd.isna(vol) else float(vol)]
+        for label, price, vol in zip(close.index, close, volumes)
+    ]
+    canonical = json.dumps([interval, bars], separators=(",", ":"))
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 def _compute_sma(close: pd.Series, period: int) -> float | None:
@@ -441,12 +417,7 @@ class TechnicalIndicatorTool(BaseTool):
             else None
         )
 
-        fingerprint = _dataset_fingerprint(
-            close,
-            volume,
-            provenance if isinstance(provenance, dict) else None,
-            interval=interval,
-        )
+        fingerprint = _dataset_fingerprint(close, volume, interval)
 
         return json.dumps(
             {

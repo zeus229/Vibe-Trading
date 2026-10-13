@@ -356,3 +356,21 @@ Existing fork tests already exercise distinct behavioral contracts rather than j
 - Do NOT blindly accept both `result` and `result*100`: doing so without trustworthy field units can authorize 100x-wrong figures. Evaluate evidence `unit`/field metadata and exact note arithmetic; fail closed if unresolved.
 - Add focused regression matrix before any generic percent-policy PR: observed percent-unit `15.1` claimed `15.1%`; same input falsely claimed `1510%`; fractional `0.151` claimed `15.1%`; derived result `-1.89` with explicit trailing `*100`; already-percent-point result `-1.89` without trailing scale; Spanish decimal comma and negative sign. Run against upstream and fork with identical synthetic evidence, checking valid/reason and avoiding entire-agent E2E.
 - Keep this work **separate** from ISIN candidate `fix/isin-verified-listing-conflicts` (different files/contracts), but include it in the consolidated grounding/PR planning. Current user instruction: no upstream PR creation yet. No runtime, production, or trading changes.
+
+## 2026-10-13 — Candidate removal of absorbed upstream extensions
+
+**Basis:** Claude offline comparative audit of fork `837c4ca4` vs upstream `300c6aa6`, with X1, X2, X3 and consolidated XALL synthetic ablations. Proposed branch: `chore/reduce-absorbed-upstream-overrides` (never deployed).
+
+- **X1:** remove fork-only default replay visibility lease injection in `AgentLoop._microcompact_and_unblock` and extra visibility-lease clearing on a write. Production callers explicitly pass replay lease IDs; upstream lifecycle already consumes them. The known two fork-specific tests of these deliberate extras must be identified and rewritten or retired upon validation, not silently ignored.
+- **X2:** restore upstream `_dataset_fingerprint(close, volume, interval)` with bars-only hash, keeping provider provenance separately in `read_identity.provenance`. Offline test: 49 PASS; persisted code and session audit found no strict fingerprint consumers.
+- **X3:** restore upstream `PortfolioService.snapshot_by_id`; current contract retains immutable pinned identity and checks connector activation/valuation version. Offline test: 338 PASS.
+- **Consolidated offline XALL:** 2520/2522 focused tests passed; only the two fork tests asserting retired replay extras failed. This result belongs to Claude's temporary worktree, not to this new GitHub candidate, which still requires fresh VM validation.
+- **Preserve:** `preserve_during_microcompact` Layer-1 opt-in, `portfolio_summary.replay_after_compaction`, `no_cache` schema, ARS compact view and native holdings, portfolio ISIN conflict protection, grounding identity/operands/`CorrectionContract`.
+- **Defer:** `_missing_snapshot`, `requested_start_date`/`latest_date`, generic upstream PRs, issue #1820.
+- **Gate:** test replay lease wrapper + all direct real loop callers, indicator SHA invariants and provenance, stable pinned snapshot and revoked source cases, 2522 focused tests minus/update two obsolete assertions, diff check and compilation. Report any regression instead of changing versioned code on VM.
+
+Do not merge or deploy until the candidate passes VM validation. Keep `PPI_TRADING_DISABLED=True`.
+
+### Candidate validation update — 2026-10-13
+
+Claude validated candidate `ed394f7e` against XALL: exact same source diff (79 changed source lines, zero discrepancies), `git diff --check` and compilation PASS, 2,520 of 2,522 targeted tests PASS. Only two outdated replay-lease tests failed; all 11 differential probes matched expected changes. The two tests in `test_readonly_replay_after_microcompact.py` have now been adapted in GitHub to explicitly pass pending lease IDs and assert that writes clear replay cache/readiness while leaving lease consumption to the next model request. **These GitHub test changes remain unvalidated on the VM.** Repeat targeted suite before integration; no production deploy or upstream PR.

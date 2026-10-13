@@ -735,23 +735,21 @@ class PortfolioService:
         return snapshot
 
     def snapshot_by_id(self, snapshot_id: str) -> dict[str, Any] | None:
-        """Return one immutable snapshot without advancing to latest.
+        """Return one stored snapshot exactly as persisted, never recomputed.
 
-        A pinned read intentionally uses the payload stored with that snapshot
-        instead of recomputing compatibility from today's connector settings.
-        This makes the snapshot id a stable observation identity.
+        Args:
+            snapshot_id: Exact persisted snapshot identifier.
+
+        Returns:
+            The stored envelope, or ``None`` when the id is unknown, was valued
+            under another contract version, or includes a source that is no
+            longer enabled (a removed or revoked connector's data stays hidden).
         """
-        snapshot = self.store.get(str(snapshot_id))
-        if snapshot is None:
+        snapshot = self.store.get(snapshot_id)
+        if snapshot is None or snapshot.get("valuation_version") != PORTFOLIO_VALUATION_VERSION:
             return None
-        if snapshot.get("valuation_version") != PORTFOLIO_VALUATION_VERSION:
-            return None
-        # A removed or revoked connector's stored data stays hidden.
         enabled = {source.id for source in self.settings_store.load().sources if source.enabled}
-        observed = {
-            str(account.get("source_id") or account.get("broker"))
-            for account in snapshot.get("accounts", [])
-        }
+        observed = {str(account.get("source_id") or account.get("broker")) for account in snapshot.get("accounts", [])}
         return snapshot if observed <= enabled else None
 
     def reconnect_source(self, source_id: str) -> dict[str, Any]:

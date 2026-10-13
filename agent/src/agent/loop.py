@@ -1395,9 +1395,6 @@ class AgentLoop(ToolCallLifecycle):
             The tool names re-opened, for callers and tests to assert on.
         """
         readable_before = self._readable_success_keys(messages)
-        if preserve_tool_call_ids is None:
-            # A replay still owed one model request is never cleared by default.
-            preserve_tool_call_ids = self._readonly_replay_visibility_pending
         preserve_tools = {
             name
             for name, tool in getattr(self.registry, "_tools", {}).items()

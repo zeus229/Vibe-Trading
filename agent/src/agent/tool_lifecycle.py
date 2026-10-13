@@ -926,7 +926,6 @@ class ToolCallLifecycle:
                 self._readonly_replay_cache.clear()
                 self._readonly_replay_ready.clear()
                 self._readonly_replay_protected.clear()
-                self._readonly_replay_visibility_pending.clear()
 
         status = "ok" if success else "error"
         truncated = truncate_tool_result(result)
