@@ -2,8 +2,7 @@
 
 ## Decision and current production
 
-**Pause all changes and deployments for this issue until the planned upstream
-update on 2026-10-14.** Do not merge [PR #71](https://github.com/zeus229/Vibe-Trading/pull/71)
+**The upstream update was deployed on 2026-10-13; keep the Risk ACCIONES conversational incident open until authenticated E2E verifies numeric delivery.** Do not merge [PR #71](https://github.com/zeus229/Vibe-Trading/pull/71)
 until it has been compared against the newer upstream grounding/correction code,
 validated on the resulting base, and passed an authenticated E2E.
 
@@ -85,3 +84,41 @@ upstream upgrade as replacements for our local patch when equivalent.
 **Production success is not claimed.** Both deployed services remain healthy,
 and no rollback was necessary, but the final Vibe conversational output is
 not validated. This is intentionally parked so unrelated work can continue.
+
+## Update deployed 2026-10-13 — PASS with configuration reservation
+
+The upstream sync PR [#72](https://github.com/zeus229/Vibe-Trading/pull/72) is merged;
+fork `main@1d906e68d1c2fa89634df5d68e0de6845ee9ea2c` was deployed as
+`vibe-trading:prod-1d906e68`. VM operator reports container
+`6663c72b9b24558b54fc2927b9ba7e17679153f83e6a6ec66bc33bcf662bccc1`
+healthy, zero restarts, `/live` and `/health` HTTP 200, and
+`PPI_TRADING_DISABLED=True`. Rollback image `prod-6984e862` remains available.
+
+Focused smoke: canonical ACCIONES risk (13/13, 100%, 252-window, ARS),
+`portfolio_summary` compact and portfolio Risk X-Ray all `ok`; MCP scope
+is available for authenticated conversation scope and denied for scheduled scope.
+Grounding #1622 focused tests 267 PASS; mixed extraETF/native ARS refresh
+ad-hoc PASS; 116 tools measured inside the image. No comprehensive E2E or
+full test campaign was run. Unauthenticated `/sessions` returned 401, but a
+**positive authenticated bearer request and complete conversational E2E were
+not run**. Thus the original numeric-output incident is **not yet closed**.
+
+**Operational reservation:** `/etc/asistente-casa-vibe.override.yml` still
+references obsolete `prod-46cb5432`; the live deploy used
+`/home/zeus229/vibe-override-1d906e68-20261013.yml` with Compose project
+`vibe-trading`. Root access is needed to install the updated override. Before
+future recreate/restart, use an explicit correct Compose override and verify
+resolved image with `docker compose config` to avoid accidental rollback.
+Run as an authorized sudo operator only after confirming the file is correct:
+```sh
+sudo cp /home/zeus229/vibe-override-1d906e68-20261013.yml /etc/asistente-casa-vibe.override.yml
+```
+Production checkout is clean at integrated SHA; historical uncommitted
+`snapshot_id` hint is preserved separately in `stash@{0}` and
+`/home/zeus229/vibe-prod-dirty-backup-20261013/` (not deployed).
+
+Next: install persistent override, verify effective Compose configuration,
+then run **one** authenticated conversational Risk ACCIONES scenario requiring
+all 13 Euler contributions and the full 13×13 matrix in the final response.
+If the response still drops valid figures, investigate remaining correction
+semantics and PR #71 separately; do not assert that #1622 alone fixed it.
