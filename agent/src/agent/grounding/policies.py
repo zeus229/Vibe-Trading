@@ -1853,7 +1853,25 @@ class _PolicyMixin:
                 anchors += self._metric_pool(symbol)
         # Arithmetic across two runs needs both runs' values: a field ref that
         # names several sources anchors all of them instead of none.
-        scoped = self._referenced(declaration.ref, symbol, None, pool_ambiguous=True)
+        # A derived declaration may name several independent exact sources.
+        # Resolve each independently: treating "call_a::field; call_b::field"
+        # as one composite key discards both sources and reports no_evidence.
+        # Fail closed when any explicitly named source is unresolved.
+        refs = [part.strip() for part in declaration.ref.split(";")]
+        if len(refs) > 1:
+            scopes = [
+                self._referenced(ref, symbol, None, pool_ambiguous=True)
+                if ref else None
+                for ref in refs
+            ]
+            if any(scope is None or not scope[0] and not scope[1] for scope in scopes):
+                return "no_evidence"
+            scoped = (
+                [record for scope in scopes for record in scope[0]],
+                [metric for scope in scopes for metric in scope[1]],
+            )
+        else:
+            scoped = self._referenced(declaration.ref, symbol, None, pool_ambiguous=True)
         if scoped is not None:
             anchors.extend(
                 float(record.value)
