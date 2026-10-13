@@ -730,6 +730,30 @@ class _IdentityMixin:
         for isin, symbols in verified.items():
             for symbol in symbols:
                 symbol_isins.setdefault(symbol, set()).add(isin)
+        # Also compare previously locked identities, as new observations may
+        # arrive in later tool calls rather than in the same payload.
+        for key, record in self._identities.items():
+            if not key.startswith("portfolio:") or record.status != "locked" or not record.symbol:
+                continue
+            symbol_isins.setdefault(record.symbol, set()).add(key[len("portfolio:"):])
+
+        conflicting_symbols = {
+            symbol for symbol, isins in symbol_isins.items() if len(isins) > 1
+        }
+        for key, record in list(self._identities.items()):
+            if (
+                key.startswith("portfolio:")
+                and record.status == "locked"
+                and record.symbol in conflicting_symbols
+            ):
+                self._identities[key] = IdentityRecord(
+                    query=record.query,
+                    status="conflicting",
+                    source_tool_call_id=call_id,
+                    source=list(record.source),
+                    candidates=list(record.candidates),
+                    version=record.version + 1,
+                )
 
         for isin, symbols in sorted(verified.items()):
             key = f"portfolio:{isin}"
