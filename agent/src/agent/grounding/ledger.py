@@ -202,6 +202,10 @@ class GroundingLedger(
                 return blocking
         if "not_found" in statuses:
             return "not_found"
+        if "portfolio_conflict" in statuses:
+            # A portfolio mapping contradiction is local to its ISIN/symbol.
+            # Unlike an unresolved resolver call, it cannot be fixed by search_symbol.
+            return "ambiguous"
         return "unresolved"
 
     @property

@@ -451,6 +451,20 @@ class ToolAuthorization:
 class _IdentityMixin:
     """Identity behaviour of :class:`GroundingLedger`."""
 
+    def _portfolio_conflict_symbols(self) -> set[str]:
+        """Qualified symbols tainted by contradictory verified portfolio identities.
+
+        These are not resolver shortlists: selecting one candidate by ticker
+        cannot disprove conflicting ISIN observations.
+        """
+        return {
+            _normalize_symbol(candidate.get("symbol"))
+            for key, record in self._identities.items()
+            if key.startswith("portfolio:") and record.status == "portfolio_conflict"
+            for candidate in record.candidates
+            if isinstance(candidate, Mapping) and candidate.get("symbol")
+        }
+
     def authorize_tool_call(
         self,
         tool_name: str,
@@ -505,6 +519,21 @@ class _IdentityMixin:
 
         self._identity_required = True
         self._buffer_output = True
+        blocked = self._portfolio_conflict_symbols()
+        conflicted = tuple(
+            symbol for symbol in symbols
+            if symbol in blocked or any(
+                self._match_authorized_symbol(symbol, {candidate}) is not None
+                for candidate in blocked
+            )
+        )
+        if conflicted:
+            return ToolAuthorization(
+                allowed=False,
+                error_code="identity_conflict",
+                message="Verified portfolio mappings disagree on this symbol's ISIN; a symbol search alone cannot resolve the contradiction.",
+                symbols=conflicted,
+            )
         authorized = {_normalize_symbol(item) for item in batch_authorized_symbols}
         frozen_status = batch_identity_status or self.identity_status
         if frozen_status != "locked" or not authorized:
@@ -694,6 +723,10 @@ class _IdentityMixin:
         if not isinstance(holdings, Mapping):
             return
 
+        # Gather verified listings before locking anything. A single ISIN may
+        # have more than one market-qualified quote, and a quote symbol must
+        # not silently resolve to two distinct ISINs.
+        verified: dict[str, set[str]] = {}
         for rows in holdings.values():
             if not isinstance(rows, list):
                 continue
@@ -720,9 +753,67 @@ class _IdentityMixin:
                 symbol = _normalize_symbol(identity.get("symbol"))
                 if not symbol.endswith(".BA"):
                     continue
+                verified.setdefault(isin, set()).add(symbol)
 
-                key = f"portfolio:{isin}"
-                existing = self._identities.get(key)
+        symbol_isins: dict[str, set[str]] = {}
+        for isin, symbols in verified.items():
+            for symbol in symbols:
+                symbol_isins.setdefault(symbol, set()).add(isin)
+        # Also compare previously locked identities, as new observations may
+        # arrive in later tool calls rather than in the same payload.
+        for key, record in self._identities.items():
+            if not key.startswith("portfolio:") or record.status != "locked" or not record.symbol:
+                continue
+            symbol_isins.setdefault(record.symbol, set()).add(key[len("portfolio:"):])
+
+        conflicting_symbols = {
+            symbol for symbol, isins in symbol_isins.items() if len(isins) > 1
+        }
+        for key, record in list(self._identities.items()):
+            if (
+                key.startswith("portfolio:")
+                and record.status == "locked"
+                and record.symbol in conflicting_symbols
+            ):
+                self._identities[key] = IdentityRecord(
+                    query=record.query,
+                    status="portfolio_conflict",
+                    source_tool_call_id=call_id,
+                    source=list(record.source),
+                    candidates=list(record.candidates),
+                    version=record.version + 1,
+                )
+
+        for isin, symbols in sorted(verified.items()):
+            key = f"portfolio:{isin}"
+            existing = self._identities.get(key)
+            previous_symbols = (
+                {existing.symbol} if existing and existing.status == "locked"
+                and existing.symbol else set()
+            )
+            all_symbols = symbols | previous_symbols
+            conflict = (
+                bool(existing and existing.status == "portfolio_conflict")
+                or len(all_symbols) != 1
+                or any(len(symbol_isins[symbol]) != 1 for symbol in symbols)
+            )
+            candidates = [
+                {"symbol": symbol, "market": "BYMA", "source": "asistente-casa", "isin": isin}
+                for symbol in sorted(all_symbols)
+            ]
+            if conflict:
+                # Fail closed: never select the last observed row or silently
+                # replace a previously settled identity with a different one.
+                self._identities[key] = IdentityRecord(
+                    query=isin,
+                    status="portfolio_conflict",
+                    source_tool_call_id=call_id,
+                    source=["asistente-casa:provider_identity"],
+                    candidates=candidates,
+                    version=(existing.version + 1) if existing else 1,
+                )
+            else:
+                symbol = next(iter(all_symbols))
                 self._identities[key] = IdentityRecord(
                     query=isin,
                     status="locked",
@@ -732,17 +823,13 @@ class _IdentityMixin:
                     currency=_infer_currency(symbol),
                     source_tool_call_id=call_id,
                     source=["asistente-casa:provider_identity"],
-                    candidates=[{
-                        "symbol": symbol,
-                        "market": "BYMA",
-                        "source": "asistente-casa",
-                        "isin": isin,
-                    }],
+                    candidates=candidates,
                     version=(existing.version + 1) if existing else 1,
                 )
-                self._identity_required = True
-                self._buffer_output = True
                 self._session_symbols.add(symbol)
+            self._identity_required = True
+            self._buffer_output = True
+
 
     def _begin_resolution(self, query: str, call_id: str) -> None:
         """Enter unresolved state before the resolver executes."""
