@@ -266,3 +266,18 @@ Audited upstream `HKUDS/Vibe-Trading@300c6aa6` directly:
 - Status: **investigate / candidate for future upstream PR**. No generic upstream PR published. Preserve local ISIN verified lock until equivalent cross-provider behavior is shipped and proved.
 
 Other fork-vs-upstream priorities: native Codex optional schema is already identical (no removal); grounding `derived.py` remains fork-only while upstream #1622 has partially overlapping scalar/operand checks (requires paired fixture comparison); microcompact opt-in and replay lease remain distinct (do not delete until visibility equivalence verified); native snapshot/end_date and code envelope #1767-#1769 remain absorbed. Keep Risk ACCIONES / fork PR #71 out of scope.
+
+## Grounding contract comparison (2026-10-13) — code-level gate
+
+Compared upstream `300c6aa6989fcf2ec1cb052c89237b48fabdb524` and fork `1d906e68d1c2fa89634df5d68e0de6845ee9ea2c` by fetched GitHub blobs, not commit-count heuristics.
+
+| Component | Upstream blob | Fork blob | Evidence / disposition |
+| --- | --- | --- | --- |
+| `grounding/derived.py` | absent | `333eef08e149e89cad1c41f19c9d3f8247078351` | Fork's structural `validate_operands` and coefficient proof are not removable as a module solely because native `policies.py` now constrains financial operands. **Keep pending equivalent test results.** |
+| `grounding/repair_contract.py` | absent | `12314b69a76b33a3ea9384b4269b4316fecf3667` | Native correction rules do not establish the fork's `CorrectionContract` retention contract. **Keep.** |
+| `grounding/policies.py` | `5a6cb0e9d154f0c033ba5548bffac4ad3879f8e6` | `b25d079fd23cbbfad1ae8cf4bb7eebe2ba57c0e2` | Shared `_evaluate_formula`/`_formula_in_note` with deliberately different labelled ASCII-colon semantics; also fork-specific derivative/correction integrations. **Partially overlapping, not equivalent.** |
+| `grounding/release.py` | `ea90dce00c954b664597b24b1446e9e6372641b3` | `40774fe7ab5c7e7201b0ac9da50b31fcf00c0d43` | Substantial correction/release extensions; do not delete without targeted output comparison. |
+
+Existing fork tests already exercise distinct behavioral contracts rather than just implementation: `test_grounding_derived_repair_coverage.py` (missing numerator/denominator, same-valued entity ambiguity, chosen scalars), `test_grounding_derived_preservation_gate.py` (complete repair/revalidation, mixed scope, snapshot/unit mismatch), and `test_grounding_note_formula_extraction.py` (reject text after ASCII-colon formula and preserve only complete labelled arithmetic). Do not duplicate these tests for a ceremonial audit.
+
+**Decision:** no executable deletion currently proven behavior-equivalent. There is no safe code candidate or need for VM tests at this stage. Next engineering gate requires a *paired fixture run* in isolated detached worktrees (one upstream baseline and one fork), normalizing expected native issue codes while comparing: acceptance/rejection, authoritative call references, refusal to derive from unobserved financial operands, preservation after correction, and replay visibility. Scope to five to ten carefully selected cases; no full campaign. Only then create a single cleanup branch if an exact overlap is demonstrated. Keep all Asistente Casa-specific behavior, ISIN locks, and disabled-trading policy unchanged. No Risk ACCIONES or PR #71 work here.
