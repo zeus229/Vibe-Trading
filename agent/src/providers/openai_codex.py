@@ -540,6 +540,13 @@ def _convert_messages(
         elif role == "tool":
             call_id, _ = _split_tool_call_id(msg.get("tool_call_id"))
             output = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
+            # The Responses API uses the provider call_id for transport, but
+            # grounding records the full internal ID (which may include an
+            # item-ID suffix). Make that exact reference visible to the model.
+            # Do not alter the protocol-level call_id or the raw ledger result.
+            grounding_id = msg.get("tool_call_id")
+            if isinstance(grounding_id, str) and grounding_id:
+                output = f"Grounding call ID (cite verbatim): {grounding_id}\n{output}"
             input_items.append({"type": "function_call_output", "call_id": call_id, "output": output})
     return system_prompt, input_items
 

@@ -99,6 +99,37 @@ def test_codex_body_strips_provider_prefix_and_converts_tools() -> None:
     assert body["input"][0]["content"][0]["text"] == "Say hi."
 
 
+
+def test_codex_tool_output_exposes_full_grounding_id_without_changing_protocol_id() -> None:
+    adapter = OpenAICodexLLM(model=DEFAULT_CODEX_MODEL)
+    full_id = "call_synthetic123|fc_synthetic456"
+    messages = [
+        {"role": "user", "content": "Compare two values."},
+        {
+            "role": "assistant",
+            "tool_calls": [{
+                "id": full_id,
+                "type": "function",
+                "function": {"name": "portfolio_risk_xray", "arguments": '{"asset_type":"ACCIONES"}'},
+            }],
+        },
+        {
+            "role": "tool",
+            "tool_call_id": full_id,
+            "name": "portfolio_risk_xray",
+            "content": '{"data":{"concentration":{"top1_weight":0.4,"top3_weight":0.7}}}',
+        },
+    ]
+    body = adapter._body(messages, stream=True)
+    call = next(item for item in body["input"] if item.get("type") == "function_call")
+    output = next(item for item in body["input"] if item.get("type") == "function_call_output")
+    assert call["call_id"] == output["call_id"] == "call_synthetic123"
+    assert call["id"] == "fc_synthetic456"
+    assert output["output"].startswith(f"Grounding call ID (cite verbatim): {full_id}\n")
+    assert '"top1_weight":0.4' in output["output"]
+
+
+
 def test_codex_storage_is_vibe_owned_and_never_imports_codex_cli(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
