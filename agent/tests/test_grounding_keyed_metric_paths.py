@@ -30,7 +30,7 @@ def test_symbol_keyed_metric_paths(path: str, expected: str | None) -> None:
 def _ledger(tmp_path, payload):
     ledger = GroundingLedger(
         run_dir=tmp_path,
-        user_message="Compare contribution for ALPHA and AAPL.US",
+        user_message="Compare instrument-level risk contributions across venues",
     )
     ledger.ingest_tool_result(
         tool_name="factor_analysis",
@@ -42,7 +42,7 @@ def _ledger(tmp_path, payload):
     return ledger
 
 
-@pytest.mark.parametrize(("key", "symbol"), [("ALPHA", "ALPHA"), ("AAPL.US", "AAPL.US")])
+@pytest.mark.parametrize(\n    ("key", "symbol"),\n    [("ALPHA", "ALPHA"), ("AAPL.US", "AAPL.US")],\n)
 def test_contribution_map_keeps_exact_instrument_identity(tmp_path, key, symbol):
     ledger = _ledger(tmp_path, {"risk_contribution_pct": {key: 0.125}})
     (entry,) = ledger._analysis_metrics
@@ -128,13 +128,13 @@ def test_same_ticker_different_markets_remain_distinct(tmp_path):
     """Market-qualified identifiers cannot lend evidence to each other."""
     ledger = _ledger(
         tmp_path,
-        {"risk_contribution_pct": {"ABC.XNYS": 0.125, "ABC.XLON": 0.125}},
+        {"risk_contribution_pct": {"ABC.US": 0.125, "ABC.BA": 0.125}},
     )
-    assert ledger._metric_pool("ABC.XNYS") == [0.125]
-    assert ledger._metric_pool("ABC.XLON") == [0.125]
+    assert ledger._metric_pool("ABC.US") == [0.125]
+    assert ledger._metric_pool("ABC.BA") == [0.125]
     assert ledger._metric_pool("ABC") == []
     assert ledger._referenced(
-        "metrics-call::risk_contribution_pct.ABC.XNYS", "ABC.XLON", None
+        "metrics-call::risk_contribution_pct.ABC.US", "ABC.BA", None
     ) == ([], [])
 
 
@@ -142,10 +142,10 @@ def test_bare_ticker_not_automatically_equivalent_to_market_qualified(tmp_path):
     """Do not infer an identifier alias or an exchange from the same stem."""
     ledger = _ledger(
         tmp_path,
-        {"risk_contribution_pct": {"ABC": 0.2, "ABC.XNYS": 0.125}},
+        {"risk_contribution_pct": {"ABC": 0.2, "ABC.US": 0.125}},
     )
     assert ledger._metric_pool("ABC") == [0.2]
-    assert ledger._metric_pool("ABC.XNYS") == [0.125]
+    assert ledger._metric_pool("ABC.US") == [0.125]
     assert ledger._referenced(
-        "metrics-call::risk_contribution_pct.ABC", "ABC.XNYS", None
+        "metrics-call::risk_contribution_pct.ABC", "ABC.US", None
     ) == ([], [])
