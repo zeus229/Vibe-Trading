@@ -125,7 +125,7 @@ def test_codex_tool_output_exposes_full_grounding_id_without_changing_protocol_i
     output = next(item for item in body["input"] if item["type"] == "function_call_output")
     assert call["call_id"] == output["call_id"] == "call_synthetic123"
     assert call["id"] == "fc_synthetic456"
-    assert output["output"].startswith(f"Grounding call ID (cite verbatim): {full_id}\\n")
+    assert output["output"].startswith(f"Grounding call ID (cite verbatim): {full_id}\n")
     assert '"top1_weight":0.4' in output["output"]
 
 
