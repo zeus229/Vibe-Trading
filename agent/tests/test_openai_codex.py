@@ -121,8 +121,8 @@ def test_codex_tool_output_exposes_full_grounding_id_without_changing_protocol_i
         },
     ]
     body = adapter._body(messages, stream=True)
-    call = next(item for item in body["input"] if item["type"] == "function_call")
-    output = next(item for item in body["input"] if item["type"] == "function_call_output")
+    call = next(item for item in body["input"] if item.get("type") == "function_call")
+    output = next(item for item in body["input"] if item.get("type") == "function_call_output")
     assert call["call_id"] == output["call_id"] == "call_synthetic123"
     assert call["id"] == "fc_synthetic456"
     assert output["output"].startswith(f"Grounding call ID (cite verbatim): {full_id}\n")
