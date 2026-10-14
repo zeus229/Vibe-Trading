@@ -251,6 +251,8 @@ class Figure:
     column: str | None = None
     date: str | None = None
     symbol: str | None = None
+    # Original table header, distinct from normalized OHLC column roles.
+    table_column_label: str | None = None
     scale: float = 1.0
     # A currency mark or ISO code touches the digits ("$2050", "0.95 元").
     currency: bool = False
@@ -274,6 +276,7 @@ class TableRow:
     symbol_column: int | None
     # Which table of the document the row belongs to, in document order.
     table: int = 0
+    headers: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -861,7 +864,7 @@ def table_rows(content: str) -> list[TableRow]:
             if not cells or _is_separator_row(cells):
                 continue
             rows.append(
-                TableRow(line_index, tuple(cells), columns, date_column, symbol_column, table)
+                TableRow(line_index, tuple(cells), columns, date_column, symbol_column, table, tuple(headers))
             )
         table += 1
     return rows
@@ -1169,9 +1172,11 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
             shape = "measured"
         else:
             shape = "bare"
-        column = date_value = symbol_value = None
+        column = date_value = symbol_value = table_column_label = None
         if row is not None and not structural:
             column = row.columns.get(position)
+            if position < len(row.headers):
+                table_column_label = row.headers[position] or None
             if row.date_column is not None and row.date_column < len(row.cells):
                 date_value = row.cells[row.date_column][0] or None
             if row.symbol_column is not None and row.symbol_column < len(row.cells):
@@ -1189,6 +1194,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 column=column,
                 date=date_value,
                 symbol=symbol_value,
+                table_column_label=table_column_label,
                 scale=1.0 if percent else magnitude_suffix(text, token.end)[0],
                 currency=currency,
                 digits=token.digits,
