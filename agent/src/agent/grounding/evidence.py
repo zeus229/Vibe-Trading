@@ -126,6 +126,11 @@ _ANALYSIS_KIND_ALIASES = {
     "annualized_return": "return",
     "return": "return",
     "returns": "return",
+    "correlation_matrix": "correlation",
+    "contribution": "contribution",
+    "contribution_pct": "contribution",
+    "risk_contribution": "contribution",
+    "risk_contribution_pct": "contribution",
     "ic_positive_ratio": "win_rate",
     "var": "tail_risk",
     "var_95": "tail_risk",
@@ -569,6 +574,23 @@ def _metric_kind_for_path(path: str) -> str | None:
     kind = _ANALYSIS_KIND_ALIASES.get(leaf)
     if kind is not None:
         return kind
+    # Symbol-keyed numeric leaves use the *parent* as metric identity.
+    # Only recognized metric roots are eligible; arbitrary dictionaries do
+    # not acquire a financial meaning merely because keys look like symbols.
+    parts = str(path or "").split(".")
+    if len(parts) >= 2 and all(
+        _CANONICAL_SYMBOL_RE.fullmatch(label) or re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", label)
+        for label in parts[-2:]
+    ):
+        parent_kind = _ANALYSIS_KIND_ALIASES.get(parts[-3].casefold()) if len(parts) >= 3 else None
+        if parent_kind == "correlation":
+            return parent_kind
+    if len(parts) >= 2 and (
+        _CANONICAL_SYMBOL_RE.fullmatch(parts[-1]) or re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", parts[-1])
+    ):
+        parent_kind = _ANALYSIS_KIND_ALIASES.get(parts[-2].casefold())
+        if parent_kind in {"contribution", "correlation"}:
+            return parent_kind
     # Compound leaves ("strategy_max_drawdown"): scan tokens from the right,
     # where English puts the head noun, so "return_vol" is vol, not return.
     # Only the head of a compound leaf says what it measures (#1426):
