@@ -3345,9 +3345,10 @@ class _PolicyMixin:
             len(ref_parts) == 1
             and keys
             and resolved[0] is None
-            # Preserve the established no_symbol reason for unscoped
-            # arithmetic when several market symbols are observed.
-            and len({r.symbol for r in records if r.symbol}) <= 1
+            # Preserve no_symbol only when attribution is genuinely absent.
+            # With a surfaced symbol, an unknown ref must fail closed even
+            # if other symbols also have observed bars.
+            and (symbol is not None or len({r.symbol for r in records if r.symbol}) <= 1)
             and not any(
                 _normalize_symbol(keys[0]) == _normalize_symbol(record.symbol)
                 for record in self._evidence
