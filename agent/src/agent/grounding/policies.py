@@ -1712,12 +1712,22 @@ class _PolicyMixin:
             return None
         call, path = keys[0].split("::", 1)
         call = self._canonical_session_call_id(call)
+        # A display repair must not infer a different field from a suffix or
+        # choose evidence from a different call when the named call exists.
+        # The original declaration must also state the exact displayed value:
+        # loose matching at figure precision cannot repair a wrong number.
+        if not path or not self._strict_written_match(figure, declaration.value)[0]:
+            return None
         candidates, _ = self._field_sources(path, None)
         known = any(record.call_id == call for record in self._evidence)
-        candidates = [record for record in candidates
-                      if record.status == "observed" and record.unit == "ratio"
-                      and record.value is not None and (not known or record.call_id == call)
-                      and self._strict_written_match(figure, float(record.value)) == (True, True)]
+        candidates = [
+            record for record in candidates
+            if record.status == "observed" and record.unit == "ratio"
+            and record.value is not None
+            and _index_normalized(record.field) == _index_normalized(path)
+            and (not known or record.call_id == call)
+            and self._strict_written_match(figure, float(record.value)) == (True, True)
+        ]
         if len(candidates) != 1:
             return None
         return replace(declaration, role="derived", percent=figure.percent,
