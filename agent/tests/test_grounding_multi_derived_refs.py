@@ -97,3 +97,22 @@ def test_valid_single_call_tool_field_or_observed_symbol_ref_survives(tmp_path, 
         issue.get("reason") == "no_evidence"
         for issue in result.issues
     ), result.issues
+
+
+@pytest.mark.parametrize("ref", ["unknown", "ghost", "missing_field"])
+def test_unknown_single_ref_with_surfaced_symbol_and_other_market_symbol(tmp_path, ref):
+    ledger = _ledger(tmp_path)
+    ledger.ingest_tool_result(
+        tool_name="get_market_data",
+        arguments={"codes": ["MSFT.US"]},
+        result=json.dumps({
+            "MSFT.US": [{"trade_date": "2026-09-02", "close": 221.0}]
+        }),
+        call_id="other_symbol",
+        success=True,
+    )
+    # The prose already identifies AAPL.US and USD: do not let an unrelated
+    # market bar disable fail-closed handling of this unknown declared ref.
+    result = ledger.validate_final_answer(_answer(ref))
+    assert not result.valid
+    assert any(issue.get("reason") == "no_evidence" for issue in result.issues)
