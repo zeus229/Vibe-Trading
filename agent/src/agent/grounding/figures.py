@@ -859,6 +859,34 @@ def table_rows(content: str) -> list[TableRow]:
             (position for position, name in enumerate(headers) if name in _SYMBOL_HEADERS),
             None,
         )
+        # A common correlation matrix spells its row identities under an
+        # empty upper-left corner, e.g. "| | ALUA | BBAR |" followed by
+        # "| **ALUA** | 1.0 | 0.4 |". Infer the row axis only when the
+        # whole table proves that identity: square, unique, complete axes.
+        # A partial or generic numeric table must never acquire a symbol.
+        if symbol_column is None and len(headers) > 2 and not headers[0].strip():
+            axis = [name.strip().upper() for name in headers[1:]]
+            matrix_rows = [
+                _table_cells(positions[row_index][0], positions[row_index][1])
+                for row_index in range(block_start + 1, index)
+            ]
+            matrix_rows = [
+                cells for cells in matrix_rows if cells and not _is_separator_row(cells)
+            ]
+            row_axis = [
+                re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", cells[0][0]).strip().upper()
+                for cells in matrix_rows if len(cells) == len(headers)
+            ]
+            if (
+                len(matrix_rows) == len(axis)
+                and len(row_axis) == len(matrix_rows)
+                and all(len(cells) == len(headers) for cells in matrix_rows)
+                and all(re.fullmatch(r"[A-Z][A-Z0-9.]{0,19}", name) for name in axis)
+                and len(set(axis)) == len(axis)
+                and set(row_axis) == set(axis)
+                and len(set(row_axis)) == len(row_axis)
+            ):
+                symbol_column = 0
         for line_index in range(block_start + 1, index):
             cells = _table_cells(positions[line_index][0], positions[line_index][1])
             if not cells or _is_separator_row(cells):
@@ -1181,6 +1209,8 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 date_value = row.cells[row.date_column][0] or None
             if row.symbol_column is not None and row.symbol_column < len(row.cells):
                 symbol_value = row.cells[row.symbol_column][0] or None
+                if symbol_value:
+                    symbol_value = re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", symbol_value).strip()
         mark_end = _currency_suffix_end(text, magnitude_suffix(text, unit_end)[1])
         figures.append(
             Figure(

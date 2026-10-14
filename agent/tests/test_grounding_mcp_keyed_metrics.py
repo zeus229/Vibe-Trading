@@ -190,3 +190,68 @@ def test_mcp_adapter_namespace_keeps_percent_points_and_exact_ref_requirement(tm
     rejected = ledger.validate_final_answer(wrong_call)
     assert not rejected.valid
     assert any(issue["reason"] == "no_evidence" for issue in rejected.issues)
+
+
+def test_blank_corner_complete_matrix_recognizes_bold_row_axis() -> None:
+    from src.agent.grounding.figures import parse_figures_block, scan_figures
+
+    content = (
+        "| | ALUA | BBAR |\n"
+        "| --- | ---: | ---: |\n"
+        "| **ALUA** | 1.0000 | 0.3000 |\n"
+        "| **BBAR** | 0.3000 | 1.0000 |\n"
+    )
+    found = scan_figures(content, parse_figures_block(content))
+    cells = [item for item in found if item.shape == "measured"]
+    assert [(item.symbol, item.table_column_label) for item in cells] == [
+        ("ALUA", "alua"), ("ALUA", "bbar"),
+        ("BBAR", "alua"), ("BBAR", "bbar"),
+    ]
+
+
+def test_blank_corner_incomplete_matrix_does_not_infer_row_axis() -> None:
+    from src.agent.grounding.figures import table_rows, parse_figures_block, scan_figures
+
+    content = (
+        "| | ALUA | BBAR |\n"
+        "| --- | ---: | ---: |\n"
+        "| **ALUA** | 1.0000 | 0.3000 |\n"
+    )
+    rows = table_rows(content)
+    assert rows[0].symbol_column is None
+    cells = [item for item in scan_figures(content, parse_figures_block(content)) if item.shape == "measured"]
+    assert all(item.symbol is None for item in cells)
+
+
+def test_blank_corner_full_local_market_matrix_row_and_column_axes() -> None:
+    from src.agent.grounding.figures import parse_figures_block, scan_figures, table_rows
+
+    symbols = (
+        "ALUA", "BBAR", "BMA", "CEPU", "EDN", "GGAL", "LOMA",
+        "PAMP", "TGNO4", "TGSU2", "TRAN", "VALO", "YPFD",
+    )
+    header = "| | " + " | ".join(symbols) + " |"
+    separator = "| --- | " + " | ".join("---:" for _ in symbols) + " |"
+    body = [
+        "| **" + row + "** | " +
+        " | ".join("1.0000" if row == column else "0.2500" for column in symbols) +
+        " |"
+        for row in symbols
+    ]
+    content = "\n".join([header, separator, *body]) + "\n"
+    assert all(row.symbol_column == 0 for row in table_rows(content))
+    figures = [item for item in scan_figures(content, parse_figures_block(content)) if item.shape == "measured"]
+    assert len(figures) == 169
+    assert {(item.symbol, item.table_column_label) for item in figures} == {
+        (row, column.lower()) for row in symbols for column in symbols
+    }
+
+
+def test_blank_corner_duplicate_or_mismatched_axis_is_unscoped() -> None:
+    from src.agent.grounding.figures import table_rows
+
+    for content in (
+        "| | ALUA | BBAR |\n| --- | ---: | ---: |\n| **ALUA** | 1.0 | 0.2 |\n| **ALUA** | 0.2 | 1.0 |\n",
+        "| | ALUA | BBAR |\n| --- | ---: | ---: |\n| **ALUA** | 1.0 | 0.2 |\n| **YPFD** | 0.2 | 1.0 |\n",
+    ):
+        assert all(row.symbol_column is None for row in table_rows(content))
