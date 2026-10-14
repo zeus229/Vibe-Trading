@@ -152,3 +152,45 @@ then one authenticated E2E after a reviewed candidate. No additional broad
 test campaign. Private runtime evidence paths:
 `/home/vibe/.vibe-trading/sessions/21303f2cdf3a/trace.jsonl`,
 `/home/vibe/.vibe-trading/runs/20261013_140250_57_d2b483/artifacts/grounding_evidence.json`.
+
+
+## Generic grounding fix — isolated replay PASS, not yet integrated (2026-10-14 handoff)
+
+Codex validated a new **generic** approach in detached worktree against
+`main@6f92aeba36988825f96e8a6705d1234fcc582ef1`. The old risk-only renderer
+is **not** recommended. New changes address four files:
+`agent/src/agent/grounding/evidence.py`,
+`agent/src/agent/grounding/figures.py`,
+`agent/src/agent/grounding/policies.py`, and newly added
+`agent/tests/test_grounding_mcp_keyed_metrics.py`.
+
+Findings: keyed map leaves did not inherit metric semantics; risk contributions
+did not carry the per-ticker identity; financial semantic recognition excluded
+the `mcp_` transport prefix; correlations need verified row **and** column
+context rather than claiming each pair is about a single stock. Correction
+now supplies exact `tool_call_id::field` candidates but still requires the
+model to cite evidence and pass full grounding validation (no auto-approval).
+
+Codex synthetic fixture replay PASS: all 13 contributions, 169 cells, volatility
+and 183 required figures preserved; prose without refs rejected; qualitative
+correction rejected; altered numeric leaves and missing matrix cell rejected.
+**93 focused tests, compilation, imports and diff PASS.** This does NOT
+constitute real authenticated E2E or a production deployment.
+
+Validated patch remains VM-local:
+`/tmp/vibe-risk-grounding-generic.patch` SHA-256
+`7a047c0a57473fa93f4984ed7f258ee55caa63e58495404835dd2082fa907df6`.
+**Not accessible from GitHub or ChatGPT filesystem and not integrated**.
+A report describing its behavior cannot be safely substituted for its complete
+source without an independent implementation and validation. Preserve a
+persistent copy outside `/tmp`; never version secrets or actual session data.
+
+Current PR [#71](https://github.com/zeus229/Vibe-Trading/pull/71) head
+`4c2563e1400207a641b489cdf3164f0d4b565fb2`, 134 commits behind
+main when inspected; do not overwrite upstream with an old-base file update.
+Update this candidate **non-destructively** against current main or replace it
+only with explicit continuity and preservation of unique work. ChatGPT owns
+GitHub commits; Codex validates. Gate: review the actual code, rerun focused
+fixtures on updated main, then execute one authenticated E2E proving complete
+numeric user-visible output and no broadened scheduled/no-owner permissions.
+Risk arithmetic remains Asistente Casa-only and trading stays disabled.
