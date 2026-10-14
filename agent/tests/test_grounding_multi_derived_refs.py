@@ -79,3 +79,21 @@ def test_single_call_ref_contract_unchanged(tmp_path):
     )
     result = ledger.validate_final_answer(_answer("quote"))
     assert result.valid, result.issues
+
+
+@pytest.mark.parametrize("ref", ["unknown", "ghost", "missing_field"])
+def test_unknown_single_ref_does_not_borrow_other_evidence(tmp_path, ref):
+    result = _ledger(tmp_path).validate_final_answer(_answer(ref))
+    assert not result.valid
+    assert any(issue.get("reason") == "no_evidence" for issue in result.issues)
+
+
+@pytest.mark.parametrize("ref", ["before", "after", "get_market_data", "close", "AAPL.US"])
+def test_valid_single_call_tool_field_or_observed_symbol_ref_survives(tmp_path, ref):
+    result = _ledger(tmp_path).validate_final_answer(_answer(ref))
+    # A single call contains only one of the two prices, so valid evidence
+    # resolution does not imply the derived formula itself is supported.
+    assert not any(
+        issue.get("reason") == "no_evidence"
+        for issue in result.issues
+    ), result.issues
