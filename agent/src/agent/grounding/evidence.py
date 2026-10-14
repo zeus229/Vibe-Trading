@@ -574,22 +574,16 @@ def _metric_kind_for_path(path: str) -> str | None:
     kind = _ANALYSIS_KIND_ALIASES.get(leaf)
     if kind is not None:
         return kind
-    # Symbol-keyed numeric leaves use the *parent* as metric identity.
-    # Only recognized metric roots are eligible; arbitrary dictionaries do
-    # not acquire a financial meaning merely because keys look like symbols.
+    # Recognize explicitly named metric maps with ticker-keyed numeric leaves.
+    # A dotted venue suffix (AAPL.US) occupies multiple path components;
+    # only uppercase symbol-shaped components can follow the metric field.
     parts = str(path or "").split(".")
-    if len(parts) >= 2 and all(
-        _CANONICAL_SYMBOL_RE.fullmatch(label) or re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", label)
-        for label in parts[-2:]
-    ):
-        parent_kind = _ANALYSIS_KIND_ALIASES.get(parts[-3].casefold()) if len(parts) >= 3 else None
-        if parent_kind == "correlation":
-            return parent_kind
-    if len(parts) >= 2 and (
-        _CANONICAL_SYMBOL_RE.fullmatch(parts[-1]) or re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", parts[-1])
-    ):
-        parent_kind = _ANALYSIS_KIND_ALIASES.get(parts[-2].casefold())
-        if parent_kind in {"contribution", "correlation"}:
+    for index, part in enumerate(parts[:-1]):
+        parent_kind = _ANALYSIS_KIND_ALIASES.get(part.casefold())
+        if parent_kind not in {"contribution", "correlation"}:
+            continue
+        labels = parts[index + 1 :]
+        if all(re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", label) for label in labels):
             return parent_kind
     # Compound leaves ("strategy_max_drawdown"): scan tokens from the right,
     # where English puts the head noun, so "return_vol" is vol, not return.
