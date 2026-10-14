@@ -874,14 +874,14 @@ def table_rows(content: str) -> list[TableRow]:
                 cells for cells in matrix_rows if cells and not _is_separator_row(cells)
             ]
             row_axis = [
-                re.sub(r"^(?:\\*\\*|__)(.*?)(?:\\*\\*|__)$", r"\\1", cells[0][0]).strip().upper()
+                re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", cells[0][0]).strip().upper()
                 for cells in matrix_rows if len(cells) == len(headers)
             ]
             if (
                 len(matrix_rows) == len(axis)
                 and len(row_axis) == len(matrix_rows)
                 and all(len(cells) == len(headers) for cells in matrix_rows)
-                and all(_CANONICAL_SYMBOL_RE.fullmatch(name) for name in axis)
+                and all(re.fullmatch(r"[A-Z][A-Z0-9.]{0,19}", name) for name in axis)
                 and len(set(axis)) == len(axis)
                 and set(row_axis) == set(axis)
                 and len(set(row_axis)) == len(row_axis)
@@ -1210,7 +1210,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
             if row.symbol_column is not None and row.symbol_column < len(row.cells):
                 symbol_value = row.cells[row.symbol_column][0] or None
                 if symbol_value:
-                    symbol_value = re.sub(r"^(?:\\*\\*|__)(.*?)(?:\\*\\*|__)$", r"\\1", symbol_value).strip()
+                    symbol_value = re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", symbol_value).strip()
         mark_end = _currency_suffix_end(text, magnitude_suffix(text, unit_end)[1])
         figures.append(
             Figure(
