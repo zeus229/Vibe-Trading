@@ -807,7 +807,7 @@ def table_rows(content: str) -> list[TableRow]:
             ]
             body = [cells for cells in body if cells and not _is_separator_row(cells)]
             row_axis = [
-                re.sub(r"^(?:\\*\\*|__)(.*?)(?:\\*\\*|__)$", r"\\1", cells[0][0])
+                re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", cells[0][0])
                 .strip().upper()
                 for cells in body if len(cells) == len(headers)
             ]
@@ -1124,7 +1124,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
             if row.symbol_column is not None and row.symbol_column < len(row.cells):
                 symbol_value = row.cells[row.symbol_column][0] or None
                 if symbol_value:
-                    symbol_value = re.sub(r"^(?:\\*\\*|__)(.*?)(?:\\*\\*|__)$", r"\\1", symbol_value).strip()
+                    symbol_value = re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", symbol_value).strip()
         mark_end = _currency_suffix_end(text, magnitude_suffix(text, unit_end)[1])
         figures.append(
             Figure(
