@@ -3345,6 +3345,9 @@ class _PolicyMixin:
             len(ref_parts) == 1
             and keys
             and resolved[0] is None
+            # Preserve the established no_symbol reason for unscoped
+            # arithmetic when several market symbols are observed.
+            and len({r.symbol for r in records if r.symbol}) <= 1
             and not any(
                 _normalize_symbol(keys[0]) == _normalize_symbol(record.symbol)
                 for record in self._evidence
