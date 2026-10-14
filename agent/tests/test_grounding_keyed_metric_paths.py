@@ -42,7 +42,10 @@ def _ledger(tmp_path, payload):
     return ledger
 
 
-@pytest.mark.parametrize(\n    ("key", "symbol"),\n    [("ALPHA", "ALPHA"), ("AAPL.US", "AAPL.US")],\n)
+@pytest.mark.parametrize(
+    ("key", "symbol"),
+    [("ALPHA", "ALPHA"), ("AAPL.US", "AAPL.US")],
+)
 def test_contribution_map_keeps_exact_instrument_identity(tmp_path, key, symbol):
     ledger = _ledger(tmp_path, {"risk_contribution_pct": {key: 0.125}})
     (entry,) = ledger._analysis_metrics
