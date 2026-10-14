@@ -3338,6 +3338,20 @@ class _PolicyMixin:
             or any(item is None or (not item[0] and not item[1]) for item in resolved)
         ):
             return "no_evidence"
+        # Keep legacy symbol-only references for observed market instruments,
+        # but do not let an unknown *single* ref borrow an unrelated session
+        # value. Valid call/tool/field/artifact refs resolved above.
+        if (
+            len(ref_parts) == 1
+            and keys
+            and resolved[0] is None
+            and not any(
+                _normalize_symbol(keys[0]) == _normalize_symbol(record.symbol)
+                for record in self._evidence
+                if record.symbol and record.status == "observed"
+            )
+        ):
+            return "no_evidence"
         generic_financial = any(
             record.identity_scope in {"entity", "aggregate"}
             and record.unit in {"money", "ratio"}
