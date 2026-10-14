@@ -129,6 +129,11 @@ _ANALYSIS_KIND_ALIASES = {
     "returns": "return",
     "ic_positive_ratio": "win_rate",
     "diversification_ratio": "diversification",
+    "correlation_matrix": "correlation",
+    "contribution": "contribution",
+    "contribution_pct": "contribution",
+    "risk_contribution": "contribution",
+    "risk_contribution_pct": "contribution",
     "avg_pairwise_abs": "correlation",
     "avg_pairwise_correlation": "correlation",
     "beta_to_equal_weight": "correlation",
@@ -376,7 +381,7 @@ _RATIO_TOKENS = frozenset(
     (
         "pct percent percentage pp bps ratio ratios rate rates growth margin margins "
         "yield yields weight weights return returns roe roa roic roi beta pe peg corr "
-        "correlation vol volatility drawdown probability prob concentration sharpe "
+        "correlation vol volatility drawdown probability prob concentration sharpe contribution "
         "sortino alpha hhi to"
     ).split()
 )
@@ -791,7 +796,7 @@ def tail_risk_identity(path: str) -> str | None:
 
 
 def _metric_kind_for_path(path: str) -> str | None:
-    """Map an evidence JSON path to an analysis metric kind.
+    """Map a metric path to its kind, including symbol-keyed leaves.
 
     A metadata count leaf (:func:`_is_metadata_count_leaf`) has no kind.
     """
@@ -804,6 +809,17 @@ def _metric_kind_for_path(path: str) -> str | None:
     kind = _ANALYSIS_KIND_ALIASES.get(leaf)
     if kind is not None:
         return kind
+    # Nested metric maps commonly end in entity labels, e.g.
+    # ``correlation_matrix.ALPHA.BRAVO`` or ``risk_contribution_pct.ALPHA``.
+    # Strip only strongly symbol-shaped keys, then classify the descriptive
+    # parent using the same registry as scalar metric fields.
+    parts = str(path or "").split(".")
+    stripped_key = False
+    while len(parts) > 1 and _is_structured_symbol_key(parts[-1]):
+        parts.pop()
+        stripped_key = True
+    if stripped_key:
+        return _metric_kind_for_path(".".join(parts))
     # Compound leaves ("strategy_max_drawdown"): scan tokens from the right,
     # where English puts the head noun, so "return_vol" is vol, not return.
     # Only the head of a compound leaf says what it measures (#1426):
@@ -926,6 +942,53 @@ def _list_entity_context(items: list[Any], parent: _EntityContext) -> _EntityCon
     ):
         return parent
     return _EntityContext(None, "unknown")
+
+
+_BARE_STRUCTURED_SYMBOL_RE = re.compile(r"[A-Z][A-Z0-9]{0,14}")
+_ENTITY_INDEX_FIELD_TOKENS = frozenset(
+    "asset assets instrument instruments position positions holding holdings "
+    "ticker tickers symbol symbols contribution weight exposure".split()
+)
+_MATRIX_FIELD_TOKENS = frozenset({"matrix", "correlation", "covariance"})
+_NON_SYMBOL_KEYS = frozenset(
+    {"AGGREGATE", "TOTAL", "TOTALS", "OTHER", "UNKNOWN", "PORTFOLIO", "CASH", "ALL"}
+)
+
+
+def _is_structured_symbol_key(value: Any) -> bool:
+    label = str(value or "")
+    if _CANONICAL_SYMBOL_RE.fullmatch(label):
+        return True
+    return (
+        _BARE_STRUCTURED_SYMBOL_RE.fullmatch(label) is not None
+        and label not in _NON_SYMBOL_KEYS
+        and _currency_code(label) is None
+    )
+
+
+def _structured_key_symbols(value: Any, path: str) -> tuple[str, set[str]]:
+    """Classify mappings whose keys explicitly represent metric entities.
+
+    Return ``("entity", keys)`` for per-entity metric maps, ``("matrix",
+    keys)`` for two-axis metric matrices, or an empty kind. Matrix leaves remain
+    aggregate records because a scalar ``symbol`` cannot encode both axes.
+    """
+    if not isinstance(value, Mapping) or len(value) < 2:
+        return "", set()
+    labels = list(value)
+    if not all(_is_structured_symbol_key(label) for label in labels):
+        return "", set()
+    if not all(
+        isinstance(value[label], (Mapping, list)) or _is_number(value[label])
+        for label in labels
+    ):
+        return "", set()
+    tokens = set(_name_tokens(path))
+    if tokens & _MATRIX_FIELD_TOKENS:
+        return "matrix", {_normalize_symbol(str(label)) for label in labels}
+    if tokens & _ENTITY_INDEX_FIELD_TOKENS:
+        return "entity", {_normalize_symbol(str(label)) for label in labels}
+    return "", set()
 
 
 def _record_matches_entity(record: EvidenceRecord, symbol: str | None) -> bool:
@@ -1567,6 +1630,10 @@ class _EvidenceMixin:
                 remaining -= 1
                 return
             if isinstance(value, dict):
+                keyed_kind, keyed_symbols = _structured_key_symbols(value, path)
+                if keyed_kind == "matrix":
+                    self._session_symbols.update(keyed_symbols)
+                    self._session_symbol_roots.update(keyed_symbols)
                 explicit, contradictory = _item_symbol(value, allowed)
                 local = _entity_child(context, explicit, allowed)
                 if contradictory:
@@ -1604,13 +1671,18 @@ class _EvidenceMixin:
                     if not path and str(key).casefold() in _ENVELOPE_FIELDS:
                         continue
                     child_path = f"{path}.{key}" if path else str(key)
+                    child_context = _entity_for_key(local, key, allowed)
+                    if keyed_kind == "entity" and _normalize_symbol(str(key)) in keyed_symbols:
+                        child_context = _entity_child(local, _normalize_symbol(str(key)), allowed)
+                        self._session_symbols.add(_normalize_symbol(str(key)))
+                        self._session_symbol_roots.add(_normalize_symbol(str(key)))
                     visit(
                         item,
                         child_path,
                         local_timestamp,
                         local_currency or _currency_from_path(child_path),
                         units.get(key),
-                        _entity_for_key(local, key, allowed),
+                        child_context,
                         local_snapshot,
                         local_temporal,
                     )
