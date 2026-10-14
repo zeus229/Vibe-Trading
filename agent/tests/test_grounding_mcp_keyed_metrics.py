@@ -190,3 +190,34 @@ def test_mcp_adapter_namespace_keeps_percent_points_and_exact_ref_requirement(tm
     rejected = ledger.validate_final_answer(wrong_call)
     assert not rejected.valid
     assert any(issue["reason"] == "no_evidence" for issue in rejected.issues)
+
+
+def test_blank_corner_complete_matrix_recognizes_bold_row_axis() -> None:
+    from src.agent.grounding.figures import parse_figures_block, scan_figures
+
+    content = (
+        "| | ALUA | BBAR |\n"
+        "| --- | ---: | ---: |\n"
+        "| **ALUA** | 1.0000 | 0.3000 |\n"
+        "| **BBAR** | 0.3000 | 1.0000 |\n"
+    )
+    found = scan_figures(content, parse_figures_block(content))
+    cells = [item for item in found if item.shape == "measured"]
+    assert [(item.symbol, item.table_column_label) for item in cells] == [
+        ("ALUA", "alua"), ("ALUA", "bbar"),
+        ("BBAR", "alua"), ("BBAR", "bbar"),
+    ]
+
+
+def test_blank_corner_incomplete_matrix_does_not_infer_row_axis() -> None:
+    from src.agent.grounding.figures import table_rows, parse_figures_block, scan_figures
+
+    content = (
+        "| | ALUA | BBAR |\n"
+        "| --- | ---: | ---: |\n"
+        "| **ALUA** | 1.0000 | 0.3000 |\n"
+    )
+    rows = table_rows(content)
+    assert rows[0].symbol_column is None
+    cells = [item for item in scan_figures(content, parse_figures_block(content)) if item.shape == "measured"]
+    assert all(item.symbol is None for item in cells)
