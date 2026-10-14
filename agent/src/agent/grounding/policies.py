@@ -3493,10 +3493,19 @@ class _PolicyMixin:
         # belongs to no instrument, named by the ref, can anchor it then — a
         # difference between two backtests' Sharpes is a portfolio figure.
         unattributed = not symbol and len({record.symbol for record in records if record.symbol}) > 1
-        scoped = self._referenced(declaration.ref, symbol, None, pool_ambiguous=True)
-        strict_adapter_scope = bool(declaration.ref.strip()) and self._has_asistente_casa_evidence()
+        ref = declaration.ref.strip()
+        scoped = self._referenced(ref, symbol, None, pool_ambiguous=True)
+        strict_adapter_scope = bool(ref) and self._has_asistente_casa_evidence()
         if strict_adapter_scope and (scoped is None or (not scoped[0] and not scoped[1])):
             return "no_evidence"
+        # Preserve upstream's unknown-single-ref guard, including observed-symbol refs.
+        if ref and not re.search(r"[,;]", ref) and not unattributed:
+            if (scoped is None or (not scoped[0] and not scoped[1])) and not any(
+                _normalize_symbol(ref) == _normalize_symbol(record.symbol)
+                for record in self._evidence
+                if record.symbol and record.status == "observed"
+            ):
+                return "no_evidence"
         anchors: list[float] = []
         if not strict_adapter_scope and not unattributed:
             # A money-marked result is derived from money: an RSI or a volume
@@ -3504,8 +3513,21 @@ class _PolicyMixin:
             anchors = self._price_pool(symbol, records) + self._row_pool(symbol, money_only=money)
             if not money:
                 anchors += self._metric_pool(symbol)
-        # An explicit adapter ref is authoritative: all operands must come from
-        # the complete source set named by the declaration.
+        # Resolve every explicit source in a multi-ref declaration. Missing
+        # members fail closed; adapter-scoped refs never fall back to pools.
+        ref_parts = re.split(r"[,;]", ref)
+        if len(ref_parts) > 1:
+            scoped_parts = [
+                self._referenced(part.strip(), symbol, None, pool_ambiguous=True)
+                if part.strip() else None
+                for part in ref_parts
+            ]
+            if any(part is None or (not part[0] and not part[1]) for part in scoped_parts):
+                return "no_evidence"
+            scoped = (
+                [r for part in scoped_parts for r in part[0]],
+                [v for part in scoped_parts for v in part[1]],
+            )
         if scoped is not None:
             anchors.extend(
                 float(record.value)
