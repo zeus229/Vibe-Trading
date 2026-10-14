@@ -79,6 +79,14 @@ _MARKET_PRICE_CONTEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
+def _is_asistente_casa_tool(tool: Any) -> bool:
+    """Match adapter tools with or without MCP's transport prefix."""
+    name = str(tool or "").casefold()
+    if name.startswith("mcp_"):
+        name = name[4:]
+    return name.startswith("asistente_casa_")
+
+
 # Loader ids are ASCII but the answer follows the user's language, so a source
 # is surfaced by any alias ("数据来源：腾讯财经" for ``tencent``).
 _SOURCE_ALIASES = {
@@ -938,12 +946,19 @@ class _PolicyMixin:
                 **repair,
             )]
         found = self._check_observed(figure, None, symbol, records)
-        if block.present and found:
+        entity_repair = self._undeclared_entity_repair_metadata(figure)
+        structured_repair = self._structured_metric_repair_metadata(figure, symbol)
+        if block.present and (found or entity_repair or structured_repair):
             # Declared, but as a fraction where the answer writes a
             # percent (or the reverse): still undeclared, since the
             # two are different assertions — but say so, or the model
             # reads "not declared" as a lie and repeats the draft.
             other_unit = _declared_in_other_unit(block, figure)
+            repair_metadata = {
+                **entity_repair,
+                **structured_repair,
+                **self._deterministic_derive_metadata(figure),
+            }
             return [
                 self._figure_issue(
                     "figure_undeclared",
@@ -962,8 +977,7 @@ class _PolicyMixin:
                         if other_unit
                         else {}
                     ),
-                    **self._undeclared_entity_repair_metadata(figure),
-                    **self._deterministic_derive_metadata(figure),
+                    **repair_metadata,
                 )
             ]
         return found
@@ -1029,6 +1043,10 @@ class _PolicyMixin:
         segment precedes the line because a comparison report names both
         instruments on one header line and then writes about one of them.
         """
+        if self._matrix_cell_records(figure, records):
+            # A correlation cell has two instrument axes and is portfolio
+            # aggregate evidence; the row key is not its sole entity.
+            return None
         if declaration is not None:
             declared = self._symbol_for_claim(
                 f"{declaration.ref} {declaration.note}", records
@@ -1056,6 +1074,30 @@ class _PolicyMixin:
         if derived_multi_entity:
             return None
         return written or document_symbol
+
+    def _matrix_cell_records(
+        self, figure: Figure, records: Sequence[EvidenceRecord]
+    ) -> list[EvidenceRecord]:
+        if not figure.symbol or not figure.table_column_label:
+            return []
+        row = _normalize_symbol(figure.symbol)
+        column = _normalize_symbol(figure.table_column_label)
+        matches = []
+        source_records = [record for record in records if "correlation_matrix" in record.field.casefold()]
+        if not source_records:
+            source_records = self._evidence
+        for record in source_records:
+            parts = record.field.split(".")
+            index = next(
+                (i for i, part in enumerate(parts)
+                 if part.casefold() in {"correlation_matrix", "correlation", "covariance_matrix"}),
+                None,
+            )
+            if index is None or len(parts) < index + 3:
+                continue
+            if (_normalize_symbol(parts[index + 1]), _normalize_symbol(parts[index + 2])) == (row, column):
+                matches.append(record)
+        return matches
 
     def _summary_row_is_unscoped(
         self,
@@ -1207,11 +1249,11 @@ class _PolicyMixin:
         """Whether this run contains evidence from the Asistente Casa adapter."""
         return any(
             record.tool == "financial_rigor"
-            or record.tool.startswith("asistente_casa_")
+            or _is_asistente_casa_tool(record.tool)
             for record in self._evidence
         ) or any(
             entry.get("tool") == "financial_rigor"
-            or str(entry.get("tool", "")).startswith("asistente_casa_")
+            or _is_asistente_casa_tool(entry.get("tool"))
             for entry in self._analysis_metrics
         )
 
@@ -2716,6 +2758,59 @@ class _PolicyMixin:
             "entity_ref_symbol": symbol,
         }
 
+    def _structured_metric_repair_metadata(
+        self, figure: Figure, symbol: str | None = None
+    ) -> dict[str, Any]:
+        """Offer exact refs for one matching structured metric leaf.
+
+        This metadata does not approve the current draft. The corrected answer
+        must cite the call and leaf, then pass the ordinary validator. Matrix
+        cells require both visible axes to match the recorded path.
+        """
+        candidates: list[str] = []
+        for record in self._evidence:
+            if (
+                record.status != "observed"
+                or record.value is None
+                or not record.call_id
+                or not record.field
+                or not self._kind_fits(record, figure)
+                or not self._matches_evidence(figure, [float(record.value)], [float(record.value)])
+            ):
+                continue
+            parts = record.field.split(".")
+            matrix_index = next(
+                (index for index, part in enumerate(parts)
+                 if part.casefold() in {"correlation_matrix", "correlation", "covariance_matrix"}),
+                None,
+            )
+            if matrix_index is not None:
+                if not figure.table_column_label or not figure.symbol:
+                    continue
+                row = _normalize_symbol(figure.symbol)
+                column = _normalize_symbol(figure.table_column_label)
+                if len(parts) < matrix_index + 3:
+                    continue
+                if (_normalize_symbol(parts[matrix_index + 1]),
+                        _normalize_symbol(parts[matrix_index + 2])) != (row, column):
+                    continue
+            elif record.identity_scope == "entity":
+                # A table's row label is the written entity for contributions.
+                written = symbol
+                if figure.symbol:
+                    written_symbols = _scan_symbols(figure.symbol)
+                    written = next(iter(written_symbols)) if len(written_symbols) == 1 else _normalize_symbol(figure.symbol)
+                if written and record.symbol != written:
+                    continue
+            candidates.append(self._ref_source(record.call_id, record.field, record.scope)[1])
+        refs = list(dict.fromkeys(candidates))
+        if not refs:
+            return {}
+        metadata: dict[str, Any] = {"field_ref_candidates": refs}
+        if len(refs) == 1:
+            metadata.update(self._exact_repair_metadata(refs, figure, symbol))
+        return metadata
+
     def _canonical_position_weight_replacement(
         self,
         declaration: Declaration,
@@ -3383,7 +3478,7 @@ class _PolicyMixin:
                 and not normalized_x100
                 and bool(exact_records)
                 and all(
-                    record.tool.startswith("asistente_casa_")
+                    _is_asistente_casa_tool(record.tool)
                     and record.unit == "ratio"
                     and _is_percent_field(record.field.rsplit(".", 1)[-1])
                     for record in exact_records
