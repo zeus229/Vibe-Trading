@@ -184,6 +184,10 @@ class ValidationResult:
     issues: list[dict[str, Any]] = field(default_factory=list)
     released_text: str = ""
     passed_figures: tuple[str, ...] = ()
+    # Exact observed declarations bound to clean visible occurrences. This is
+    # retained for the bounded correction contract, which must preserve both
+    # the number and its source reference.
+    passed_claims: tuple[dict[str, Any], ...] = ()
 
 
 def _close(value: float, target: float) -> bool:
@@ -620,7 +624,10 @@ class _PolicyMixin:
             if evaluated is not None
             for operand in evaluated[1]
         ]
-        declaration_by_span = self._declarations_by_span(block, figures)
+        declaration_by_span = self._declarations_by_span(
+            block, figures, content=content, line_symbols=line_symbols,
+            symbol_records=symbol_records,
+        )
 
         # The hidden declaration alone cannot turn invented data into a free
         # coefficient. A chosen parameter needs a count declaration AND its
@@ -677,7 +684,9 @@ class _PolicyMixin:
                     issues.extend(found)
                     continue
             if declaration is None:
-                found = GROUNDING_CHECKS.run("undeclared-figure", self, figure, symbol, records, block)
+                found = GROUNDING_CHECKS.run(
+                    "undeclared-figure", self, content, figure, symbol, records, block
+                )
                 issues.extend(found)
                 # An undeclared figure rejected at the declaration boundary did
                 # not trigger provenance in the original walk.
@@ -773,7 +782,7 @@ class _PolicyMixin:
                 declaration = candidates[0] if len(candidates) == 1 else None
             written = self._written_symbol(content, figure, line_symbols, symbol_records)
             symbol = written if written in {record.symbol for record in symbol_records} else issue.get("symbol")
-            if declaration is None and issue.get("role") != "derived" and not figure.percent:
+            if declaration is None and issue.get("role") != "derived" and not figure.percent and _has_ratio_display_context(content, figure):
                 displays = [item for item in block.compatible_declarations(
                     figure.value, True, figure.digits) if item.role == "observed"]
                 if len(displays) == 1 and not figure.currency and not figure.column:
@@ -838,10 +847,14 @@ class _PolicyMixin:
                 issue.pop("derive_formula", None)
                 issue.pop("derive_operand_refs", None)
 
-    @staticmethod
     def _declarations_by_span(
+        self,
         block: FiguresBlock,
         figures: Sequence[Figure],
+        *,
+        content: str = "",
+        line_symbols: Sequence[str | None] = (),
+        symbol_records: Sequence[EvidenceRecord] = (),
     ) -> dict[tuple[int, int], Declaration | None]:
         """Bind prose figures to declarations without cross-wiring duplicates.
 
@@ -886,6 +899,22 @@ class _PolicyMixin:
                 for item in matches
                 if item.index not in reserved and item.index not in used_ambiguous
             ]
+            # Equal displayed values can belong to different instruments.
+            # When a table row names its entity, bind to the exact-ref
+            # declaration whose observed value belongs to that entity.
+            written_symbol = (
+                self._written_symbol(
+                    content, figure, line_symbols, symbol_records, include_line=False
+                )
+                if content else figure.symbol
+            )
+            if written_symbol:
+                entity_matches = [
+                    item for item in matches
+                    if self._entity_exact_ref_match(item.ref, figure) == written_symbol
+                ]
+                if len(entity_matches) == 1:
+                    available = entity_matches
             if not available:
                 available = [
                     item for item in matches if item.index not in used_ambiguous
@@ -931,7 +960,7 @@ class _PolicyMixin:
 
     @grounding_check(name="undeclared-figure", code="figure_undeclared",
                      description="An undeclared measurement must be observed in this session.", additional_codes=('numeric_claim_conflict', 'numeric_claim_unavailable'))
-    def _check_undeclared_figure(self, figure, symbol, records, block):
+    def _check_undeclared_figure(self, content, figure, symbol, records, block):
         # A shape mismatch must not erase an existing derived intent.
         # Association is only a candidate: repair still proves every ref
         # and the complete formula before requiring preservation.
@@ -952,19 +981,52 @@ class _PolicyMixin:
                 **repair,
             )]
         found = self._check_observed(figure, None, symbol, records)
-        entity_repair = self._undeclared_entity_repair_metadata(figure)
-        structured_repair = self._structured_metric_repair_metadata(figure, symbol)
-        if block.present and (found or entity_repair or structured_repair):
-            # Declared, but as a fraction where the answer writes a
-            # percent (or the reverse): still undeclared, since the
-            # two are different assertions — but say so, or the model
-            # reads "not declared" as a lie and repeats the draft.
-            other_unit = _declared_in_other_unit(block, figure)
-            repair_metadata = {
-                **entity_repair,
-                **structured_repair,
-                **self._deterministic_derive_metadata(figure),
-            }
+        # Repair suggestions describe possible evidence, not an independent
+        # reason to reject a value already verified as observed. A declaration
+        # in another unit remains a separate assertion that needs a proof.
+        other_unit = _declared_in_other_unit(block, figure) if block.present else None
+        structured_observation = any(
+            record.status == "observed" and record.value is not None
+            and _metric_kind_for_path(record.field) is not None
+            and (
+                record.identity_scope == "entity"
+                or (
+                    record.identity_scope == "aggregate"
+                    and "portfolio_" in record.field.casefold()
+                )
+                or any(token in record.field.casefold() for token in (
+                    "correlation_matrix", "covariance_matrix"
+                ))
+            )
+            and self._kind_fits(record, figure)
+            and self._matches_evidence(
+                figure, [float(record.value)], [float(record.value)]
+            )
+            and _record_matches_entity(record, symbol)
+            for record in self._evidence
+        )
+        ratio_scale_without_context = (
+            any(
+                record.status == "observed" and record.unit == "ratio"
+                and record.value is not None
+                and self._strict_written_match(figure, float(record.value)) == (True, True)
+                for record in self._evidence
+            )
+            and not _has_ratio_display_context(content, figure)
+        )
+        if block.present and (found or other_unit or structured_observation):
+            entity_repair = self._undeclared_entity_repair_metadata(figure)
+            structured_repair = self._structured_metric_repair_metadata(figure, symbol)
+            # A same-number reference is not proof of a ratio-to-percent
+            # conversion. Only the separately verified derived-repair path
+            # may authorize preservation when the declared unit differs.
+            repair_metadata = (
+                {} if other_unit or ratio_scale_without_context else {
+                    **entity_repair,
+                    **structured_repair,
+                    **self._deterministic_derive_metadata(figure),
+                }
+            )
             return [
                 self._figure_issue(
                     "figure_undeclared",
@@ -1058,9 +1120,11 @@ class _PolicyMixin:
             and declaration.role == "observed"
             and "::" in declaration.ref
         ):
-            declared = self._symbol_for_claim(
-                f"{declaration.ref} {declaration.note}", records
-            )
+            # A descriptive note such as "efectivo" must not be parsed as a
+            # ticker unless the answer itself attaches a known entity to the
+            # figure. The exact field ref remains the evidence authority.
+            note_symbol = self._symbol_for_claim(declaration.note, records)
+            declared = note_symbol
             written = self._written_symbol(
                 content, figure, line_symbols, records, include_line=False
             )
@@ -1748,12 +1812,22 @@ class _PolicyMixin:
             return None
         call, path = keys[0].split("::", 1)
         call = self._canonical_session_call_id(call)
+        # A display repair must not infer a different field from a suffix or
+        # choose evidence from a different call when the named call exists.
+        # The original declaration must also state the exact displayed value:
+        # loose matching at figure precision cannot repair a wrong number.
+        if not path or not self._strict_written_match(figure, declaration.value)[0]:
+            return None
         candidates, _ = self._field_sources(path, None)
         known = any(record.call_id == call for record in self._evidence)
-        candidates = [record for record in candidates
-                      if record.status == "observed" and record.unit == "ratio"
-                      and record.value is not None and (not known or record.call_id == call)
-                      and self._strict_written_match(figure, float(record.value)) == (True, True)]
+        candidates = [
+            record for record in candidates
+            if record.status == "observed" and record.unit == "ratio"
+            and record.value is not None
+            and _index_normalized(record.field) == _index_normalized(path)
+            and (not known or record.call_id == call)
+            and self._strict_written_match(figure, float(record.value)) == (True, True)
+        ]
         if len(candidates) != 1:
             return None
         return replace(declaration, role="derived", percent=figure.percent,
@@ -4145,12 +4219,36 @@ def _declared_in_other_unit(block: FiguresBlock, figure: Figure) -> Declaration 
     for declaration in block.declarations:
         if declaration.percent == figure.percent:
             continue
+        # Equal display magnitudes with opposite unit declarations (2.5% vs
+        # 2.5 points) are still a unit mismatch. They need the explicit,
+        # evidence-backed ratio display conversion below.
+        if abs(abs(declaration.value) - abs(figure.value)) <= half_unit * (1 + 1e-9):
+            return declaration
         in_figure_units = declaration.value * (100.0 if figure.percent else 0.01)
         # By size: a difference declared one way round and written the other
         # ("0.0151" for "−1.51pp") is still the value the model meant to name.
         if abs(abs(in_figure_units) - abs(figure.value)) <= half_unit * (1 + 1e-9):
             return declaration
     return None
+
+
+def _has_ratio_display_context(content: str, figure: Figure) -> bool:
+    """Whether prose explicitly frames a ratio as points or a percentage part."""
+    left, right = segment_bounds(content, figure.start, figure.end)
+    segment = content[left:right]
+    if re.search(
+        r"\b(?:percentage\s+points?|percent\s+points?|points?|pp)\b|"
+        r"puntos?\s+porcentuales?|porcentuales?|单位",
+        segment,
+        re.IGNORECASE,
+    ):
+        return True
+    # A written percent factor applied to the same value is explicit
+    # arithmetic context, as in "25% of 2.5 units".
+    return bool(
+        re.search(r"\d[\d.,]*\s*%", segment)
+        and re.search(r"\b(?:of|de)\b", segment, re.IGNORECASE)
+    )
 
 
 #: What separates the parts of a free-form ref: ``backtest::rp``,

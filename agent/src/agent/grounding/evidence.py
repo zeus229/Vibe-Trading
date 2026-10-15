@@ -975,6 +975,15 @@ def _structured_key_symbols(value: Any, path: str) -> tuple[str, set[str]]:
     """
     if not isinstance(value, Mapping) or len(value) < 2:
         return "", set()
+    # Keys in a composition breakdown are asset classes, not listed entities.
+    # Treating a class such as EFECTIVO as a ticker contaminates later
+    # portfolio-wide scalar evidence in the same session.
+    normalized_path = path.casefold().replace("-", "_")
+    if any(token in normalized_path for token in (
+        "by_instrument_type", "by_asset_class", "by_instrument_class",
+        "sector_exposure", "by_sector",
+    )):
+        return "", set()
     labels = list(value)
     if not all(_is_structured_symbol_key(label) for label in labels):
         return "", set()
@@ -1043,6 +1052,11 @@ class _EvidenceMixin:
             return _EntityContext(next(iter(symbols)), "entity", "argument"), symbols
         if symbols:
             return _EntityContext(None, "unknown"), symbols
+        # A portfolio-wide performance request is an explicit aggregate scope.
+        # Do not infer the result's identity from symbols observed in earlier
+        # composition/position calls in the same report.
+        if str(arguments.get("asset_type") or "").strip().upper() == "ALL":
+            return _EntityContext(None, "aggregate", "argument"), symbols
         # A later scalar analysis call may omit a symbol argument after this
         # session has observed exactly one entity. Require that the session has
         # no other candidate; an explicit aggregate subtree still stays global.
@@ -1671,7 +1685,14 @@ class _EvidenceMixin:
                     if not path and str(key).casefold() in _ENVELOPE_FIELDS:
                         continue
                     child_path = f"{path}.{key}" if path else str(key)
-                    child_context = _entity_for_key(local, key, allowed)
+                    category_breakdown = any(token in path.casefold().replace("-", "_") for token in (
+                        "by_instrument_type", "by_asset_class", "by_instrument_class",
+                        "sector_exposure", "by_sector",
+                    ))
+                    child_context = (
+                        _EntityContext(None, "aggregate", "explicit")
+                        if category_breakdown else _entity_for_key(local, key, allowed)
+                    )
                     if keyed_kind == "entity" and _normalize_symbol(str(key)) in keyed_symbols:
                         child_context = _entity_child(local, _normalize_symbol(str(key)), allowed)
                         self._session_symbols.add(_normalize_symbol(str(key)))

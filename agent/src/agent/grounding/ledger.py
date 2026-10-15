@@ -19,7 +19,7 @@ from src.agent.grounding.identity import (
     _utc_now,
 )
 from src.agent.grounding.evidence import EvidenceRecord, _EvidenceMixin, _json_object
-from src.agent.grounding.figures import Figure, FiguresBlock, parse_figures_block, scan_figures, strip_figures_block
+from src.agent.grounding.figures import Figure, FiguresBlock, _lines_with_offsets, parse_figures_block, scan_figures, strip_figures_block
 from src.agent.grounding.policies import ValidationResult, _PolicyMixin
 from src.agent.grounding.registry import GROUNDING_CHECKS
 from src.agent.grounding.release import (
@@ -72,6 +72,38 @@ def _passed_figures(
         seen.add(figure.text)
         passed.append(figure.text)
     return tuple(passed)
+
+
+def _passed_exact_claims(
+    figures: Sequence[Figure],
+    issues: Sequence[Mapping[str, Any]],
+    declarations: Mapping[tuple[int, int], Any],
+) -> tuple[dict[str, Any], ...]:
+    """Freeze clean visible observed figures with one exact source ref."""
+    flagged = {
+        (int(span[0]), int(span[1]))
+        for issue in issues
+        if isinstance((span := issue.get("span")), (list, tuple)) and len(span) == 2
+    }
+    claims: list[dict[str, Any]] = []
+    for figure in figures:
+        if figure.shape != "measured" or (figure.start, figure.end) in flagged:
+            continue
+        declaration = declarations.get((figure.start, figure.end))
+        if declaration is None or declaration.role != "observed":
+            continue
+        refs = tuple(part.strip() for part in declaration.ref.split(";") if part.strip())
+        if len(refs) != 1 or "::" not in refs[0]:
+            continue
+        claims.append({
+            "text": figure.text,
+            "value": float(figure.value),
+            "percent": bool(figure.percent),
+            "digits": str(figure.digits or ""),
+            "allowed_refs": refs,
+            "required_role": "observed",
+        })
+    return tuple(claims)
 
 
 _ACTIONABLE_MARKET_RE = re.compile(
@@ -442,6 +474,18 @@ class GroundingLedger(
             issues=issues,
             released_text=strip_figures_block(content, block),
             passed_figures=_passed_figures(figures, issues),
+            passed_claims=_passed_exact_claims(
+                figures, issues,
+                self._declarations_by_span(
+                    block, figures,
+                    content=content,
+                    line_symbols=[
+                        self._symbol_for_claim(line, [r for r in self._evidence if r.symbol])
+                        for line, _ in _lines_with_offsets(content)
+                    ],
+                    symbol_records=[r for r in self._evidence if r.symbol],
+                ),
+            ),
         )
         if not record:
             return result

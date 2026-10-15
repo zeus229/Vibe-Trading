@@ -12,7 +12,7 @@ from enum import Enum
 import re
 from typing import Any, Iterable
 
-from src.agent.grounding.figures import Declaration, parse_figures_block
+from src.agent.grounding.figures import Declaration, parse_figures_block, scan_figures
 
 
 class RepairAction(str, Enum):
@@ -301,12 +301,12 @@ class RequiredFigure:
 
 @dataclass(frozen=True)
 class CorrectionContract:
-    """Hard invariants for rejected figures with deterministic repairs.
+    """Hard invariants for repairable rejected and clean observed claims.
 
-    Clean figures from #1702 remain soft prompt guidance. They are not hard
-    contract members because a correction may legitimately reformat or omit a
-    non-required clean detail. Only rejected figures whose repair directive
-    explicitly says preserve are mandatory here.
+    Rejected claims are mandatory only when their repair directive says
+    preserve. Clean observed claims are mandatory only when validation tied a
+    visible occurrence to one exact evidence ref; their occurrence and source
+    declaration must survive a text-only correction.
     """
 
     required_figures: tuple[RequiredFigure, ...]
@@ -336,17 +336,48 @@ class CorrectionContract:
                 for existing in required
             ):
                 required.append(claim)
+        for item in getattr(validation, "passed_claims", ()):
+            try:
+                claim = RequiredFigure(
+                    text=str(item["text"]), value=float(item["value"]),
+                    percent=bool(item["percent"]), digits=str(item.get("digits") or ""),
+                    allowed_refs=tuple(item.get("allowed_refs") or ()),
+                    required_role="observed",
+                )
+            except (KeyError, TypeError, ValueError):
+                continue
+            if not any(
+                existing.percent == claim.percent
+                and existing.required_role == claim.required_role
+                and existing.allowed_refs == claim.allowed_refs
+                and abs(existing.value - claim.value) <= max(abs(claim.value) * 1e-9, 1e-9)
+                for existing in required
+            ):
+                required.append(claim)
+                exact_ref = claim.allowed_refs[0] if len(claim.allowed_refs) == 1 else None
+                directives.append((claim.text, RepairDirective(
+                    RepairAction.AUTO_REPAIR, preserve=True, exact_ref=exact_ref,
+                    allowed_refs=claim.allowed_refs,
+                )))
         return cls(tuple(required), tuple(directives))
 
     def missing_figures(self, content: str) -> tuple[str, ...]:
-        """Required repairable claims absent from the validated figures block."""
+        """Required claims absent from prose or from their exact declarations."""
 
         block = parse_figures_block(content)
+        figures = scan_figures(content, block)
         return tuple(
             required.text
             for required in self.required_figures
             if not any(
                 required.matches_declaration(declaration)
+                and any(
+                    figure.shape in ("measured", "bare")
+                    and declaration in block.compatible_declarations(
+                        figure.value, figure.percent, figure.digits
+                    )
+                    for figure in figures
+                )
                 for declaration in block.declarations
             )
         )
