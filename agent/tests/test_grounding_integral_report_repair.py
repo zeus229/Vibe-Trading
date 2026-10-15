@@ -224,3 +224,48 @@ def test_synthetic_daily_close_report_all_periods_benchmarks_and_risk_rows(tmp_p
     )
     result = ledger.validate_final_answer(answer)
     assert result.valid, [(i.get("reason"), i.get("symbol"), i.get("value")) for i in result.issues]
+
+
+
+@pytest.mark.parametrize("unit", ["pp", "bp", "bps"])
+@pytest.mark.parametrize("gap", ["", " ", "\t"])
+def test_point_unit_marker_spacing_recognized(unit, gap):
+    from src.agent.grounding.figures import _percent_mark
+
+    token = f"-0.092{gap}{unit}"
+    scale, end = _percent_mark(token, len("-0.092"))
+    assert scale == (0.01 if unit in ("bp", "bps") else 1.0)
+    assert end == len(token)
+
+
+@pytest.mark.parametrize("suffix", ["ppm", "bpp", "bpsx", "pptrading"])
+def test_point_mark_must_end_at_word_boundary(suffix):
+    from src.agent.grounding.figures import _percent_mark
+
+    scale, end = _percent_mark(f"-0.092 {suffix}", len("-0.092"))
+    assert scale == 0.0
+    assert end == len("-0.092")
+
+
+def test_spaced_pp_equal_contributions_publish_with_exact_refs(tmp_path):
+    ref_a = "call_attribution::data.positions[0].contribution_pct"
+    ref_b = "call_attribution::data.positions[1].contribution_pct"
+    text = (
+        "GGAL restó -0,092 pp; GPRK restó -0,092 pp.\n\n"
+        "| Instrumento | Contribución |\n| --- | ---: |\n"
+        "| GGAL | -0,092 pp |\n| GPRK | -0,092 pp |"
+        + _block(
+            f"-0.092 pp | observed | GGAL contribución | {ref_a}",
+            f"-0.092 pp | observed | GPRK contribución | {ref_b}",
+        )
+    )
+    ledger = _contribution_ledger(tmp_path)
+    assert ledger.validate_final_answer(text).valid
+    swapped = text.replace(
+        f"GGAL contribución | {ref_a}", f"GGAL contribución | {ref_b}"
+    ).replace(
+        f"GPRK contribución | {ref_b}", f"GPRK contribución | {ref_a}"
+    )
+    assert not ledger.validate_final_answer(swapped).valid
+    fabricated = text.replace("-0,092 pp", "-0,093 pp", 1)
+    assert not ledger.validate_final_answer(fabricated).valid
