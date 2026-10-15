@@ -110,7 +110,7 @@ def validate_and_release(
                     )
                     final_content = repaired
                     validation = recheck
-        if validation.valid and pending_grounding_contract is not None:
+        if pending_grounding_contract is not None:
             missing = loop._grounding.correction_contract_missing(
                 final_content, pending_grounding_contract
             )
@@ -131,6 +131,7 @@ def validate_and_release(
                 if (
                     not forced_grounding_release
                     and correction_contract_retries < 1
+                    and grounding_revisions < max_revisions
                     and iteration < loop.max_iterations
                 ):
                     messages.append({"role": "assistant", "content": final_content})
@@ -149,21 +150,22 @@ def validate_and_release(
                         pending_contract=pending_grounding_contract,
                         contract_retries=correction_contract_retries + 1,
                     )
-                validation = ValidationResult(
-                    valid=False,
-                    issues=[
-                        {
-                            "code": "correction_contract_violation",
-                            "reason": "required_figure_removed",
-                            "message": (
-                                "the correction removed required measured figure(s): "
-                                + ", ".join(missing)
-                            ),
-                        }
-                    ],
-                    released_text="",
-                    passed_figures=validation.passed_figures,
-                )
+                if validation.valid:
+                    validation = ValidationResult(
+                        valid=False,
+                        issues=[
+                            {
+                                "code": "correction_contract_violation",
+                                "reason": "required_figure_removed",
+                                "message": (
+                                    "the correction removed required measured figure(s): "
+                                    + ", ".join(missing)
+                                ),
+                            }
+                        ],
+                        released_text="",
+                        passed_figures=validation.passed_figures,
+                    )
             else:
                 pending_grounding_contract = None
         if validation.valid:
@@ -287,8 +289,8 @@ def validate_and_release(
                 return GroundingDecision(final_content, grounding_revisions, grounding_correction_text_only, pending_grounding_draft, retry=True,
                                          pending_contract=pending_grounding_contract, contract_retries=correction_contract_retries)
             if not forced_grounding_release:
-                pending_grounding_contract = loop._grounding.correction_contract(validation)
-                correction_contract_retries = 0
+                if pending_grounding_contract is None:
+                    pending_grounding_contract = loop._grounding.correction_contract(validation)
                 messages.append(
                     {
                         "role": "user",
