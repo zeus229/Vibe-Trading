@@ -354,11 +354,31 @@ class CorrectionContract:
     def violation_prompt(self, missing: Iterable[str]) -> str:
         """Focused feedback for a correction that silently dropped content."""
 
-        values = ", ".join(dict.fromkeys(str(value) for value in missing))
+        missing_values = tuple(dict.fromkeys(str(value) for value in missing))
+        values = ", ".join(missing_values)
+        directives = []
+        for value, directive in self.directives:
+            if value not in missing_values:
+                continue
+            fields = [f"{value}: action={directive.action.value}"]
+            if directive.exact_ref:
+                fields.append("exact_ref=" + directive.exact_ref)
+            if directive.allowed_refs:
+                fields.append("allowed_refs=" + "; ".join(directive.allowed_refs))
+            if directive.target_scope:
+                fields.append("target_scope=" + directive.target_scope)
+            if directive.derive_formula:
+                fields.append("formula=" + directive.derive_formula)
+            directives.append(" | ".join(fields))
+        requirements = (
+            "\nRepair requirements: " + "\n".join(directives)
+            if directives else ""
+        )
         return (
-            "[GROUNDING CORRECTION CONTRACT] The revised draft is grounded, but it "
-            "silently removed measured claim(s) with deterministic repair directives: "
+            "[GROUNDING CORRECTION CONTRACT] The revised draft silently removed "
+            "measured claim(s) with deterministic repair directives: "
             f"{values}. Restore those numeric claims and apply their listed repair "
-            "directives. Equivalent numeric formatting is allowed. Do not add unrelated "
+            "directives." + requirements
+            + "\nEquivalent numeric formatting is allowed. Do not add unrelated "
             "numeric claims. Return the full revised answer with its figures block."
         )
