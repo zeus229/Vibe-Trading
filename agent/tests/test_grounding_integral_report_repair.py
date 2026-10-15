@@ -59,14 +59,14 @@ def test_all_scope_performance_stays_aggregate_after_composition(tmp_path):
     assert result.valid, [(i.get("reason"), i.get("symbol"), i.get("value")) for i in result.issues]
 
 
-def _contribution_ledger(tmp_path):
+def _contribution_ledger(tmp_path, *, ggal=-0.092, gprk=-0.092):
     ledger = _ledger(tmp_path)
     ledger.ingest_tool_result(
         tool_name="mcp_asistente_casa_consultar_performance_cartera_scope",
         arguments={"asset_type": "ALL", "period": "1r"},
         result=json.dumps({"data": {"positions": [
-            {"symbol": "GGAL", "contribution_pct": -0.092},
-            {"symbol": "GPRK", "contribution_pct": -0.092},
+            {"symbol": "GGAL", "contribution_pct": ggal},
+            {"symbol": "GPRK", "contribution_pct": gprk},
         ]}}),
         call_id="call_attribution", success=True,
     )
@@ -224,3 +224,139 @@ def test_synthetic_daily_close_report_all_periods_benchmarks_and_risk_rows(tmp_p
     )
     result = ledger.validate_final_answer(answer)
     assert result.valid, [(i.get("reason"), i.get("symbol"), i.get("value")) for i in result.issues]
+
+
+
+@pytest.mark.parametrize("unit", ["pp", "bp", "bps"])
+@pytest.mark.parametrize("gap", ["", " ", "\t"])
+def test_point_unit_marker_spacing_recognized(unit, gap):
+    from src.agent.grounding.figures import _percent_mark
+
+    token = f"-0.092{gap}{unit}"
+    scale, end = _percent_mark(token, len("-0.092"))
+    assert scale == (0.01 if unit in ("bp", "bps") else 1.0)
+    assert end == len(token)
+
+
+@pytest.mark.parametrize("suffix", ["ppm", "bpp", "bpsx", "pptrading"])
+def test_point_mark_must_end_at_word_boundary(suffix):
+    from src.agent.grounding.figures import _percent_mark
+
+    scale, end = _percent_mark(f"-0.092 {suffix}", len("-0.092"))
+    assert scale == 0.0
+    assert end == len("-0.092")
+
+
+def test_spaced_pp_equal_contributions_publish_with_exact_refs(tmp_path):
+    ref_a = "call_attribution::data.positions[0].contribution_pct"
+    ref_b = "call_attribution::data.positions[1].contribution_pct"
+    text = (
+        "GGAL restó -0,092 pp; GPRK restó -0,092 pp.\n\n"
+        "| Instrumento | Contribución |\n| --- | ---: |\n"
+        "| GGAL | -0,092 pp |\n| GPRK | -0,092 pp |"
+        + _block(
+            f"-0.092 pp | observed | GGAL contribución | {ref_a}",
+            f"-0.092 pp | observed | GPRK contribución | {ref_b}",
+        )
+    )
+    ledger = _contribution_ledger(tmp_path)
+    assert ledger.validate_final_answer(text).valid
+    swapped = text.replace(
+        f"GGAL contribución | {ref_a}", f"GGAL contribución | {ref_b}"
+    ).replace(
+        f"GPRK contribución | {ref_b}", f"GPRK contribución | {ref_a}"
+    )
+    assert not ledger.validate_final_answer(swapped).valid
+    fabricated = text.replace("-0,092 pp", "-0,093 pp", 1)
+    assert not ledger.validate_final_answer(fabricated).valid
+
+
+@pytest.mark.parametrize("unit", ["pp", "bp", "bps", "%"])
+@pytest.mark.parametrize("decimal_mark", [",", "."])
+@pytest.mark.parametrize("gap", ["", " ", "\t", "\u00a0"])
+@pytest.mark.parametrize("sign", [-1, 1])
+@pytest.mark.parametrize("declare_unit", [False, True])
+def test_contribution_unit_forms_keep_exact_value_and_refs(
+    tmp_path, unit, decimal_mark, gap, sign, declare_unit
+):
+    observed = sign * 0.092
+    visible_amount = "9" + decimal_mark + "2" if unit in {"bp", "bps"} else "0" + decimal_mark + "092"
+    visible = ("-" if sign < 0 else "+") + visible_amount + gap + unit
+    ref_a = "call_attribution::data.positions[0].contribution_pct"
+    ref_b = "call_attribution::data.positions[1].contribution_pct"
+    declaration_value = visible if declare_unit else f"{observed:.3f}"
+    report = (
+        f"GGAL aportó {visible}; GPRK aportó {visible}.\n\n"
+        f"| Instrumento | Contribución ({unit}) |\n| --- | ---: |\n"
+        f"| GGAL | {visible} |\n| GPRK | {visible} |"
+        + _block(
+            f"{declaration_value} | observed | GGAL contribution | {ref_a}",
+            f"{declaration_value} | observed | GPRK contribution | {ref_b}",
+        )
+    )
+    ledger = _contribution_ledger(tmp_path, ggal=observed, gprk=observed)
+    result = ledger.validate_final_answer(report)
+    assert result.valid, [(i.get("reason"), i.get("symbol"), i.get("value")) for i in result.issues]
+
+
+@pytest.mark.parametrize(
+    ("evidence_value", "visible", "field"),
+    [
+        (-0.00092, "-0,092 pp", "data.positions[0].contribution_pct"),
+        (-0.092, "-0,092 pp", "data.positions[0].return_pct"),
+    ],
+)
+def test_unitless_declaration_rejects_ambiguous_scale_or_metric(
+    tmp_path, evidence_value, visible, field
+):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message="portfolio close report")
+    ledger.ingest_tool_result(
+        tool_name="mcp_asistente_casa_consultar_performance_cartera_scope",
+        arguments={"asset_type": "ALL", "period": "1r"},
+        result=json.dumps({"data": {"positions": [
+            {"symbol": "GGAL", field.rsplit(".", 1)[-1]: evidence_value},
+            {"symbol": "GPRK", field.rsplit(".", 1)[-1]: evidence_value},
+        ]}}),
+        call_id="call_attribution", success=True,
+    )
+    ref = f"call_attribution::{field}"
+    report = (
+        f"GGAL aportó {visible}.\n\n"
+        + _block(f"-0.092 | observed | GGAL contribution | {ref}")
+    )
+    assert not ledger.validate_final_answer(report).valid
+
+
+def test_unitless_declaration_requires_one_exact_call_field_ref(tmp_path):
+    ledger = _contribution_ledger(tmp_path)
+    report = (
+        "GGAL aportó -0,092 pp.\n\n"
+        + _block(
+            "-0.092 | observed | GGAL contribution | data.positions[0].contribution_pct"
+        )
+    )
+    assert not ledger.validate_final_answer(report).valid
+
+
+def test_unitless_equal_contributions_reject_swapped_refs_and_invented_value(tmp_path):
+    ref_a = "call_attribution::data.positions[0].contribution_pct"
+    ref_b = "call_attribution::data.positions[1].contribution_pct"
+    answer = (
+        "GGAL restó -0,092 pp; GPRK restó -0,092 pp.\n\n"
+        "| Instrumento | Contribución (pp) |\n| --- | ---: |\n"
+        "| GGAL | -0,092 |\n| GPRK | -0,092 |"
+    )
+    valid = answer + _block(
+        f"-0.092 | observed | GGAL contribution | {ref_a}",
+        f"-0.092 | observed | GPRK contribution | {ref_b}",
+    )
+    ledger = _contribution_ledger(tmp_path)
+    assert ledger.validate_final_answer(valid).valid
+
+    swapped = answer + _block(
+        f"-0.092 | observed | GGAL contribution | {ref_b}",
+        f"-0.092 | observed | GPRK contribution | {ref_a}",
+    )
+    assert not ledger.validate_final_answer(swapped).valid
+    invented = valid.replace("GGAL restó -0,092 pp", "GGAL restó -0,093 pp")
+    assert not ledger.validate_final_answer(invented).valid

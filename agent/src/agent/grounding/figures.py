@@ -151,6 +151,7 @@ class Declaration:
     role: str
     note: str
     ref: str
+    unitless_numeric: bool = False
 
 
 @dataclass(frozen=True)
@@ -578,8 +579,8 @@ def _writes_decimal_commas(text: str) -> bool:
 def _percent_mark(text: str, end: int) -> tuple[float, int]:
     """The percent a figure's trailing mark denotes, and where the mark ends.
 
-    A percent sign may follow a space; ``pp`` / ``bp`` / ``bps`` must be glued
-    and not run into a word ("3.6ppm" is not a percentage point).
+    A percent sign or a points mark may follow horizontal whitespace. Point
+    marks must end at a word boundary ("3.6ppm" is not a percentage point).
 
     Returns:
         ``(1.0, end)`` for % and pp, ``(0.01, end)`` for bp, ``(0.0, end)``.
@@ -589,9 +590,9 @@ def _percent_mark(text: str, end: int) -> tuple[float, int]:
     if spaced[:1] and spaced[0] in _PERCENT_CHARS:
         return 1.0, end + len(rest) - len(spaced) + 1
     for mark, unit in _POINT_MARKS:
-        after = rest[len(mark) : len(mark) + 1]
-        if rest[: len(mark)].casefold() == mark and not (after.isascii() and after.isalnum()):
-            return unit, end + len(mark)
+        after = spaced[len(mark) : len(mark) + 1]
+        if spaced[: len(mark)].casefold() == mark and not (after.isascii() and after.isalnum()):
+            return unit, end + len(rest) - len(spaced) + len(mark)
     return 0.0, end
 
 
@@ -764,6 +765,18 @@ def parse_figures_block(content: str) -> FiguresBlock:
             malformed.append((number, line.strip()[:120]))
             continue
         value, percent, canonical = parsed
+        normalized_value = _normalize(value_text).text.strip()
+        value_tokens = _numbers(
+            normalized_value, decimal_commas=declaration_reading
+        )
+        unitless_numeric = (
+            _FRACTION_RE.fullmatch(normalized_value) is not None
+            or (
+                len(value_tokens) == 1
+                and value_tokens[0].start == 0
+                and value_tokens[0].end == len(normalized_value)
+            )
+        )
         declarations.append(
             Declaration(
                 index=number,
@@ -773,6 +786,7 @@ def parse_figures_block(content: str) -> FiguresBlock:
                 role=role,
                 note=parts[2] if len(parts) > 2 else "",
                 ref=parts[3] if len(parts) > 3 else "",
+                unitless_numeric=unitless_numeric,
             )
         )
     return FiguresBlock(
