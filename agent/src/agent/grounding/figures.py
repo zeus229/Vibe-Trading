@@ -578,8 +578,8 @@ def _writes_decimal_commas(text: str) -> bool:
 def _percent_mark(text: str, end: int) -> tuple[float, int]:
     """The percent a figure's trailing mark denotes, and where the mark ends.
 
-    A percent sign may follow a space; ``pp`` / ``bp`` / ``bps`` must be glued
-    and not run into a word ("3.6ppm" is not a percentage point).
+    A percent sign or a points mark may follow horizontal whitespace. Point
+    marks must end at a word boundary ("3.6ppm" is not a percentage point).
 
     Returns:
         ``(1.0, end)`` for % and pp, ``(0.01, end)`` for bp, ``(0.0, end)``.
@@ -589,9 +589,9 @@ def _percent_mark(text: str, end: int) -> tuple[float, int]:
     if spaced[:1] and spaced[0] in _PERCENT_CHARS:
         return 1.0, end + len(rest) - len(spaced) + 1
     for mark, unit in _POINT_MARKS:
-        after = rest[len(mark) : len(mark) + 1]
-        if rest[: len(mark)].casefold() == mark and not (after.isascii() and after.isalnum()):
-            return unit, end + len(mark)
+        after = spaced[len(mark) : len(mark) + 1]
+        if spaced[: len(mark)].casefold() == mark and not (after.isascii() and after.isalnum()):
+            return unit, end + len(rest) - len(spaced) + len(mark)
     return 0.0, end
 
 
