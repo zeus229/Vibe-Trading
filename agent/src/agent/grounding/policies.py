@@ -905,8 +905,14 @@ class _PolicyMixin:
     @grounding_check(name="figure-symbol", code="numeric_claim_conflict",
                      description="A declaration cannot move a figure to another instrument.")
     def _check_figure_symbol(self, content, figure, declaration, symbol, line_symbols, symbol_records):
+        exact_observation_ref = bool(
+            declaration is not None
+            and declaration.role == "observed"
+            and "::" in declaration.ref
+        )
         written = self._written_symbol(
-            content, figure, line_symbols, symbol_records
+            content, figure, line_symbols, symbol_records,
+            include_line=not exact_observation_ref,
         )
         if written and symbol and written != symbol:
             # A declaration names where a number came from; it cannot
@@ -1047,6 +1053,30 @@ class _PolicyMixin:
             # A correlation cell has two instrument axes and is portfolio
             # aggregate evidence; the row key is not its sole entity.
             return None
+        if (
+            declaration is not None
+            and declaration.role == "observed"
+            and "::" in declaration.ref
+        ):
+            declared = self._symbol_for_claim(
+                f"{declaration.ref} {declaration.note}", records
+            )
+            written = self._written_symbol(
+                content, figure, line_symbols, records, include_line=False
+            )
+            if (
+                written
+                and figure.symbol
+                and self._summary_row_is_unscoped(
+                    figure.symbol, declaration, figure
+                )
+            ):
+                written = None
+            # A statement segment that names an entity is still checked below
+            # against the declaration. When it is unscoped, the exact source
+            # ref owns identity; a different claim elsewhere on this line does
+            # not attach itself to this figure.
+            return declared or written
         if declaration is not None:
             declared = self._symbol_for_claim(
                 f"{declaration.ref} {declaration.note}", records
@@ -1223,6 +1253,8 @@ class _PolicyMixin:
         figure: Figure,
         line_symbols: Sequence[str | None],
         records: Sequence[EvidenceRecord],
+        *,
+        include_line: bool = True,
     ) -> str | None:
         """The instrument the answer's own text attaches a figure to, if one.
 
@@ -1241,7 +1273,11 @@ class _PolicyMixin:
         segment_symbol = self._symbol_for_claim(content[left:right], records)
         if segment_symbol:
             return segment_symbol
-        if 0 <= figure.line < len(line_symbols) and line_symbols[figure.line]:
+        if (
+            include_line
+            and 0 <= figure.line < len(line_symbols)
+            and line_symbols[figure.line]
+        ):
             return line_symbols[figure.line]
         return None
 
