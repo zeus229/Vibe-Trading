@@ -946,19 +946,23 @@ class _PolicyMixin:
                 **repair,
             )]
         found = self._check_observed(figure, None, symbol, records)
-        entity_repair = self._undeclared_entity_repair_metadata(figure)
-        structured_repair = self._structured_metric_repair_metadata(figure, symbol)
-        if block.present and (found or entity_repair or structured_repair):
-            # Declared, but as a fraction where the answer writes a
-            # percent (or the reverse): still undeclared, since the
-            # two are different assertions — but say so, or the model
-            # reads "not declared" as a lie and repeats the draft.
-            other_unit = _declared_in_other_unit(block, figure)
-            repair_metadata = {
-                **entity_repair,
-                **structured_repair,
-                **self._deterministic_derive_metadata(figure),
-            }
+        # Repair suggestions describe possible evidence, not an independent
+        # reason to reject a value already verified as observed. A declaration
+        # in another unit remains a separate assertion that needs a proof.
+        other_unit = _declared_in_other_unit(block, figure) if block.present else None
+        if block.present and (found or other_unit):
+            entity_repair = self._undeclared_entity_repair_metadata(figure)
+            structured_repair = self._structured_metric_repair_metadata(figure, symbol)
+            # A same-number reference is not proof of a ratio-to-percent
+            # conversion. Only the separately verified derived-repair path
+            # may authorize preservation when the declared unit differs.
+            repair_metadata = (
+                {} if other_unit else {
+                    **entity_repair,
+                    **structured_repair,
+                    **self._deterministic_derive_metadata(figure),
+                }
+            )
             return [
                 self._figure_issue(
                     "figure_undeclared",
