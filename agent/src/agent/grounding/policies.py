@@ -878,6 +878,23 @@ class _PolicyMixin:
             matches = block.compatible_declarations(
                 figure.value, figure.percent, figure.digits
             )
+            if not matches and figure.percent:
+                proven_unitless: list[Declaration] = []
+                for declaration in block.declarations:
+                    if self._unitless_contribution_display_match(
+                        declaration,
+                        figure,
+                        content,
+                        line_symbols,
+                        symbol_records,
+                    ):
+                        # This is a label-only association. The visible unit
+                        # is accepted only after the exact observed contribution
+                        # ref proves the same numeric value without scaling.
+                        proven_unitless.append(
+                            replace(declaration, percent=figure.percent)
+                        )
+                matches = tuple(proven_unitless)
             matches_by_span[(figure.start, figure.end)] = matches
             if len(matches) == 1:
                 reserved.add(matches[0].index)
@@ -930,6 +947,71 @@ class _PolicyMixin:
             used_ambiguous.add(chosen.index)
 
         return resolved
+
+    def _unitless_contribution_display_match(
+        self,
+        declaration: Declaration,
+        figure: Figure,
+        content: str,
+        line_symbols: Sequence[str | None],
+        symbol_records: Sequence[EvidenceRecord],
+    ) -> bool:
+        """Prove that a unitless declaration labels this exact contribution.
+
+        A visible pp/bp/bps mark can supply the display unit omitted from a
+        numeric declaration only when its exact entity ref names one observed
+        contribution and both the declaration and evidence equal the rendered
+        value at its written precision. No ratio/percent scaling is attempted.
+        """
+        if (
+            not figure.percent
+            or not declaration.unitless_numeric
+            or declaration.percent
+            or declaration.role != "observed"
+            or not self._within_written_precision(
+                figure, figure.value, declaration.value
+            )
+        ):
+            return False
+
+        symbol = self._written_symbol(
+            content,
+            figure,
+            line_symbols,
+            symbol_records,
+            include_line=False,
+        ) or figure.symbol
+        if not symbol:
+            return False
+
+        refs = [part.strip() for part in re.split(r"[,;]", declaration.ref) if part.strip()]
+        if len(refs) != 1 or "::" not in refs[0]:
+            return False
+        call_id, field = (part.strip() for part in refs[0].split("::", 1))
+        if not call_id or not field or _metric_kind_for_path(field) != "contribution":
+            return False
+
+        scoped = self._referenced(refs[0], symbol, figure)
+        if scoped is None:
+            return False
+        records, metric_values = scoped
+        if len(records) != 1 or metric_values:
+            return False
+        record = records[0]
+        canonical_call_id = self._canonical_session_call_id(call_id)
+        return bool(
+            record.status == "observed"
+            and record.unit == "ratio"
+            and record.identity_scope == "entity"
+            and record.symbol == symbol
+            and record.call_id == canonical_call_id
+            and _index_normalized(record.field) == _index_normalized(field)
+            and _metric_kind_for_path(record.field) == "contribution"
+            and record.value is not None
+            and self._within_written_precision(
+                figure, figure.value, float(record.value)
+            )
+        )
 
     @grounding_check(name="figure-symbol", code="numeric_claim_conflict",
                      description="A declaration cannot move a figure to another instrument.")

@@ -151,6 +151,7 @@ class Declaration:
     role: str
     note: str
     ref: str
+    unitless_numeric: bool = False
 
 
 @dataclass(frozen=True)
@@ -764,6 +765,18 @@ def parse_figures_block(content: str) -> FiguresBlock:
             malformed.append((number, line.strip()[:120]))
             continue
         value, percent, canonical = parsed
+        normalized_value = _normalize(value_text).text.strip()
+        value_tokens = _numbers(
+            normalized_value, decimal_commas=declaration_reading
+        )
+        unitless_numeric = (
+            _FRACTION_RE.fullmatch(normalized_value) is not None
+            or (
+                len(value_tokens) == 1
+                and value_tokens[0].start == 0
+                and value_tokens[0].end == len(normalized_value)
+            )
+        )
         declarations.append(
             Declaration(
                 index=number,
@@ -773,6 +786,7 @@ def parse_figures_block(content: str) -> FiguresBlock:
                 role=role,
                 note=parts[2] if len(parts) > 2 else "",
                 ref=parts[3] if len(parts) > 3 else "",
+                unitless_numeric=unitless_numeric,
             )
         )
     return FiguresBlock(
