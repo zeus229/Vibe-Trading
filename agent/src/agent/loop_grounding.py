@@ -165,6 +165,7 @@ def validate_and_release(
                         ],
                         released_text="",
                         passed_figures=validation.passed_figures,
+                        passed_claims=validation.passed_claims,
                     )
             else:
                 pending_grounding_contract = None
