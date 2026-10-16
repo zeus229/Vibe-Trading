@@ -253,7 +253,26 @@ class RequiredFigure:
             r"\s+", "", self.required_formula
         ):
             return False
-        if declaration.percent != self.percent or not self._value_matches(declaration.value):
+        # The grounding validator permits an observed, unitless contribution
+        # declaration to label the *same numeric magnitude* rendered as pp.
+        # Keep this exception limited to an exact attribution field reference,
+        # never to a generic ratio, money, derived result, or conversion.
+        contribution_display = (
+            self.percent
+            and not declaration.percent
+            and declaration.unitless_numeric
+            and declaration.role == "observed"
+            and bool(self.allowed_refs)
+            and any(
+                ref.split("::", 1)[-1].endswith(".contribution_pct")
+                for ref in self.allowed_refs
+                if "::" in ref
+            )
+        )
+        if (
+            (declaration.percent != self.percent and not contribution_display)
+            or not self._value_matches(declaration.value)
+        ):
             return False
         if not self.allowed_refs:
             return True
@@ -373,8 +392,24 @@ class CorrectionContract:
                 required.matches_declaration(declaration)
                 and any(
                     figure.shape in ("measured", "bare")
-                    and declaration in block.compatible_declarations(
-                        figure.value, figure.percent, figure.digits
+                    and (
+                        declaration in block.compatible_declarations(
+                            figure.value, figure.percent, figure.digits
+                        )
+                        or (
+                            required.percent
+                            and figure.percent
+                            and not declaration.percent
+                            and declaration.unitless_numeric
+                            and declaration.role == "observed"
+                            and bool(required.allowed_refs)
+                            and any(
+                                ref.split("::", 1)[-1].endswith(".contribution_pct")
+                                for ref in required.allowed_refs
+                                if "::" in ref
+                            )
+                            and required._value_matches(figure.value)
+                        )
                     )
                     for figure in figures
                 )
