@@ -381,41 +381,74 @@ class CorrectionContract:
         return cls(tuple(required), tuple(directives))
 
     def missing_figures(self, content: str) -> tuple[str, ...]:
-        """Required claims absent from prose or from their exact declarations."""
+        """Check distinct visible occurrences against their exact declarations.
 
+        Unitless contribution declarations can label pp figures, but each
+        entity-scoped contribution must appear in its own labelled row.
+        A visible GGAL value cannot discharge an identical GPRK obligation.
+        """
         block = parse_figures_block(content)
         figures = scan_figures(content, block)
-        return tuple(
-            required.text
-            for required in self.required_figures
-            if not any(
-                required.matches_declaration(declaration)
-                and any(
-                    figure.shape in ("measured", "bare")
-                    and (
-                        declaration in block.compatible_declarations(
-                            figure.value, figure.percent, figure.digits
-                        )
-                        or (
-                            required.percent
-                            and figure.percent
-                            and not declaration.percent
-                            and declaration.unitless_numeric
-                            and declaration.role == "observed"
-                            and bool(required.allowed_refs)
-                            and any(
-                                ref.split("::", 1)[-1].endswith(".contribution_pct")
-                                for ref in required.allowed_refs
-                                if "::" in ref
-                            )
-                            and required._value_matches(figure.value)
-                        )
+        lines = content.splitlines()
+        used_occurrences: set[int] = set()
+        missing: list[str] = []
+        for required in self.required_figures:
+            found = False
+            for declaration in block.declarations:
+                if not required.matches_declaration(declaration):
+                    continue
+                is_unitless_contribution = (
+                    required.percent
+                    and not declaration.percent
+                    and declaration.unitless_numeric
+                    and declaration.role == "observed"
+                    and bool(required.allowed_refs)
+                    and any(
+                        "::" in ref and ref.split("::", 1)[1].endswith(".contribution_pct")
+                        for ref in required.allowed_refs
                     )
-                    for figure in figures
                 )
-                for declaration in block.declarations
-            )
-        )
+                for index, figure in enumerate(figures):
+                    if index in used_occurrences or figure.shape not in ("measured", "bare"):
+                        continue
+                    normal = declaration in block.compatible_declarations(
+                        figure.value, figure.percent, figure.digits
+                    )
+                    special = (
+                        is_unitless_contribution and figure.percent
+                        and required._value_matches(figure.value)
+                    )
+                    if not normal and not special:
+                        continue
+                    if is_unitless_contribution:
+                        # The declaration's observed ticker is a concrete
+                        # entity label, not a generic numeric description.
+                        ticker = declaration.note.strip().upper()
+                        if not re.fullmatch(r"[A-Z][A-Z0-9.]{0,11}", ticker):
+                            continue
+                        line = lines[figure.line] if 0 <= figure.line < len(lines) else ""
+                        if not re.search(r"(?<![A-Za-z0-9.])" + re.escape(ticker) + r"(?![A-Za-z0-9.])", line, re.I):
+                            continue
+                        # Joint statements are not individually attributed.
+                        # The validator must still establish their own refs.
+                        other_tickers = {
+                            other.note.strip().upper()
+                            for other in block.declarations
+                            if other is not declaration
+                            and other.unitless_numeric
+                            and other.note.strip().upper() != ticker
+                            and re.fullmatch(r"[A-Z][A-Z0-9.]{0,11}", other.note.strip().upper())
+                        }
+                        if any(re.search(r"(?<![A-Za-z0-9.])" + re.escape(other) + r"(?![A-Za-z0-9.])", line, re.I) for other in other_tickers):
+                            continue
+                    used_occurrences.add(index)
+                    found = True
+                    break
+                if found:
+                    break
+            if not found:
+                missing.append(required.text)
+        return tuple(missing)
 
     def violation_prompt(self, missing: Iterable[str]) -> str:
         """Focused feedback for a correction that silently dropped content."""
