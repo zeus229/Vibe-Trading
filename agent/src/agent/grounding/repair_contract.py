@@ -423,23 +423,32 @@ class CorrectionContract:
                     if is_unitless_contribution:
                         # The declaration's observed ticker is a concrete
                         # entity label, not a generic numeric description.
-                        ticker = declaration.note.strip().upper()
-                        if not re.fullmatch(r"[A-Z][A-Z0-9.]{0,11}", ticker):
+                        # Free-text notes may say "Contribución de GPRK en pp".
+                        # Require a unique ticker marker from the validated
+                        # declaration note; do not treat the whole note as one.
+                        noted = declaration.note.upper()
+                        ticker_candidates = re.findall(
+                            r"(?<![A-Z0-9.])[A-Z][A-Z0-9.]{1,11}(?![A-Z0-9.])",
+                            noted,
+                        )
+                        ticker_candidates = [
+                            t for t in ticker_candidates
+                            if t not in {"EN", "DE", "PP", "DEL", "THE", "AND",
+                                         "OBSERVED", "CONTRIBUCION", "CONTRIBUCIÓN"}
+                        ]
+                        if len(set(ticker_candidates)) != 1:
                             continue
+                        ticker = ticker_candidates[0]
                         line = lines[figure.line] if 0 <= figure.line < len(lines) else ""
-                        if not re.search(r"(?<![A-Za-z0-9.])" + re.escape(ticker) + r"(?![A-Za-z0-9.])", line, re.I):
-                            continue
-                        # Joint statements are not individually attributed.
-                        # The validator must still establish their own refs.
-                        other_tickers = {
-                            other.note.strip().upper()
-                            for other in block.declarations
-                            if other is not declaration
-                            and other.unitless_numeric
-                            and other.note.strip().upper() != ticker
-                            and re.fullmatch(r"[A-Z][A-Z0-9.]{0,11}", other.note.strip().upper())
-                        }
-                        if any(re.search(r"(?<![A-Za-z0-9.])" + re.escape(other) + r"(?![A-Za-z0-9.])", line, re.I) for other in other_tickers):
+                        # Only the local clause containing this numeric
+                        # occurrence identifies the entity. Two independently
+                        # labeled claims may share one physical line.
+                        before = line[:max(0, figure.start - sum(len(x) + 1 for x in lines[:figure.line]))]
+                        clause = re.split(r"[;|.!?]", before)[-1]
+                        if not re.search(
+                            r"(?<![A-Za-z0-9.])" + re.escape(ticker)
+                            + r"(?![A-Za-z0-9.])", clause, re.I
+                        ):
                             continue
                     used_occurrences.add(index)
                     found = True
