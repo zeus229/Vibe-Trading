@@ -564,3 +564,69 @@ def test_replace_derived_contract_requires_canonical_total_and_all_refs():
         + "\n```"
     )
     assert contract.missing_figures(canonical) == ()
+
+
+def test_unitless_observed_contributions_survive_correction_with_exact_refs(tmp_path):
+    from tests.test_grounding_integral_report_repair import _contribution_ledger
+
+    ledger = _contribution_ledger(tmp_path)
+    base = "call_attribution::data.positions"
+    refs = (f"{base}[0].contribution_pct", f"{base}[1].contribution_pct")
+    answer = (
+        "GGAL: -0.092 pp. GPRK: -0.092 pp.\n\n"
+        "```figures\n"
+        f"-0.092 | observed | GGAL | {refs[0]}\n"
+        f"-0.092 | observed | GPRK | {refs[1]}\n"
+        "```"
+    )
+    original = ledger.revalidate(answer)
+    assert original.valid, original.issues
+    contract = CorrectionContract.from_validation(original)
+
+    def missing(content):
+        result = ledger.revalidate(content)
+        return result, contract.missing_figures(content, validation=result)
+
+    assert missing(answer)[1] == ()
+    # Real report declarations carry descriptive notes rather than bare tickers.
+    descriptive = answer.replace(
+        "observed | GPRK |", "observed | Contribución de GPRK en pp |"
+    ).replace("observed | GGAL |", "observed | Contribución de GGAL en pp |")
+    descriptive_result, descriptive_missing = missing(descriptive)
+    assert descriptive_result.valid and descriptive_missing == ()
+    same_line = descriptive.replace(
+        "GGAL: -0.092 pp. GPRK: -0.092 pp.",
+        "GGAL: -0.092 pp; GPRK: -0.092 pp.",
+    )
+    same_line_result, same_line_missing = missing(same_line)
+    assert same_line_result.valid and same_line_missing == ()
+    assert missing(same_line.replace("GPRK: -0.092 pp.", ""))[1] == ("-0.092 pp",)
+
+    # Dropping GPRK prose but keeping its figures declaration must fail.
+    missing_gprk = answer.replace("GPRK: -0.092 pp.", "")
+    assert missing(missing_gprk)[1] == ("-0.092 pp",)
+    missing_ggal = answer.replace("GGAL: -0.092 pp. ", "")
+    assert missing(missing_ggal)[1] == ("-0.092 pp",)
+    # A combined sentence cannot replace two distinct ticker-scoped rows.
+    combined = answer.replace(
+        "GGAL: -0.092 pp. GPRK: -0.092 pp.",
+        "GGAL y GPRK ambas aportaron -0.092 pp.",
+    )
+    assert len(missing(combined)[1]) == 2
+    crossed, absent = missing(answer.replace(refs[1], refs[0], 1))
+    assert not crossed.valid
+    assert absent == ("-0.092 pp",)
+
+
+def test_unitless_contribution_exception_rejects_noncontribution_and_converted_values():
+    from src.agent.grounding.repair_contract import RequiredFigure
+    from src.agent.grounding.figures import Declaration
+
+    for ref, value in (
+        ("call::data.positions[8].price_pct", -0.092),
+        ("call::data.positions[8].contribution_pct", -9.2),
+    ):
+        required = RequiredFigure("-0.092 pp", -0.092, True, "-0.092",
+                                  allowed_refs=(ref,), required_role="observed")
+        declaration = Declaration(0, str(value), value, False, "observed", "", ref, True)
+        assert not required.matches_declaration(declaration)

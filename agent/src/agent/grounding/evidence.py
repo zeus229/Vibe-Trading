@@ -412,6 +412,16 @@ def _name_tokens(name: str) -> list[str]:
 def _field_dimension(name: str) -> str | None:
     """Dimension declared by one descriptive field name, or None."""
     tokens = _name_tokens(name)
+    # A named percentage remains dimensionless even when followed by a
+    # generic aggregate qualifier such as "_of_total". Do not override
+    # explicit monetary suffixes or currency codes.
+    if (
+        tokens
+        and any(token in {"pct", "percent", "percentage", "pp", "bps"} for token in tokens)
+        and tokens[-1] not in (_AMOUNT_TOKENS - {"total"})
+        and not (len(tokens) > 1 and _currency_code(tokens[-1]))
+    ):
+        return "ratio"
     if not tokens or tokens[-1] in _AMOUNT_TOKENS or (
         len(tokens) > 1 and _currency_code(tokens[-1])
     ):
@@ -443,9 +453,13 @@ def _leaf_dimension(path: str) -> str | None:
 
     leaf = parts[-1]
     tokens = _name_tokens(leaf)
-    if not tokens or tokens[-1] in _AMOUNT_TOKENS or (
-        len(tokens) > 1 and _currency_code(tokens[-1])
-    ):
+    if not tokens or (
+        tokens[-1] in _AMOUNT_TOKENS
+        and not (
+            tokens[-1] == "total"
+            and any(token in {"pct", "percent", "percentage", "pp", "bps"} for token in tokens)
+        )
+    ) or (len(tokens) > 1 and _currency_code(tokens[-1])):
         return None
 
     own_dimension = _field_dimension(leaf)

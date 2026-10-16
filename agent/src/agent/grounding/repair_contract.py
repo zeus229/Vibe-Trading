@@ -163,10 +163,9 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
 class RequiredFigure:
     """Semantic identity of one rejected-but-repairable measured claim.
 
-    Presence is checked against the corrected draft's validated figures block,
-    not against presentation context in prose. This makes the contract stable
-    across harmless rewrites such as currency labels moving around the number,
-    while still binding the claim to its proven exact evidence ref when known.
+    Presence is checked against the corrected draft's validated visible claims
+    when available. This keeps the claim bound to its proven exact evidence
+    ref across harmless prose rewrites.
     A proven derivation additionally keeps its role, complete operand set and
     supplied machine formula (whitespace may change, arithmetic may not).
     """
@@ -253,7 +252,26 @@ class RequiredFigure:
             r"\s+", "", self.required_formula
         ):
             return False
-        if declaration.percent != self.percent or not self._value_matches(declaration.value):
+        # The grounding validator permits an observed, unitless contribution
+        # declaration to label the *same numeric magnitude* rendered as pp.
+        # Keep this exception limited to an exact attribution field reference,
+        # never to a generic ratio, money, derived result, or conversion.
+        contribution_display = (
+            self.percent
+            and not declaration.percent
+            and declaration.unitless_numeric
+            and declaration.role == "observed"
+            and bool(self.allowed_refs)
+            and any(
+                ref.split("::", 1)[-1].endswith(".contribution_pct")
+                for ref in self.allowed_refs
+                if "::" in ref
+            )
+        )
+        if (
+            (declaration.percent != self.percent and not contribution_display)
+            or not self._value_matches(declaration.value)
+        ):
             return False
         if not self.allowed_refs:
             return True
@@ -361,26 +379,95 @@ class CorrectionContract:
                 )))
         return cls(tuple(required), tuple(directives))
 
-    def missing_figures(self, content: str) -> tuple[str, ...]:
-        """Required claims absent from prose or from their exact declarations."""
+    def missing_figures(self, content: str, *, validation: Any = None) -> tuple[str, ...]:
+        """Preserve the gate's exact visible claims; retain legacy checks otherwise."""
+        # The release path supplies the gate's occurrence-to-declaration
+        # associations. An unused declaration cannot preserve a visible claim,
+        # and equal values with different refs remain separate obligations.
+        passed = tuple(getattr(validation, "passed_claims", ())) if validation is not None else ()
+        allowed_by_alias: dict[str, set[str]] = {}
+        for required in self.required_figures:
+            for allowed in required.allowed_refs:
+                if "::" in allowed:
+                    call_id, field = allowed.split("::", 1)
+                    alias = call_id.split("|", 1)[0] + "::" + field
+                    allowed_by_alias.setdefault(alias, set()).add(allowed)
+        used_claims: set[int] = set()
+        matched: set[int] = set()
+        if validation is not None:
+            for required_index, required in enumerate(self.required_figures):
+                if required.required_role != "observed" or len(required.allowed_refs) != 1:
+                    continue
+                for claim_index, claim in enumerate(passed):
+                    if claim_index in used_claims:
+                        continue
+                    refs = tuple(claim.get("allowed_refs") or ())
+                    if len(refs) != 1 or not required._value_matches(float(claim["value"])):
+                        continue
+                    if bool(claim["percent"]) != required.percent:
+                        continue
+                    ref = refs[0]
+                    allowed = required.allowed_refs[0]
+                    if ref != allowed and not (
+                        "::" in ref and "::" in allowed
+                        and ref.split("::", 1)[1] == allowed.split("::", 1)[1]
+                        and ref.split("::", 1)[0].split("|", 1)[0]
+                        == allowed.split("::", 1)[0].split("|", 1)[0]
+                        and len(allowed_by_alias.get(
+                            ref.split("::", 1)[0].split("|", 1)[0]
+                            + "::" + ref.split("::", 1)[1], ()
+                        )) == 1
+                    ):
+                        continue
+                    used_claims.add(claim_index)
+                    matched.add(required_index)
+                    break
 
         block = parse_figures_block(content)
         figures = scan_figures(content, block)
-        return tuple(
-            required.text
-            for required in self.required_figures
-            if not any(
-                required.matches_declaration(declaration)
-                and any(
-                    figure.shape in ("measured", "bare")
-                    and declaration in block.compatible_declarations(
+        used_occurrences: set[int] = set()
+        missing: list[str] = []
+        for required_index, required in enumerate(self.required_figures):
+            if required_index in matched:
+                continue
+            if validation is not None and required.required_role == "observed" and len(required.allowed_refs) == 1:
+                missing.append(required.text)
+                continue
+            found = False
+            for declaration in block.declarations:
+                if not required.matches_declaration(declaration):
+                    continue
+                is_unitless_contribution = (
+                    required.percent
+                    and not declaration.percent
+                    and declaration.unitless_numeric
+                    and declaration.role == "observed"
+                    and bool(required.allowed_refs)
+                    and any(
+                        "::" in ref and ref.split("::", 1)[1].endswith(".contribution_pct")
+                        for ref in required.allowed_refs
+                    )
+                )
+                for index, figure in enumerate(figures):
+                    if index in used_occurrences or figure.shape not in ("measured", "bare"):
+                        continue
+                    normal = declaration in block.compatible_declarations(
                         figure.value, figure.percent, figure.digits
                     )
-                    for figure in figures
-                )
-                for declaration in block.declarations
-            )
-        )
+                    special = (
+                        is_unitless_contribution and figure.percent
+                        and required._value_matches(figure.value)
+                    )
+                    if not normal and not special:
+                        continue
+                    used_occurrences.add(index)
+                    found = True
+                    break
+                if found:
+                    break
+            if not found:
+                missing.append(required.text)
+        return tuple(missing)
 
     def violation_prompt(self, missing: Iterable[str]) -> str:
         """Focused feedback for a correction that silently dropped content."""
