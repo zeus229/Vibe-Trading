@@ -576,7 +576,7 @@ def test_unitless_observed_contributions_survive_correction_with_exact_refs():
                        digits="-0.092", allowed_refs=(ref,), required_role="observed")
         for ref in refs
     )
-    contract = CorrectionContract(required_figures=required)
+    contract = CorrectionContract(required_figures=required, directives=())
     answer = (
         "GPRK: -0.092 pp. GGAL: -0.092 pp.\n\n"
         "```figures\n"
