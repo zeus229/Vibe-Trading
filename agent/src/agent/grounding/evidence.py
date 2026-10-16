@@ -453,9 +453,13 @@ def _leaf_dimension(path: str) -> str | None:
 
     leaf = parts[-1]
     tokens = _name_tokens(leaf)
-    if not tokens or tokens[-1] in _AMOUNT_TOKENS or (
-        len(tokens) > 1 and _currency_code(tokens[-1])
-    ):
+    if not tokens or (
+        tokens[-1] in _AMOUNT_TOKENS
+        and not (
+            tokens[-1] == "total"
+            and any(token in {"pct", "percent", "percentage", "pp", "bps"} for token in tokens)
+        )
+    ) or (len(tokens) > 1 and _currency_code(tokens[-1])):
         return None
 
     own_dimension = _field_dimension(leaf)
