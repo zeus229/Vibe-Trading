@@ -25,3 +25,18 @@ def test_leaf_dimension_inherits_only_for_opaque_mapping_labels(path, expected):
 def test_name_tokens_preserve_unicode_words():
     assert _name_tokens("Fondo de Inversión") == ["fondo", "de", "inversión"]
     assert _name_tokens("Japón") == ["japón"]
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [
+        ("data.reconciliation.residual_pct_of_total", "ratio"),
+        ("data.reconciliation.residual_pct", "ratio"),
+        ("data.reconciliation.residual_total_ars", None),
+        ("data.reconciliation.total", None),
+        ("data.reconciliation.total_value", None),
+        ("data.reconciliation.price_ars", None),
+    ],
+)
+def test_explicit_percent_beats_generic_total_without_retyping_money(path, expected):
+    assert _leaf_dimension(path) == expected
