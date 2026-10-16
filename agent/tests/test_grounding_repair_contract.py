@@ -564,3 +564,39 @@ def test_replace_derived_contract_requires_canonical_total_and_all_refs():
         + "\n```"
     )
     assert contract.missing_figures(canonical) == ()
+
+
+def test_unitless_observed_contributions_survive_correction_with_exact_refs():
+    from src.agent.grounding.repair_contract import RequiredFigure, CorrectionContract
+
+    base = "call_47|fc_061::data.positions"
+    refs = (f"{base}[8].contribution_pct", f"{base}[9].contribution_pct")
+    required = tuple(
+        RequiredFigure(text="-0.092 pp", value=-0.092, percent=True,
+                       digits="-0.092", allowed_refs=(ref,), required_role="observed")
+        for ref in refs
+    )
+    contract = CorrectionContract(required_figures=required)
+    answer = (
+        "GPRK: -0.092 pp. GGAL: -0.092 pp.\n\n"
+        "```figures\n"
+        f"-0.092 | observed | GPRK | {refs[0]}\n"
+        f"-0.092 | observed | GGAL | {refs[1]}\n"
+        "```"
+    )
+    assert contract.missing_figures(answer) == ()
+    assert contract.missing_figures(answer.replace(refs[1], f"{base}[8].contribution_pct", 1)) != ()
+
+
+def test_unitless_contribution_exception_rejects_noncontribution_and_converted_values():
+    from src.agent.grounding.repair_contract import RequiredFigure
+    from src.agent.grounding.figures import Declaration
+
+    for ref, value in (
+        ("call::data.positions[8].price_pct", -0.092),
+        ("call::data.positions[8].contribution_pct", -9.2),
+    ):
+        required = RequiredFigure("-0.092 pp", -0.092, True, "-0.092",
+                                  allowed_refs=(ref,), required_role="observed")
+        declaration = Declaration(0, str(value), value, False, "observed", "", ref, True)
+        assert not required.matches_declaration(declaration)
