@@ -585,6 +585,20 @@ def test_unitless_observed_contributions_survive_correction_with_exact_refs():
         "```"
     )
     assert contract.missing_figures(answer) == ()
+    # Real report declarations carry descriptive notes rather than bare tickers.
+    descriptive = answer.replace(
+        "observed | GPRK |", "observed | Contribución de GPRK en pp |"
+    ).replace("observed | GGAL |", "observed | Contribución de GGAL en pp |")
+    assert contract.missing_figures(descriptive) == ()
+    same_line = descriptive.replace(
+        "GPRK: -0.092 pp. GGAL: -0.092 pp.",
+        "GPRK: -0.092 pp; GGAL: -0.092 pp.",
+    )
+    assert contract.missing_figures(same_line) == ()
+    assert len(contract.missing_figures(
+        same_line.replace("GPRK: -0.092 pp; ", "")
+    )) == 1
+
     # Dropping GPRK prose but keeping its figures declaration must fail.
     missing_gprk = answer.replace("GPRK: -0.092 pp. ", "")
     assert contract.missing_figures(missing_gprk) == ("-0.092 pp",)
