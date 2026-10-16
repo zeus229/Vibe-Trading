@@ -585,6 +585,15 @@ def test_unitless_observed_contributions_survive_correction_with_exact_refs():
         "```"
     )
     assert contract.missing_figures(answer) == ()
+    # Dropping GPRK prose but keeping its figures declaration must fail.
+    missing_gprk = answer.replace("GPRK: -0.092 pp. ", "")
+    assert contract.missing_figures(missing_gprk) == ("-0.092 pp",)
+    # A combined sentence cannot replace two distinct ticker-scoped rows.
+    combined = answer.replace(
+        "GPRK: -0.092 pp. GGAL: -0.092 pp.",
+        "GGAL y GPRK ambas aportaron -0.092 pp.",
+    )
+    assert len(contract.missing_figures(combined)) == 2
     assert contract.missing_figures(answer.replace(refs[1], f"{base}[8].contribution_pct", 1)) != ()
 
 
