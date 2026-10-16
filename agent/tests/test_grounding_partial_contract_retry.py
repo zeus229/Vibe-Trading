@@ -72,8 +72,8 @@ class _Grounding:
         return CorrectionContract.from_validation(validation)
 
     @staticmethod
-    def correction_contract_missing(content, contract):
-        return contract.missing_figures(content)
+    def correction_contract_missing(content, contract, validation=None):
+        return contract.missing_figures(content, validation=validation)
 
     def correction_prompt(self, validation):
         return "[GROUNDING GATE] fix remaining synthetic issue"

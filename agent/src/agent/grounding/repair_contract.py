@@ -163,10 +163,9 @@ def directive_for_issue(issue: dict[str, Any]) -> RepairDirective:
 class RequiredFigure:
     """Semantic identity of one rejected-but-repairable measured claim.
 
-    Presence is checked against the corrected draft's validated figures block,
-    not against presentation context in prose. This makes the contract stable
-    across harmless rewrites such as currency labels moving around the number,
-    while still binding the claim to its proven exact evidence ref when known.
+    Presence is checked against the corrected draft's validated visible claims
+    when available. This keeps the claim bound to its proven exact evidence
+    ref across harmless prose rewrites.
     A proven derivation additionally keeps its role, complete operand set and
     supplied machine formula (whitespace may change, arithmetic may not).
     """
@@ -380,19 +379,60 @@ class CorrectionContract:
                 )))
         return cls(tuple(required), tuple(directives))
 
-    def missing_figures(self, content: str) -> tuple[str, ...]:
-        """Check distinct visible occurrences against their exact declarations.
+    def missing_figures(self, content: str, *, validation: Any = None) -> tuple[str, ...]:
+        """Preserve the gate's exact visible claims; retain legacy checks otherwise."""
+        # The release path supplies the gate's occurrence-to-declaration
+        # associations. An unused declaration cannot preserve a visible claim,
+        # and equal values with different refs remain separate obligations.
+        passed = tuple(getattr(validation, "passed_claims", ())) if validation is not None else ()
+        allowed_by_alias: dict[str, set[str]] = {}
+        for required in self.required_figures:
+            for allowed in required.allowed_refs:
+                if "::" in allowed:
+                    call_id, field = allowed.split("::", 1)
+                    alias = call_id.split("|", 1)[0] + "::" + field
+                    allowed_by_alias.setdefault(alias, set()).add(allowed)
+        used_claims: set[int] = set()
+        matched: set[int] = set()
+        if validation is not None:
+            for required_index, required in enumerate(self.required_figures):
+                if required.required_role != "observed" or len(required.allowed_refs) != 1:
+                    continue
+                for claim_index, claim in enumerate(passed):
+                    if claim_index in used_claims:
+                        continue
+                    refs = tuple(claim.get("allowed_refs") or ())
+                    if len(refs) != 1 or not required._value_matches(float(claim["value"])):
+                        continue
+                    if bool(claim["percent"]) != required.percent:
+                        continue
+                    ref = refs[0]
+                    allowed = required.allowed_refs[0]
+                    if ref != allowed and not (
+                        "::" in ref and "::" in allowed
+                        and ref.split("::", 1)[1] == allowed.split("::", 1)[1]
+                        and ref.split("::", 1)[0].split("|", 1)[0]
+                        == allowed.split("::", 1)[0].split("|", 1)[0]
+                        and len(allowed_by_alias.get(
+                            ref.split("::", 1)[0].split("|", 1)[0]
+                            + "::" + ref.split("::", 1)[1], ()
+                        )) == 1
+                    ):
+                        continue
+                    used_claims.add(claim_index)
+                    matched.add(required_index)
+                    break
 
-        Unitless contribution declarations can label pp figures, but each
-        entity-scoped contribution must appear in its own labelled row.
-        A visible GGAL value cannot discharge an identical GPRK obligation.
-        """
         block = parse_figures_block(content)
         figures = scan_figures(content, block)
-        lines = content.splitlines()
         used_occurrences: set[int] = set()
         missing: list[str] = []
-        for required in self.required_figures:
+        for required_index, required in enumerate(self.required_figures):
+            if required_index in matched:
+                continue
+            if validation is not None and required.required_role == "observed" and len(required.allowed_refs) == 1:
+                missing.append(required.text)
+                continue
             found = False
             for declaration in block.declarations:
                 if not required.matches_declaration(declaration):
@@ -420,36 +460,6 @@ class CorrectionContract:
                     )
                     if not normal and not special:
                         continue
-                    if is_unitless_contribution:
-                        # The declaration's observed ticker is a concrete
-                        # entity label, not a generic numeric description.
-                        # Free-text notes may say "Contribución de GPRK en pp".
-                        # Require a unique ticker marker from the validated
-                        # declaration note; do not treat the whole note as one.
-                        noted = declaration.note.upper()
-                        ticker_candidates = re.findall(
-                            r"(?<![A-Z0-9.])[A-Z][A-Z0-9.]{1,11}(?![A-Z0-9.])",
-                            noted,
-                        )
-                        ticker_candidates = [
-                            t for t in ticker_candidates
-                            if t not in {"EN", "DE", "PP", "DEL", "THE", "AND",
-                                         "OBSERVED", "CONTRIBUCION", "CONTRIBUCIÓN"}
-                        ]
-                        if len(set(ticker_candidates)) != 1:
-                            continue
-                        ticker = ticker_candidates[0]
-                        line = lines[figure.line] if 0 <= figure.line < len(lines) else ""
-                        # Only the local clause containing this numeric
-                        # occurrence identifies the entity. Two independently
-                        # labeled claims may share one physical line.
-                        before = line[:max(0, figure.start - sum(len(x) + 1 for x in lines[:figure.line]))]
-                        clause = re.split(r"[;|.!?]", before)[-1]
-                        if not re.search(
-                            r"(?<![A-Za-z0-9.])" + re.escape(ticker)
-                            + r"(?![A-Za-z0-9.])", clause, re.I
-                        ):
-                            continue
                     used_occurrences.add(index)
                     found = True
                     break

@@ -302,10 +302,11 @@ class _ReleaseMixin:
 
     @staticmethod
     def correction_contract_missing(
-        content: str, contract: CorrectionContract
+        content: str, contract: CorrectionContract,
+        validation: ValidationResult | None = None,
     ) -> tuple[str, ...]:
         """Measured figures a grounded correction silently dropped."""
-        return contract.missing_figures(content)
+        return contract.missing_figures(content, validation=validation)
 
     def correction_prompt(self, validation: ValidationResult) -> str:
         """Build per-figure feedback for one rejected model draft (spec 6).

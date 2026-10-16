@@ -112,7 +112,7 @@ def validate_and_release(
                     validation = recheck
         if pending_grounding_contract is not None:
             missing = loop._grounding.correction_contract_missing(
-                final_content, pending_grounding_contract
+                final_content, pending_grounding_contract, validation
             )
             if missing:
                 trace.write(
