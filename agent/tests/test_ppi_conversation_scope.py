@@ -70,16 +70,25 @@ def test_only_owned_non_scheduled_sessions_are_conversational() -> None:
     )
 
 
-def test_hermes_comparison_is_bound_to_one_owned_session_and_run() -> None:
-    owner = _human_session().owner
-    assert allow_hermes_comparison_tools(Session(title=HERMES_COMPARISON_TITLE, owner=owner))
-    assert not allow_hermes_comparison_tools(Session(title=HERMES_COMPARISON_TITLE))
+def test_hermes_comparison_requires_server_allowlisted_attributable_identity(monkeypatch) -> None:
+    title = HERMES_COMPARISON_TITLE
+    shared = Principal(subject="shared-key-holder", auth_method=AuthMethod.SHARED_KEY)
+    trusted = Principal(subject="trusted-operator", auth_method=AuthMethod.FEDERATED_IDENTITY)
+    other = Principal(subject="other-operator", auth_method=AuthMethod.FEDERATED_IDENTITY)
+    monkeypatch.delenv("VIBE_HERMES_COMPARISON_ALLOWED_SUBJECT", raising=False)
+    assert not allow_hermes_comparison_tools(Session(title=title, owner=trusted))
+    monkeypatch.setenv("VIBE_HERMES_COMPARISON_ALLOWED_SUBJECT", "trusted-operator")
+    assert allow_hermes_comparison_tools(Session(title=title, owner=trusted))
+    assert not allow_hermes_comparison_tools(Session(title=title, owner=shared))
+    assert not allow_hermes_comparison_tools(Session(title=title, owner=other))
+    assert not allow_hermes_comparison_tools(Session(title=title))
     assert not allow_hermes_comparison_tools(
-        Session(title=f"vibe-hermes-comparison:{HERMES_COMPARISON_RUN_ID}:other", owner=owner)
+        Session(title=f"vibe-hermes-comparison:{HERMES_COMPARISON_RUN_ID}:other", owner=trusted)
     )
     assert not allow_hermes_comparison_tools(
-        Session(title=f"scheduled-research:{HERMES_COMPARISON_TITLE}", owner=owner)
+        Session(title=f"scheduled-research:{title}", owner=trusted)
     )
+
 
 
 def test_conversation_gets_only_macro_addition_and_original_reads_remain() -> None:
