@@ -979,6 +979,7 @@ class PortfolioService:
                     "sector_constraint_eligible": bool(row.get("sector_constraint_eligible")),
                     "sector_metadata_policy": row.get("sector_metadata_policy"),
                     "market_value_native": row.get("market_value_native"),
+                    "unrealized_pnl_native": row.get("unrealized_pnl_native"),
                     "native_currency": currency,
                     "weight": _number(market_value_native / total_native) if total_native > 0 else 0.0,
                     "exposure_currency": row.get("exposure_currency"),
@@ -988,6 +989,18 @@ class PortfolioService:
                     "daily_change_status": row.get("daily_change_status"),
                 }
             )
+        unrealized_native: dict[str, dict[str, Any]] = {}
+        for currency, rows in holdings_native.items():
+            known = [
+                _decimal(row["unrealized_pnl_native"])
+                for row in rows
+                if row.get("unrealized_pnl_native") is not None
+            ]
+            unrealized_native[currency] = {
+                "unrealized_pnl_native": _number(sum(known, Decimal("0"))) if known else None,
+                "positions_with_pnl": len(known),
+                "positions_total": len(rows),
+            }
         return {
             "snapshot_id": snapshot.get("snapshot_id"),
             "as_of": snapshot["created_at"],
@@ -1022,6 +1035,9 @@ class PortfolioService:
             ],
             "holdings": holdings,
             "holdings_native": holdings_native,
+            # Native (e.g. ARS) rows carry no USD P/L, so ``holdings[].unrealized_pnl_usd`` reads 0 for them.
+            # The native unrealized P/L lives here and per position in ``holdings_native``.
+            "unrealized_pnl_native_by_currency": unrealized_native,
             "daily_change": snapshot.get("daily_change"),
             "risk_xray_args": self._risk_xray_args(snapshot.get("positions", [])),
             "warnings": snapshot["warnings"],

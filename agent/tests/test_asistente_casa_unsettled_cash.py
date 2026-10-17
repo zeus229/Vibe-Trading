@@ -160,3 +160,16 @@ def test_cash_semantics_absent_or_malformed_is_none(tmp_path, monkeypatch, bad):
         account["cash_semantics"] = bad
     _, snapshot = _refresh_with_account(tmp_path, monkeypatch, account)
     assert snapshot["accounts"][0]["cash_semantics"] is None
+
+
+def test_native_unrealized_pnl_reaches_agent_context(tmp_path, monkeypatch):
+    service, _ = _refresh_with_account(tmp_path, monkeypatch, {
+        "portfolio_value": "1000", "cash": "300", "unsettled_cash": "0", "currency": "ARS",
+    })
+    context = service.analysis_context()
+    row = context["holdings_native"]["ARS"][0]
+    # cost 600 x 1 vs price 700 -> +100 ARS, derived natively (no FX, no USD).
+    assert row["unrealized_pnl_native"] == 100.0
+    assert context["unrealized_pnl_native_by_currency"]["ARS"] == {
+        "unrealized_pnl_native": 100.0, "positions_with_pnl": 1, "positions_total": 1,
+    }
