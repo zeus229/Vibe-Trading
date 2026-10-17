@@ -7,6 +7,7 @@ Asistente Casa MCP server. The persisted agent.json is never changed.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 _CONVERSATIONAL_READS = frozenset({
@@ -48,9 +49,16 @@ def allow_ppi_conversation_tools(session: Any) -> bool:
 
 def allow_hermes_comparison_tools(session: Any) -> bool:
     """Only the authenticated, explicitly named frozen-package session qualifies."""
-    if session is None or getattr(session, "owner", None) is None:
+    if session is None or str(getattr(session, "title", "") or "") != HERMES_COMPARISON_TITLE:
         return False
-    return str(getattr(session, "title", "") or "") == HERMES_COMPARISON_TITLE
+    owner = getattr(session, "owner", None)
+    # A shared API key authenticates its bearer but cannot identify a human.
+    # A client-set title must never be sufficient for permission elevation.
+    if owner is None or not getattr(owner, "attributable", False):
+        return False
+    # Explicit trusted server-side opt-in; unset or blank denies.
+    allowed_subject = os.environ.get("VIBE_HERMES_COMPARISON_ALLOWED_SUBJECT", "").strip()
+    return bool(allowed_subject and owner.subject == allowed_subject)
 
 
 def scope_asistente_casa_agent_config(
