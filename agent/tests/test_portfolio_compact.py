@@ -235,6 +235,7 @@ def test_compact_is_semantic_subset_of_extended_from_one_snapshot(monkeypatch):
             "instrument_type": r["source_instrument_type"],
             "country": r["country"],
             "market_value_ars": r["market_value_native"],
+            "unrealized_pnl_ars": r["unrealized_pnl_native"],
             "native_currency": r["native_currency"],
             "weight_portfolio": r["weight"],
         }
@@ -270,3 +271,39 @@ def test_compact_view_can_be_pinned_to_a_snapshot_id(monkeypatch):
     assert seen["id"] == "abc"
     assert payload["status"] == "error"
     assert payload["error_code"] == "snapshot_not_found"
+
+
+def test_cash_breakdown_reports_signed_pending_and_economic_cash():
+    source = snapshot()
+    # Connector folded a negative pending flow into cash: cash = economic = 30, pending field = 0.
+    account = source["accounts"][0]
+    account["cash_native"], account["unsettled_cash_native"] = 30.0, 0.0
+    account["cash_semantics"] = {
+        "settled_cash_ars": 50.0, "unsettled_signed_ars": -20.0, "economic_cash_ars": 30.0,
+    }
+    c = compact_snapshot(source)
+    assert c["totals"]["cash_breakdown_ars"] == {
+        "settled_cash_ars": 50.0, "unsettled_signed_ars": -20.0, "economic_cash_ars": 30.0,
+    }
+    assert c["totals"]["cash_ars"] == 30  # unchanged canonical bucket; the breakdown is additive
+
+
+def test_cash_breakdown_absent_for_legacy_snapshot():
+    assert compact_snapshot(snapshot())["totals"]["cash_breakdown_ars"] is None
+
+
+def test_compact_exposes_ars_unrealized_pnl_with_coverage():
+    source = snapshot()
+    source["positions"][0]["unrealized_pnl_native"] = 125.5
+    source["positions"][1]["unrealized_pnl_native"] = -25.5
+    c = compact_snapshot(source)
+    assert c["holdings"][0]["unrealized_pnl_ars"] == 125.5
+    assert c["holdings"][2]["unrealized_pnl_ars"] is None
+    assert c["totals"]["unrealized_pnl_ars"] == 100.0
+    assert c["totals"]["unrealized_pnl_positions"] == {"with_pnl": 2, "total": len(c["holdings"])}
+
+
+def test_compact_unrealized_pnl_absent_is_none_not_zero():
+    c = compact_snapshot(snapshot())
+    assert c["totals"]["unrealized_pnl_ars"] is None
+    assert c["totals"]["unrealized_pnl_positions"]["with_pnl"] == 0

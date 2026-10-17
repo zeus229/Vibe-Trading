@@ -125,6 +125,30 @@ def _quote_price(payload: dict[str, Any]) -> Decimal | None:
     return bid if bid > 0 else ask if ask > 0 else None
 
 
+_CASH_SEMANTICS_NUMBERS = ("settled_cash_ars", "unsettled_signed_ars", "economic_cash_ars")
+
+
+def _cash_semantics(raw: Any) -> dict[str, Any] | None:
+    """Keep the connector's optional settled / signed-pending / economic cash breakdown.
+
+    Vibe's own ``cash`` and ``unsettled_cash`` stay non-negative; a connector that must fold a negative
+    pending flow into ``cash`` declares the original components here so they are never lost. Returns
+    ``None`` unless every numeric component is present and finite.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in _CASH_SEMANTICS_NUMBERS:
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or abs(value) == float("inf"):
+            return None
+        out[key] = float(value)
+    for key in ("projection", "cash_field_meaning"):
+        if isinstance(raw.get(key), str):
+            out[key] = raw[key][:80]
+    return out
+
+
 class PortfolioService:
     """Aggregate every enabled read-only source into one immutable snapshot.
 
@@ -348,12 +372,14 @@ class PortfolioService:
                         max(Decimal("0"), _decimal(nested_account.get("unsettled_cash"))),
                         max(Decimal("0"), account_total - cash_total),
                     )
+                    cash_semantics = _cash_semantics(nested_account.get("cash_semantics"))
                     if not source.include_cash:
                         account_total = max(
                             Decimal("0"), account_total - cash_total - unsettled_cash
                         )
                         cash_total = Decimal("0")
                         unsettled_cash = Decimal("0")
+                        cash_semantics = None
                     unpriced_or_other = max(
                         Decimal("0"),
                         account_total - priced_total - cash_total - unsettled_cash,
@@ -382,6 +408,7 @@ class PortfolioService:
                         "priced_value_native": _number(priced_total),
                         "cash_native": _number(cash_total),
                         "unsettled_cash_native": _number(unsettled_cash),
+                        "cash_semantics": cash_semantics,
                         "unpriced_or_other_native": _number(unpriced_or_other),
                         "daily_change": (
                             (result.get("account") or {})
@@ -952,6 +979,7 @@ class PortfolioService:
                     "sector_constraint_eligible": bool(row.get("sector_constraint_eligible")),
                     "sector_metadata_policy": row.get("sector_metadata_policy"),
                     "market_value_native": row.get("market_value_native"),
+                    "unrealized_pnl_native": row.get("unrealized_pnl_native"),
                     "native_currency": currency,
                     "weight": _number(market_value_native / total_native) if total_native > 0 else 0.0,
                     "exposure_currency": row.get("exposure_currency"),
@@ -961,6 +989,18 @@ class PortfolioService:
                     "daily_change_status": row.get("daily_change_status"),
                 }
             )
+        unrealized_native: dict[str, dict[str, Any]] = {}
+        for currency, rows in holdings_native.items():
+            known = [
+                _decimal(row["unrealized_pnl_native"])
+                for row in rows
+                if row.get("unrealized_pnl_native") is not None
+            ]
+            unrealized_native[currency] = {
+                "unrealized_pnl_native": _number(sum(known, Decimal("0"))) if known else None,
+                "positions_with_pnl": len(known),
+                "positions_total": len(rows),
+            }
         return {
             "snapshot_id": snapshot.get("snapshot_id"),
             "as_of": snapshot["created_at"],
@@ -983,6 +1023,7 @@ class PortfolioService:
                     "total_native": row.get("total_native"),
                     "cash_native": row.get("cash_native"),
                     "unsettled_cash_native": row.get("unsettled_cash_native"),
+                    "cash_semantics": row.get("cash_semantics"),
                     "unpriced_or_other_native": row.get("unpriced_or_other_native"),
                     "source_kind": row.get("source_kind", "connection"),
                     "file_evidence": {
@@ -994,6 +1035,9 @@ class PortfolioService:
             ],
             "holdings": holdings,
             "holdings_native": holdings_native,
+            # Native (e.g. ARS) rows carry no USD P/L, so ``holdings[].unrealized_pnl_usd`` reads 0 for them.
+            # The native unrealized P/L lives here and per position in ``holdings_native``.
+            "unrealized_pnl_native_by_currency": unrealized_native,
             "daily_change": snapshot.get("daily_change"),
             "risk_xray_args": self._risk_xray_args(snapshot.get("positions", [])),
             "warnings": snapshot["warnings"],
