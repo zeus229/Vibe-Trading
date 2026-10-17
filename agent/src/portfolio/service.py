@@ -125,6 +125,30 @@ def _quote_price(payload: dict[str, Any]) -> Decimal | None:
     return bid if bid > 0 else ask if ask > 0 else None
 
 
+_CASH_SEMANTICS_NUMBERS = ("settled_cash_ars", "unsettled_signed_ars", "economic_cash_ars")
+
+
+def _cash_semantics(raw: Any) -> dict[str, Any] | None:
+    """Keep the connector's optional settled / signed-pending / economic cash breakdown.
+
+    Vibe's own ``cash`` and ``unsettled_cash`` stay non-negative; a connector that must fold a negative
+    pending flow into ``cash`` declares the original components here so they are never lost. Returns
+    ``None`` unless every numeric component is present and finite.
+    """
+    if not isinstance(raw, dict):
+        return None
+    out: dict[str, Any] = {}
+    for key in _CASH_SEMANTICS_NUMBERS:
+        value = raw.get(key)
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or value != value or abs(value) == float("inf"):
+            return None
+        out[key] = float(value)
+    for key in ("projection", "cash_field_meaning"):
+        if isinstance(raw.get(key), str):
+            out[key] = raw[key][:80]
+    return out
+
+
 class PortfolioService:
     """Aggregate every enabled read-only source into one immutable snapshot.
 
@@ -348,12 +372,14 @@ class PortfolioService:
                         max(Decimal("0"), _decimal(nested_account.get("unsettled_cash"))),
                         max(Decimal("0"), account_total - cash_total),
                     )
+                    cash_semantics = _cash_semantics(nested_account.get("cash_semantics"))
                     if not source.include_cash:
                         account_total = max(
                             Decimal("0"), account_total - cash_total - unsettled_cash
                         )
                         cash_total = Decimal("0")
                         unsettled_cash = Decimal("0")
+                        cash_semantics = None
                     unpriced_or_other = max(
                         Decimal("0"),
                         account_total - priced_total - cash_total - unsettled_cash,
@@ -382,6 +408,7 @@ class PortfolioService:
                         "priced_value_native": _number(priced_total),
                         "cash_native": _number(cash_total),
                         "unsettled_cash_native": _number(unsettled_cash),
+                        "cash_semantics": cash_semantics,
                         "unpriced_or_other_native": _number(unpriced_or_other),
                         "daily_change": (
                             (result.get("account") or {})
@@ -983,6 +1010,7 @@ class PortfolioService:
                     "total_native": row.get("total_native"),
                     "cash_native": row.get("cash_native"),
                     "unsettled_cash_native": row.get("unsettled_cash_native"),
+                    "cash_semantics": row.get("cash_semantics"),
                     "unpriced_or_other_native": row.get("unpriced_or_other_native"),
                     "source_kind": row.get("source_kind", "connection"),
                     "file_evidence": {

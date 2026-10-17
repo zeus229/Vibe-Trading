@@ -270,3 +270,22 @@ def test_compact_view_can_be_pinned_to_a_snapshot_id(monkeypatch):
     assert seen["id"] == "abc"
     assert payload["status"] == "error"
     assert payload["error_code"] == "snapshot_not_found"
+
+
+def test_cash_breakdown_reports_signed_pending_and_economic_cash():
+    source = snapshot()
+    # Connector folded a negative pending flow into cash: cash = economic = 30, pending field = 0.
+    account = source["accounts"][0]
+    account["cash_native"], account["unsettled_cash_native"] = 30.0, 0.0
+    account["cash_semantics"] = {
+        "settled_cash_ars": 50.0, "unsettled_signed_ars": -20.0, "economic_cash_ars": 30.0,
+    }
+    c = compact_snapshot(source)
+    assert c["totals"]["cash_breakdown_ars"] == {
+        "settled_cash_ars": 50.0, "unsettled_signed_ars": -20.0, "economic_cash_ars": 30.0,
+    }
+    assert c["totals"]["cash_ars"] == 30  # unchanged canonical bucket; the breakdown is additive
+
+
+def test_cash_breakdown_absent_for_legacy_snapshot():
+    assert compact_snapshot(snapshot())["totals"]["cash_breakdown_ars"] is None
