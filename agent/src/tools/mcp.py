@@ -78,6 +78,8 @@ _ASISTENTE_CASA_REPLAYABLE_READS = frozenset(
         "consultar_attribution_cartera_scope",
         "consultar_benchmark_cartera",
         "consultar_riesgo_contextual",
+        "consultar_paquete_hermes_manifest",
+        "consultar_paquete_hermes_seccion",
     }
 )
 
@@ -329,6 +331,8 @@ def build_mcp_tool_wrappers(
     local_server_name: str | None = None,
     client_factory: ClientFactory | None = None,
     max_list_tools_attempts: int = 2,
+    fixed_arguments: dict[str, dict[str, Any]] | None = None,
+    argument_allowlists: dict[str, dict[str, set[str]]] | None = None,
 ) -> list["MCPRemoteTool"]:
     """Build local tool wrappers for a configured MCP server.
 
@@ -368,7 +372,12 @@ def build_mcp_tool_wrappers(
                 client_factory=client_factory,
                 max_list_tools_attempts=max_list_tools_attempts,
             )
-            return [MCPRemoteTool(adapter=adapter, spec=spec) for spec in cached_specs]
+            return [
+                MCPRemoteTool(adapter=adapter, spec=spec,
+                              fixed_arguments=(fixed_arguments or {}).get(spec.remote_name),
+                              argument_allowlists=(argument_allowlists or {}).get(spec.remote_name))
+                for spec in cached_specs
+            ]
 
     # --- Original logic (cache miss) ---
     adapter = MCPServerAdapter(
@@ -385,7 +394,12 @@ def build_mcp_tool_wrappers(
         with _MCP_SPECS_LOCK:
             _MCP_SPECS_CACHE[cache_key] = specs
 
-    return [MCPRemoteTool(adapter=adapter, spec=spec) for spec in specs]
+    return [
+        MCPRemoteTool(adapter=adapter, spec=spec,
+                      fixed_arguments=(fixed_arguments or {}).get(spec.remote_name),
+                      argument_allowlists=(argument_allowlists or {}).get(spec.remote_name))
+        for spec in specs
+    ]
 
 
 def make_mcp_tool_name(server_name: str, tool_name: str) -> str:
@@ -856,7 +870,14 @@ class MCPRemoteTool(BaseTool):
     repeatable = True
     is_readonly = False
 
-    def __init__(self, adapter: MCPServerAdapter, spec: MCPRemoteToolSpec) -> None:
+    def __init__(
+        self,
+        adapter: MCPServerAdapter,
+        spec: MCPRemoteToolSpec,
+        *,
+        fixed_arguments: dict[str, Any] | None = None,
+        argument_allowlists: dict[str, set[str]] | None = None,
+    ) -> None:
         """Initialize a remote MCP tool wrapper.
 
         Args:
@@ -867,7 +888,16 @@ class MCPRemoteTool(BaseTool):
         self._spec = spec
         self.name = spec.local_name
         self.description = spec.description
-        self.parameters = spec.parameters
+        self.parameters = deepcopy(spec.parameters)
+        self._fixed_arguments = dict(fixed_arguments or {})
+        self._argument_allowlists = {
+            key: frozenset(values) for key, values in (argument_allowlists or {}).items()
+        }
+        properties = self.parameters.get("properties")
+        if isinstance(properties, dict):
+            for key, values in self._argument_allowlists.items():
+                if key in properties:
+                    properties[key] = {**properties[key], "enum": sorted(values)}
         replayable_read = (
             spec.server_name == "asistente_casa"
             and spec.remote_name in _ASISTENTE_CASA_REPLAYABLE_READS
@@ -884,9 +914,16 @@ class MCPRemoteTool(BaseTool):
         Returns:
             JSON string with normalized success or error payload.
         """
+        arguments = self._filter_arguments(kwargs)
+        for key, allowed in self._argument_allowlists.items():
+            if key in arguments and arguments[key] not in allowed:
+                return json.dumps({
+                    "status": "error",
+                    "error": f"argument_not_allowed:{key}",
+                }, ensure_ascii=False)
         payload = self._adapter.call_tool(
             self._spec.remote_name,
-            self._filter_arguments(kwargs),
+            {**arguments, **self._fixed_arguments},
             local_name=self.name,
         )
         payload = compact_result_for_agent(payload)

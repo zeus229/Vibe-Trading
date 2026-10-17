@@ -87,6 +87,9 @@ def build_registry(
     warn_callback: Callable[[str], None] | None = None,
     interactive: bool | None = None,
     _mcp_server_tool_name_segments: Mapping[str, str] | None = None,
+    tool_allowlist: list[str] | None = None,
+    mcp_fixed_arguments: Mapping[str, Mapping[str, dict[str, object]]] | None = None,
+    mcp_argument_allowlists: Mapping[str, Mapping[str, dict[str, set[str]]]] | None = None,
 ) -> ToolRegistry:
     """Build the tool registry via auto-discovery, optionally enriched with MCP tools.
 
@@ -122,6 +125,11 @@ def build_registry(
             channel rather than blocking on a browser that cannot open
             (SPEC Transport §4). ``None`` (default) auto-detects via
             ``sys.stdin.isatty()``.
+        tool_allowlist: Optional per-run whitelist applied after discovery.
+        mcp_fixed_arguments: Optional per-server, per-remote-tool arguments
+            applied after model arguments, for trusted session-scoped reads.
+        mcp_argument_allowlists: Optional per-server, per-tool string
+            allowlists enforced before forwarding tool arguments.
 
     Returns:
         ToolRegistry containing all available local tools followed by any
@@ -263,6 +271,8 @@ def build_registry(
                     server_name,
                     server_config,
                     local_server_name=local_server_names[server_name],
+                    fixed_arguments=(mcp_fixed_arguments or {}).get(server_name),
+                    argument_allowlists=(mcp_argument_allowlists or {}).get(server_name),
                 )
                 if live:
                     wrappers = wrap_live_broker_tools(
@@ -281,6 +291,12 @@ def build_registry(
                 if warn_callback is not None:
                     warn_callback(skip_msg)
 
+    if tool_allowlist is not None:
+        return _filter_registry(
+            registry,
+            tool_allowlist,
+            include_shell_tools=include_shell_tools,
+        )
     return registry
 
 

@@ -517,14 +517,50 @@ class SessionService:
         # sessions keep their original allowlist even if an operator enables
         # them globally by mistake.
         from src.tools.ppi_conversation_scope import (
+            HERMES_COMPARISON_RUN_ID,
+            HERMES_COMPARISON_DATE,
+            HERMES_PACKAGE_SECTIONS,
+            allow_hermes_comparison_tools,
             allow_ppi_conversation_tools,
             scope_asistente_casa_agent_config,
         )
         session_record = self.store.get_session(session_id)
+        hermes_comparison = allow_hermes_comparison_tools(session_record)
         ppi_conversation = allow_ppi_conversation_tools(session_record)
         agent_config = scope_asistente_casa_agent_config(
-            agent_config, conversational=ppi_conversation
+            agent_config,
+            conversational=ppi_conversation,
+            hermes_comparison=hermes_comparison,
         )
+        hermes_tool_allowlist = None
+        hermes_fixed_arguments = None
+        hermes_argument_allowlists = None
+        if hermes_comparison:
+            hermes_tool_allowlist = [
+                "mcp_asistente_casa_consultar_paquete_hermes_manifest",
+                "mcp_asistente_casa_consultar_paquete_hermes_seccion",
+            ]
+            fixed = {
+                "consultar_paquete_hermes_manifest": {
+                    "report_type": "cierre",
+                    "date": HERMES_COMPARISON_DATE,
+                    "run_id": HERMES_COMPARISON_RUN_ID,
+                },
+                "consultar_paquete_hermes_seccion": {
+                    "run_id": HERMES_COMPARISON_RUN_ID,
+                },
+            }
+            hermes_fixed_arguments = {
+                "asistente-casa": fixed,
+                "asistente_casa": fixed,
+            }
+            section_allowlists = {
+                "consultar_paquete_hermes_seccion": {"section": set(HERMES_PACKAGE_SECTIONS)},
+            }
+            hermes_argument_allowlists = {
+                "asistente-casa": section_allowlists,
+                "asistente_casa": section_allowlists,
+            }
 
 
         def event_callback(event_type: str, data: Dict[str, Any]) -> None:
@@ -557,6 +593,9 @@ class SessionService:
                 session_id=session_id,
                 event_callback=event_callback,
                 warn_callback=_mcp_collision_warn,
+                tool_allowlist=hermes_tool_allowlist,
+                mcp_fixed_arguments=hermes_fixed_arguments,
+                mcp_argument_allowlists=hermes_argument_allowlists,
             ),
         )
 
