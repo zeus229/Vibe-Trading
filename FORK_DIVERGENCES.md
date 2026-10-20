@@ -48,6 +48,19 @@ The #1850 blank-corner matrix and #1851 keyed-analysis metrics fixes are now inc
 
 **Retained pending further review:** `fix/upstream-derived-multi-refs` (`02808424`) has a fork-only baseline fixture even though upstream PRs #1835 and #1837 were merged; `test/grounding-upstream-contract-probe` (`f8a40015`) has an unpublished comparison script. Neither is safe to delete based solely on upstream merge status. Other grounding branches, dirty worktrees and the old stash were not part of this cleanup.
 
+## Follow-up branch and worktree audit — 2026-10-20
+
+VM audit removed four additional remote branches, all ancestors of fork main with no open PR or associated worktree:
+
+- `fix/grounding-partial-contract-retry-20261015` (`9864c711`), merged PR #79.
+- `fix/grounding-exact-ref-line-scope-20261015` (`79545232`), merged PR #80.
+- `fix/grounding-integral-report-20261015` (`51801308`), merged PR #81.
+- `fix/grounding-spaced-point-units-20261015` (`a716b552`), merged PR #82.
+
+The local `fix/grounding-partial-contract-retry-20261015` branch was **not** removed because the VM agent was denied local deletion. The old `stash@{0}` (`prod-dirty-snapshot-hint-pre-1d906e68-20261013`, `d2aa7dd7…`) was **not** dropped: it holds a rejected 27-line `portfolio_summary` optional-`snapshot_id` hint experiment superseded by Codex `strict:false`. Verify identity before any manual deletion.
+
+No worktrees were removed. Production and PR #84 remain protected; development and grounding worktrees contain uncommitted changes. Retain fork-only branches pending content review, including `fix/canonical-equity-risk-grounded-output`, `fix/grounding-ratio-display-failclosed-20261014`, `feat/hermes-package-comparison-session`, `fix/upstream-derived-multi-refs`, and `test/grounding-upstream-contract-probe`. This is a reference-cleanup record, not evidence that remaining customizations are redundant.
+
 ## Absorbed by upstream in the 2026-10-10 sync (do not re-add)
 
 Upstream merged our PRs #1767, #1768 and #1769 (as `c87fb83e`, `a0208f17`, `5298755e`):
