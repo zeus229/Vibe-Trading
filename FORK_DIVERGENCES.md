@@ -35,6 +35,19 @@ Decisions on top of upstream:
 - **Docs.** README tool count stays 116 (measured by `tests/test_readme_counts.py`; upstream's 112 excludes
   the fork's tools).
 
+## Branch cleanup after the 2026-10-20 sync
+
+VM audit confirmed four remote branches removed from the fork after verifying no open PRs or associated worktrees:
+
+- `fix/grounding-unitless-contribution-contract-20261016` (`3431cfd6`): ancestor of fork main; no exclusive commits.
+- `contrib/upstream-keyed-analysis-metrics-squashed` (`7072e230`): matches merged upstream PR #1851; keyed-metric tests remain in fork main.
+- `contrib/upstream-keyed-analysis-metrics` (`45a8a7fe`): superseded iteration of #1851.
+- `contrib/upstream-blank-corner-matrix` (`7d6cb992`): superseded by merged upstream PR #1850; matrix tests remain in fork main.
+
+The #1850 blank-corner matrix and #1851 keyed-analysis metrics fixes are now included via upstream and fork main; do not revive these contribution branches. The remote branches were removed, but local Git objects may still retain their tip commits. No worktrees were deleted: the seven remaining worktrees include production, PR #84, and local/unpublished investigations.
+
+**Retained pending further review:** `fix/upstream-derived-multi-refs` (`02808424`) has a fork-only baseline fixture even though upstream PRs #1835 and #1837 were merged; `test/grounding-upstream-contract-probe` (`f8a40015`) has an unpublished comparison script. Neither is safe to delete based solely on upstream merge status. Other grounding branches, dirty worktrees and the old stash were not part of this cleanup.
+
 ## Absorbed by upstream in the 2026-10-10 sync (do not re-add)
 
 Upstream merged our PRs #1767, #1768 and #1769 (as `c87fb83e`, `a0208f17`, `5298755e`):
