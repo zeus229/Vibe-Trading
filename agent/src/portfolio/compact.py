@@ -22,6 +22,16 @@ def _amount(value: Any, field: str) -> Decimal:
     return number
 
 
+def _signed_amount(value: Any, field: str) -> Decimal:
+    """Like ``_amount`` but allows negatives: signed pending settlement is legitimately below zero."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise CompactPortfolioError(f"Missing numeric snapshot field: {field}")
+    number = Decimal(str(value))
+    if not number.is_finite():
+        raise CompactPortfolioError(f"Invalid snapshot field: {field}")
+    return number
+
+
 def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     """Project all holdings and explicit cash from exactly one snapshot.
 
@@ -38,6 +48,7 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         raise CompactPortfolioError("Compact view requires an exclusively ARS-native snapshot")
     total = _amount(totals["native_by_currency"]["ARS"], "total ARS")
     cash = unsettled = other = account_total = Decimal(0)
+    breakdown: dict[str, Decimal] | None = {}
     for account in snapshot.get("accounts", []):
         if account.get("status") != "ok":
             continue  # Same exclusion of failed sources as the stored totals.
@@ -47,6 +58,12 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         cash += _amount(account.get("cash_native"), "cash_native")
         unsettled += _amount(account.get("unsettled_cash_native"), "unsettled_cash_native")
         other += _amount(account.get("unpriced_or_other_native"), "unpriced_or_other_native")
+        declared = account.get("cash_semantics")
+        if breakdown is not None and isinstance(declared, dict):
+            for key in ("settled_cash_ars", "unsettled_signed_ars", "economic_cash_ars"):
+                breakdown[key] = breakdown.get(key, Decimal(0)) + _signed_amount(declared.get(key), key)
+        elif account.get("cash_native") or account.get("unsettled_cash_native"):
+            breakdown = None  # Mixed or legacy sources: no partial breakdown is better than a wrong one.
 
     countries: dict[str, Decimal] = {}
     types = {key: Decimal(0) for key in ("ACCIONES", "CEDEARS", "BONOS", "FCI", "EFECTIVO")}
@@ -62,6 +79,8 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         value = _amount(row.get("market_value_native"), "market_value_native")
         country = row.get("country") or "Unclassified"
         invested += value
+        raw_pnl = row.get("unrealized_pnl_native")
+        pnl = _signed_amount(raw_pnl, "unrealized_pnl_native") if raw_pnl is not None else None
         countries[country] = countries.get(country, Decimal(0)) + value
         types[instrument_type] = types.get(instrument_type, Decimal(0)) + value
         holdings.append(
@@ -70,6 +89,7 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
                 "instrument_type": instrument_type,
                 "country": row.get("country"),
                 "market_value_ars": float(value),
+                "unrealized_pnl_ars": float(pnl) if pnl is not None else None,
                 "native_currency": "ARS",
                 "weight_portfolio": float((value / total).quantize(Decimal("0.00000001"))) if total else 0.0,
             }
@@ -88,6 +108,11 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             for key, value in values.items()
         }
 
+    cash_breakdown = (
+        {key: float(value) for key, value in breakdown.items()}
+        if breakdown and len(breakdown) == 3
+        else None
+    )
     return {
         "snapshot_id": snapshot["snapshot_id"],
         "as_of": snapshot["created_at"],
@@ -99,8 +124,11 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             "cash_ars": float(cash),
             "unsettled_cash_ars": float(unsettled),
             "unpriced_or_other_ars": float(other),
+            # Declared by the connector: settled cash, SIGNED pending settlement and their sum. When a negative
+            # pending flow was folded into ``cash_ars``, only this block says which part is really settled.
+            "cash_breakdown_ars": cash_breakdown,
         },
         "aggregates": {"by_country": buckets(countries), "by_instrument_type": buckets(types)},
         "holdings": holdings,
-        "semantics": "Country buckets cover holdings only. EFECTIVO includes settled and unsettled cash. Total includes holdings, both cash components and persisted unpriced/other. Weights use total portfolio value.",
+        "semantics": "Country buckets cover holdings only. EFECTIVO includes settled and unsettled cash. When totals.cash_breakdown_ars is present it is authoritative: settled_cash_ars is immediately available, unsettled_signed_ars is signed pending settlement (negative = purchases not yet debited) and economic_cash_ars is their sum; cash_ars may then hold economic cash, so never call it settled. Total includes holdings, both cash components and persisted unpriced/other. Weights use total portfolio value.",
     }
