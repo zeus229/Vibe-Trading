@@ -10,6 +10,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import math
 from datetime import date, datetime, timedelta
 from typing import Any
 
@@ -192,6 +193,33 @@ def _compute_rsi(close: pd.Series, period: int = _RSI_PERIOD) -> float | None:
     return float(100.0 - (100.0 / (1.0 + rs)))
 
 
+def _round_keeping_precision(value: float, min_decimals: int, reference: float | None = None) -> float:
+    """Round to ``min_decimals`` places, widening for tiny magnitudes.
+
+    A fixed 2- or 4-decimal round collapses the output of a sub-penny asset
+    (e.g. a 1.2e-5 crypto price) to 0.0. Keep at least four significant digits
+    of each nonzero value, using ``reference`` only if it requires more
+    precision; ordinary prices keep ``min_decimals``. Python's decimal-place
+    count can exceed 15 for tiny floats without claiming more significant
+    digits than the input carries.
+
+    Args:
+        value: Indicator value to round.
+        min_decimals: Minimum number of decimal places.
+        reference: Optional scale of the related indicator.
+
+    Returns:
+        Rounded value with at least four significant digits when nonzero.
+    """
+    if not math.isfinite(value) or value == 0:
+        return round(value, min_decimals)
+    ref = abs(value)
+    if reference is not None and math.isfinite(reference) and reference != 0:
+        ref = min(ref, abs(reference))
+    decimals = max(min_decimals, 3 - math.floor(math.log10(ref)))
+    return round(value, decimals)
+
+
 def _compute_macd(
     close: pd.Series,
     fast: int = _MACD_FAST,
@@ -206,10 +234,12 @@ def _compute_macd(
     macd_line = ema_fast - ema_slow
     signal_line = macd_line.ewm(span=signal, adjust=False).mean()
     histogram = macd_line - signal_line
+    macd_last = float(macd_line.iloc[-1])
+    signal_last = float(signal_line.iloc[-1])
     return {
-        "macd_line": round(float(macd_line.iloc[-1]), 4),
-        "signal_line": round(float(signal_line.iloc[-1]), 4),
-        "histogram": round(float(histogram.iloc[-1]), 4),
+        "macd_line": _round_keeping_precision(macd_last, 4, reference=macd_last),
+        "signal_line": _round_keeping_precision(signal_last, 4, reference=macd_last),
+        "histogram": _round_keeping_precision(float(histogram.iloc[-1]), 4, reference=macd_last),
     }
 
 
@@ -223,10 +253,12 @@ def _compute_bollinger(
         return None
     sma = close.rolling(window=period).mean()
     std = close.rolling(window=period).std()
+    middle = float(sma.iloc[-1])
+    spread = num_std * float(std.iloc[-1])
     return {
-        "upper": round(float(sma.iloc[-1] + num_std * std.iloc[-1]), 2),
-        "middle": round(float(sma.iloc[-1]), 2),
-        "lower": round(float(sma.iloc[-1] - num_std * std.iloc[-1]), 2),
+        "upper": _round_keeping_precision(middle + spread, 2, reference=middle),
+        "middle": _round_keeping_precision(middle, 2, reference=middle),
+        "lower": _round_keeping_precision(middle - spread, 2, reference=middle),
     }
 
 
@@ -246,10 +278,9 @@ class TechnicalIndicatorTool(BaseTool):
         "(volume.unit is the serving source's declared unit -- lots or shares -- "
         "or null when undeclared). Returns read_identity with the acquisition "
         "boundary, serving provenance and a fingerprint of the exact bars used. "
-        "After context compaction an exact prior result may be restored; use "
-        "no_cache=true only when the task genuinely needs a new observation. "
         "Uses the project's data loaders to fetch price history, then computes "
-        "indicators locally."
+        "indicators locally. "
+        "no_cache=true only when the task genuinely needs a new observation. "
     )
     parameters = {
         "type": "object",
@@ -282,6 +313,7 @@ class TechnicalIndicatorTool(BaseTool):
                     "read_identity.dataset_fingerprint identifies the exact bars used."
                 ),
             },
+        },
             "no_cache": {
                 "type": "boolean",
                 "description": (
@@ -291,7 +323,6 @@ class TechnicalIndicatorTool(BaseTool):
                 ),
                 "default": False,
             },
-        },
         "required": ["symbol"],
     }
     repeatable = True
@@ -336,7 +367,6 @@ class TechnicalIndicatorTool(BaseTool):
                 )
         else:
             reference_date = datetime.now().date()
-        read_mode = "pinned_boundary" if end_date_raw else "latest_boundary"
         end_date = reference_date.isoformat()
         days = lookback * _CALENDAR_DAYS_PER_BAR.get(interval, 2)
         start_date = (reference_date - timedelta(days=days)).isoformat()
@@ -417,8 +447,6 @@ class TechnicalIndicatorTool(BaseTool):
             else None
         )
 
-        fingerprint = _dataset_fingerprint(close, volume, interval)
-
         return json.dumps(
             {
                 "ok": True,
@@ -427,12 +455,12 @@ class TechnicalIndicatorTool(BaseTool):
                 "latest_close": latest_close,
                 "latest_date": latest_date,
                 "read_identity": {
-                    "mode": read_mode,
-                    "requested_start_date": start_date,
+                    "mode": "pinned_boundary" if end_date_raw else "latest_boundary",
                     "requested_end_date": end_date,
                     "bar_count": len(close),
-                    "latest_date": latest_date,
-                    "dataset_fingerprint": fingerprint,
+                    "dataset_fingerprint": _dataset_fingerprint(
+                        close, volume, interval
+                    ),
                     "provenance": provenance if isinstance(provenance, dict) else None,
                 },
                 "indicators": indicators,
