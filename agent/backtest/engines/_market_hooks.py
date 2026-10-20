@@ -119,17 +119,29 @@ _MARKET_PATTERNS = [
     # Vietnam equities: HOSE (VIC.VN). Tickers are three letters in practice;
     # the class stays broad to admit fund certificates and ETF codes.
     (re.compile(r"^[A-Z0-9]+\.VN$", re.I), "vietnam_equity"),
-    (re.compile(r"^[A-Z]+-USDT$", re.I), "crypto"),
-    (re.compile(r"^[A-Z]+/USDT$", re.I), "crypto"),
+    (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USDT$", re.I), "crypto"),
+    (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+/USDT$", re.I), "crypto"),
+    # USD-M perpetuals in their documented BASE-USDT-PERP spelling
+    # (ccxt_loader._parse_ccxt_symbol / binance_loader). Without this entry
+    # the symbol matched nothing above and fell through to the a_share
+    # default, so a leveraged perpetual ran under China A-share rules
+    # (100-share board-lot rounding) and every computed size rounded to a
+    # zero_size rejection (#1863). Base alphabet matches the loader's own
+    # ``([A-Z0-9]+)-USDT-PERP`` fullmatch.
+    (re.compile(r"^[A-Z0-9]+-USDT-PERP$", re.I), "crypto"),
     # yfinance's native crypto spelling (BTC-USD, ETH-USD). Distinct from
     # USDT pairs only in the quote currency; both belong to CryptoEngine.
-    (re.compile(r"^[A-Z]+-USD$", re.I), "crypto"),
+    (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USD$", re.I), "crypto"),
     # Concatenated spot pairs (BTCUSDT, ETHUSDC) with no separator. Same
     # quote-asset table the trade-journal parser uses; without it these fell
     # through every pattern and got a_share rules (T+1, no shorting) on a
     # perpetual. Bare metals/FX (XAUUSD) end in USD, not USDT/USDC/BUSD, so
     # they still reach the forex whitelist below.
-    (re.compile(r"^[A-Z]{2,}(?:USDT|USDC|BUSD)$", re.I), "crypto"),
+    (re.compile(r"^(?!\d+(?:USDT|USDC|BUSD)$)[A-Z0-9]{2,}(?:USDT|USDC|BUSD)$", re.I), "crypto"),
+    # Separated USDC/BUSD-quoted pairs (BTC-USDC, ETH/USDC). Only the USDT
+    # spellings above were separator-aware, so these fell through to the
+    # a_share default even though the unseparated BTCUSDC is crypto.
+    (re.compile(r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+[-/](?:USDC|BUSD)$", re.I), "crypto"),
     # China futures: product+delivery.exchange (e.g. IF2406.CFFEX, rb2410.SHFE)
     # Tushare suffix spellings (SHF/CZC/CFX/GFE) classify here too.
     (
@@ -600,7 +612,11 @@ _SWAP_SHORT: dict[str, float] = {
 
 def _normalize_symbol(symbol: str) -> str:
     """Normalize forex symbol to 'XXX/YYY' format."""
-    s = symbol.replace(".FX", "").replace(".", "").strip()
+    s = symbol.strip().upper().removesuffix(".FX").replace(".", "")
+    # Yahoo's forex notation (EURUSD=X) routes here too; without dropping the
+    # suffix the pair misses the spread and swap tables and gets the defaults.
+    if s.upper().endswith("=X"):
+        s = s[:-2]
     if "/" in s:
         return s.upper()
     if len(s) == 6:

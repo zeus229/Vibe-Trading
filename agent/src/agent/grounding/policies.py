@@ -32,6 +32,7 @@ from src.agent.grounding.evidence import (
     _is_metadata_count_leaf,
     _is_number,
     _is_price_kind,
+    _keyed_metric_map_kind,
     _metric_kind_for_path,
     _price_field_for_path,
     _timestamp_matches_claim_date,
@@ -373,11 +374,17 @@ def _unanchored_term(tree: ast.Expression, observed: Callable[[float], bool]) ->
     return visit(tree.body, False)
 
 
-def _evaluate_formula(expression: str) -> tuple[float, list[float], ast.Expression] | None:
+def _evaluate_formula(
+    expression: str,
+    *,
+    operand_transform: Callable[[float], float] | None = None,
+) -> tuple[float, list[float], ast.Expression] | None:
     """Evaluate a numeric ``+ - * /`` expression without executing code.
 
     Args:
         expression: An arithmetic run, possibly using ``× ÷ −`` and commas.
+        operand_transform: Optional unit conversion for numeric operands;
+            recorded input magnitudes and power exponents remain unchanged.
 
     Returns:
         ``(result, operands, parsed tree)``, or None when the run is not a
@@ -410,7 +417,7 @@ def _evaluate_formula(expression: str) -> tuple[float, list[float], ast.Expressi
         return None
     inputs: list[float] = []
 
-    def visit(node: ast.AST) -> float:
+    def visit(node: ast.AST, *, unit_one: bool = False, factor: bool = False) -> float:
         if isinstance(node, ast.Expression):
             return visit(node.body)
         if isinstance(node, ast.Constant) and _is_number(node.value):
@@ -419,7 +426,7 @@ def _evaluate_formula(expression: str) -> tuple[float, list[float], ast.Expressi
             setattr(node, "_grounding_literal", ast.get_source_segment(normalized, node))
             value = float(node.value)
             inputs.append(value)
-            return value
+            return operand_transform(value) if operand_transform and not (unit_one and value == 1) else value
         if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
             value = visit(node.operand)
             if isinstance(node.op, ast.UAdd):
@@ -436,8 +443,14 @@ def _evaluate_formula(expression: str) -> tuple[float, list[float], ast.Expressi
         if isinstance(node, ast.BinOp) and isinstance(
             node.op, (ast.Add, ast.Sub, ast.Mult, ast.Div)
         ):
-            left = visit(node.left)
-            right = visit(node.right)
+            multiplicative = isinstance(node.op, (ast.Mult, ast.Div))
+            unit_factor = factor and _is_unit_factor(node)
+            left = visit(node.left, factor=multiplicative, unit_one=(
+                multiplicative or unit_factor or (isinstance(node.right, ast.BinOp) and isinstance(node.right.op, ast.Div))
+            ))
+            right = visit(node.right, factor=multiplicative, unit_one=(
+                multiplicative or unit_factor or (isinstance(node.left, ast.BinOp) and isinstance(node.left.op, ast.Div))
+            ))
             if isinstance(node.op, ast.Add):
                 return left + right
             if isinstance(node.op, ast.Sub):
@@ -1590,6 +1603,12 @@ class _PolicyMixin:
                 call_symbols.setdefault(record.call_id, set()).add(record.symbol)
         selected = []
         for entry in self._analysis_metrics:
+            if entry.get("instrument_scoped"):
+                # A symbol-keyed map belongs to the instrument its key names;
+                # a correlation cell has two axes and no single owner.
+                if entry.get("symbol") == symbol:
+                    selected.append(entry)
+                continue
             scope = entry.get("identity_scope")
             if scope in {"unknown", "conflict"}:
                 continue
@@ -2593,12 +2612,19 @@ class _PolicyMixin:
         *,
         column: str | None = None,
         date: str | None = None,
+        currency_code: str | None = None,
     ) -> list[float]:
         """Observed price values a figure may be compared against."""
-        return [
-            float(record.value)
-            for record in self._price_candidates(symbol, records, column=column, date=date)
-        ]
+        candidates = self._price_candidates(
+            symbol, records, column=column, date=date
+        )
+        if currency_code is not None:
+            candidates = [
+                record
+                for record in candidates
+                if record.currency == currency_code
+            ]
+        return [float(record.value) for record in candidates]
 
     def _price_candidates(
         self,
@@ -2631,7 +2657,13 @@ class _PolicyMixin:
             ]
         return [record for record in candidates if record.value is not None]
 
-    def _row_pool(self, symbol: str | None, *, money_only: bool = False) -> list[float]:
+    def _row_pool(
+        self,
+        symbol: str | None,
+        *,
+        money_only: bool = False,
+        currency_code: str | None = None,
+    ) -> list[float]:
         """Numbers a market-data row carried (volume, amount, turnover, …).
 
         Only ``get_market_data`` and run-dir CSV rows count, so a generic tool's
@@ -2646,6 +2678,7 @@ class _PolicyMixin:
             and record.tool in {"get_market_data", "bash"}
             and (not symbol or record.symbol == symbol)
             and (not money_only or _is_price_kind(record))
+            and (currency_code is None or record.currency == currency_code)
         ]
 
     @staticmethod
@@ -2747,6 +2780,7 @@ class _PolicyMixin:
             if record.status == "observed"
             and record.value is not None
             and _metric_kind_for_path(record.field) is not None
+            and _keyed_metric_map_kind(record.field) is None
             and _record_matches_entity(record, symbol)
         )
         return values
@@ -3394,6 +3428,12 @@ class _PolicyMixin:
                             source_tool_call_ids=[declaration.ref],
                         )
                     ]
+            if figure.currency_code is not None:
+                scoped_records = [
+                    record
+                    for record in scoped_records
+                    if record.currency == figure.currency_code
+                ]
             values = [float(record.value) for record in scoped_records] + metric_values
             money = figure.currency and not figure.percent
             # A call- or tool-scoped ref pools every field that call returned,
@@ -3476,6 +3516,12 @@ class _PolicyMixin:
         candidates = self._price_candidates(
             symbol, records, column=figure.column, date=figure.date
         )
+        if figure.currency_code is not None:
+            candidates = [
+                record
+                for record in candidates
+                if record.currency == figure.currency_code
+            ]
         prices = [float(record.value) for record in candidates]
         if figure.percent:
             # A percent is a ratio; no price or volume may answer it.
@@ -3484,7 +3530,11 @@ class _PolicyMixin:
         elif figure.column:
             direct, scaled = prices, []
         elif figure.currency:
-            direct, scaled = prices + self._row_pool(symbol, money_only=True), []
+            direct, scaled = prices + self._row_pool(
+                symbol,
+                money_only=True,
+                currency_code=figure.currency_code,
+            ), []
         else:
             direct, scaled = prices + self._row_pool(symbol), self._metric_pool(symbol)
         # An undeclared tail-risk figure is matched against every tail-risk
@@ -3575,19 +3625,23 @@ class _PolicyMixin:
         records: Sequence[EvidenceRecord],
         *,
         money: bool = False,
+        currency_code: str | None = None,
         percent: bool = False,
         scalar_parameters: Sequence[float] = (),
     ) -> tuple[float, list[float], bool] | str | None:
         """Evaluate a declaration's note as an observation-anchored formula.
 
-        Returns the ``(result, operands)`` pair when the note is arithmetic
-        over at least two operands. Data operands must be observed; chosen
-        scalar parameters must be declared and visible. Every added or
+        Returns the ``(result, operands, points)`` triple when the note is
+        arithmetic over at least two operands. Data operands must be observed;
+        chosen scalar parameters must be declared and visible. Every added or
         subtracted term still needs an observed anchor. Literal 1 is the
         multiplicative identity (also used in ratio-minus-one expressions),
         and square/cube exponents belong to the operator, not the operands.
         A percent claim's explicit trailing *100 is normalized as a unit
-        conversion before checking the remaining data operands.
+        conversion before checking the remaining data operands. ``points`` is
+        True when every data operand anchored only to percent-named fields
+        (``changepercent`` and friends already carry points, #1820), so the
+        caller compares the result against the percent figure directly.
         """
         if declaration is None or not declaration.note.strip():
             return "no_formula"
@@ -3702,7 +3756,11 @@ class _PolicyMixin:
         if not strict_adapter_scope and not unattributed:
             # A money-marked result is derived from money: an RSI or a volume
             # is not a price to take a discount of.
-            anchors = self._price_pool(symbol, records) + self._row_pool(symbol, money_only=money)
+            anchors = self._price_pool(
+                symbol, records, currency_code=currency_code
+            ) + self._row_pool(
+                symbol, money_only=money, currency_code=currency_code
+            )
             if not money:
                 anchors += self._metric_pool(symbol)
         # Resolve every explicit source in a multi-ref declaration. Missing
@@ -3720,11 +3778,19 @@ class _PolicyMixin:
                 [r for part in scoped_parts for r in part[0]],
                 [v for part in scoped_parts for v in part[1]],
             )
+        else:
+            scoped = self._referenced(declaration.ref, symbol, None, pool_ambiguous=True)
+            if "::" in declaration.ref and (
+                scoped is None or (not scoped[0] and not scoped[1])
+            ):
+                return "no_evidence"
         if scoped is not None:
             anchors.extend(
                 float(record.value)
                 for record in scoped[0]
-                if (not money or _is_price_kind(record)) and not (unattributed and record.symbol)
+                if (not money or _is_price_kind(record))
+                and (currency_code is None or record.currency == currency_code)
+                and not (unattributed and record.symbol)
             )
             if not money and not unattributed:
                 anchors.extend(scoped[1])
@@ -3758,6 +3824,22 @@ class _PolicyMixin:
                 operands, symbol, records, scalar_parameters
             )
         )
+        if points:
+            # Convert the inputs before evaluating: two point-valued inputs
+            # divided by each other yield a fraction, not another point value.
+            # Keep the original magnitudes for all anchoring checks above.
+            def as_fraction(value: float) -> float:
+                if any(
+                    math.isclose(abs(value), abs(parameter), rel_tol=1e-12, abs_tol=0.0)
+                    for parameter in scalar_parameters
+                ):
+                    return value
+                return value / 100.0
+
+            normalized = _evaluate_formula(ast.unparse(tree), operand_transform=as_fraction)
+            if normalized is None:
+                return "formula_not_evaluable"
+            result = normalized[0] * 100.0
         return result, operands, points
 
     def _operands_read_as_points(
@@ -3779,8 +3861,7 @@ class _PolicyMixin:
         data = [
             operand
             for operand in operands
-            if operand != 1
-            and not any(
+            if not any(
                 math.isclose(abs(operand), abs(parameter), rel_tol=1e-12, abs_tol=0.0)
                 for parameter in scalar_parameters
             )
@@ -3814,6 +3895,8 @@ class _PolicyMixin:
                         saw_percent = True
                     else:
                         saw_plain = True
+            if operand == 1 and not saw_percent and not saw_plain:
+                continue  # Structural multiplicative identity, not a data unit.
             if not saw_percent or saw_plain:
                 return False
         return True
@@ -3824,8 +3907,11 @@ class _PolicyMixin:
 
         The band is half a unit of the last digit the PROSE was written with
         ("约 37%" for 36.75%), so a coarser declaration cannot widen it. A "%"
-        figure is compared only in percentage points, since against the fraction
-        a half-unit band spans fifty points; a bare figure is tried both ways.
+        figure is compared in one unit only, since against the other reading
+        a half-unit band spans fifty points: against the fraction
+        (``result * 100``) by default, against the points the formula
+        evaluates to when every data operand came from a percent-named field
+        (#1820). A bare figure is tried both ways.
         Magnitudes are compared, because a fall is noted either as
         ``(low − high) / high`` or as the drop, unless the prose wrote a sign.
         """
@@ -3883,7 +3969,8 @@ class _PolicyMixin:
                         )
                     ]
         derivation = self._derivation(
-            declaration, symbol, records, money=figure.currency, percent=figure.percent,
+            declaration, symbol, records, money=figure.currency,
+            currency_code=figure.currency_code, percent=figure.percent,
             scalar_parameters=scalar_parameters,
         )
         if isinstance(derivation, str):
@@ -4024,12 +4111,19 @@ class _PolicyMixin:
                 )
             ]
         derivation = self._derivation(
-            declaration, symbol, records, money=figure.currency, percent=figure.percent,
+            declaration, symbol, records, money=figure.currency,
+            currency_code=figure.currency_code, percent=figure.percent,
             scalar_parameters=scalar_parameters,
         )
         if not isinstance(derivation, str) and self._result_matches(figure, derivation[0]):
             return []
         candidates = self._price_candidates(symbol, records)
+        if figure.currency_code is not None:
+            candidates = [
+                record
+                for record in candidates
+                if record.currency == figure.currency_code
+            ]
         prices = [float(record.value) for record in candidates]
         if not prices:
             return [
@@ -4123,6 +4217,16 @@ class _PolicyMixin:
     ) -> str | None:
         """Return one canonical symbol named in a claim or this session."""
         known = {record.symbol for record in records if record.symbol} | self._session_symbols
+        known.update(
+            entry.get("symbol")
+            for entry in self._analysis_metrics
+            if entry.get("symbol")
+        )
+        known.update(
+            symbol
+            for entry in self._analysis_metrics
+            for symbol in entry.get("instrument_symbols", ())
+        )
         matches = {
             _normalize_symbol(match.group(0))
             for match in _CANONICAL_SYMBOL_RE.finditer(content)

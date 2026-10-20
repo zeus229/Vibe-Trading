@@ -5,6 +5,7 @@
   "charts": {
     "noPriceData": "Aún no hay datos de precio para este símbolo",
     "noCorrelationData": "Elige al menos dos símbolos para comparar",
+    "correlationUndefined": "indefinida (sin variación de precio en la ventana)",
     "noEquityData": "Aún no hay curva de valor de cuenta — ejecuta primero un backtest"
   },
   "navigation": {
@@ -74,8 +75,8 @@
   "runtime": {
     "monitorBadge": "Monitor de Runtime",
     "title": "Estado del Runtime en vivo / demo",
-    "subtitlePre": "Estado de solo lectura de",
-    "subtitlePost": ". Esta página no autoriza conectores, ni inicia ni detiene ejecutores, ni envía o cancela órdenes, ni cambia mandatos.",
+    "subtitlePre": "Consulta el estado de los conectores, los mandatos de negociación y la actividad del ejecutor.",
+    "subtitlePost": " Puedes editar la frecuencia de las decisiones del modelo y los límites de gasto cuando el ejecutor esté detenido.",
     "refresh": "Actualizar",
     "unavailableTitle": "Estado del runtime no disponible",
     "unavailableHint": "Trata el runtime del conector como no disponible hasta que el backend entregue un estado actual.",
@@ -115,7 +116,7 @@
     "riskHalted": "riesgo detenido",
     "riskHaltedDesc": "El interruptor de emergencia está activado para este perfil. Trata el runtime del conector como detenido hasta que el estado se despeje.",
     "riskActive": "runtime activo",
-    "riskActiveDesc": "El ejecutor está activo y hay un mandato vigente. Esta página sigue siendo solo de estado, de solo lectura.",
+    "riskActiveDesc": "El ejecutor está activo y su mandato de negociación sigue vigente.",
     "riskIdle": "listo pero inactivo",
     "riskIdleDesc": "Hay autorización y mandato presentes, pero el ejecutor no está activo.",
     "riskDormant": "inactivo",
@@ -1233,7 +1234,10 @@
     "resumeConnector": "Reanudar conector",
     "resumeConnectorTitle": "Desactivar el interruptor de emergencia y reanudar la actividad del conector",
     "connectorResumed": "Conector reanudado",
-    "failedToResumeConnector": "Error al reanudar el conector."
+    "failedToResumeConnector": "Error al reanudar el conector.",
+    "tokenUsage": {
+      "live": "tokens"
+    }
   },
   "runDetail": {
     "title": "Detalle de ejecución",
@@ -1366,6 +1370,19 @@
     "ddNotRecovered": "No recuperado",
     "ddDays": "{{count}} d",
     "dashboard": "Panel de investigación",
+    "llmUsage": {
+      "tab": "Uso de tokens",
+      "provider": "Proveedor",
+      "model": "Modelo",
+      "inputTokens": "Tokens de entrada",
+      "outputTokens": "Tokens de salida",
+      "totalTokens": "Tokens totales",
+      "calls": "Llamadas",
+      "cacheRead": "Tokens de lectura de caché",
+      "cacheCreation": "Tokens de creación de caché",
+      "perIteration": "Detalle por iteración",
+      "iteration": "Iteración"
+    },
     "positions": {
       "tab": "Posiciones",
       "weightDistribution": "Distribución de pesos",
@@ -1838,7 +1855,10 @@
     "output": "Salida",
     "waitingForEvents": "Esperando eventos del agente...",
     "teamStarting": "El equipo se está preparando — primeras actualizaciones en unos segundos…",
-    "detailsUnavailable": "detalles no disponibles"
+    "detailsUnavailable": "detalles no disponibles",
+    "tokens": "↑{{input}} ↓{{output}} tokens",
+    "estimated": "estimados",
+    "tokenSourceUnlabeled": "fuente sin etiqueta"
   },
   "mandate": {
     "runtimeMandate": "Mandato de runtime del conector",
@@ -2447,5 +2467,27 @@
       "Senior": "Sénior",
       "Lead": "Responsable"
     }
+  },
+  "runnerBudget": {
+    "unavailable": "No se puede leer el gasto del modelo.",
+    "warning": "Las llamadas al modelo cuestan dinero aunque no haya operaciones.",
+    "summary": "Cada {{minutes}} minutos; hasta {{turns}} decisiones y {{tokens}} tokens por día UTC.",
+    "dailySummary": "Una vez al día a las {{time}} ({{timezone}}); sustituye al intervalo.",
+    "usage": "Hoy: {{turns}} decisiones · {{tokens}} tokens · estimado {{cost}}.",
+    "estimateUnknown": "Se necesitan tarifas y uso medido para estimar el coste diario.",
+    "estimate": "Coste diario proyectado: unos ${{cost}}, según el uso medido.",
+    "configure": "Horario y límites de gasto del modelo",
+    "interval_seconds": "Intervalo de decisión (segundos)",
+    "max_daily_turns": "Decisiones máximas por día UTC",
+    "max_daily_tokens": "Tokens máximos por día UTC",
+    "max_daily_cost_usd": "Límite diario estimado en USD (opcional)",
+    "input_usd_per_million": "USD por millón de tokens de entrada (opcional)",
+    "output_usd_per_million": "USD por millón de tokens de salida (opcional)",
+    "daily_at": "Hora diaria (opcional)",
+    "timezone": "Zona horaria",
+    "save": "Guardar ajustes",
+    "limitsNote": "Cada decisión usa una conversación nueva. Los límites se comprueban tras la respuesta y pueden excederse en ese importe. El uso desconocido o un exceso activa el interruptor de parada existente.",
+    "pricesNote": "Las tarifas son estimaciones del operador. Use la mayor tarifa de entrada/escritura en caché; se excluyen los descuentos de caché y las llamadas auxiliares.",
+    "stopToEdit": "Detenga el ejecutor antes de cambiar estos ajustes."
   }
 }

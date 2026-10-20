@@ -15,6 +15,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Mapping
 
+from src.agent.grounding.figures import _CURRENCY_CODES
 from src.agent.grounding.identity import (
     _CANONICAL_SYMBOL_RE,
     _infer_currency,
@@ -855,6 +856,32 @@ def _metric_kind_for_path(path: str) -> str | None:
     return None
 
 
+def _keyed_metric_map_kind(path: str) -> str | None:
+    """Identify metric maps with instrument-shaped keys after the metric name.
+
+    Scalar fields such as ``positions[0].contribution_pct`` are not keyed
+    maps and must keep their ordinary indexed evidence references.
+    """
+    parts = str(path or "").split(".")
+    for index, part in enumerate(parts[:-1]):
+        kind = _ANALYSIS_KIND_ALIASES.get(part.casefold())
+        if kind not in {"contribution", "correlation"}:
+            continue
+        if all(re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", key) for key in parts[index + 1 :]):
+            return kind
+    return None
+
+
+def _analysis_symbol_key(key: str) -> str | None:
+    """Return a plausible instrument key, excluding common aggregate labels."""
+    if _CANONICAL_SYMBOL_RE.fullmatch(key) or (
+        re.fullmatch(r"[A-Z][A-Z0-9]{0,14}", key)
+        and key not in {"ALL", "PORTFOLIO", "TOTAL", "UNKNOWN"}
+    ):
+        return _normalize_symbol(key)
+    return None
+
+
 @dataclass(frozen=True)
 class EvidenceRecord:
     """One observed, unavailable, or derived numeric evidence item.
@@ -1039,7 +1066,14 @@ def _is_price_kind(record: EvidenceRecord) -> bool:
         amount/turnover leaves.
     """
     return (
-        record.field in _PRICE_FIELDS
+        (
+            record.tool == "get_sec_filings"
+            and record.source == "sec_edgar"
+            and record.field.startswith("data.metric.points[")
+            and record.field.endswith("].val")
+            and record.currency is not None
+        )
+        or record.field in _PRICE_FIELDS
         or _price_field_for_path(record.field) is not None
         or _is_registered_price_indicator(record.tool, record.field)
         or _leaf_name(record.field) in _AMOUNT_FIELDS
@@ -1151,12 +1185,28 @@ class _EvidenceMixin:
         recorded = 0
         root, allowed = self._numeric_entity_context(arguments)
 
-        def visit(item: Any, path: str, context: _EntityContext) -> None:
+        def visit(
+            item: Any,
+            path: str,
+            context: _EntityContext,
+            *,
+            metric_map: str | None = None,
+            keyed_symbol: str | None = None,
+            keyed_symbols: tuple[str, ...] = (),
+        ) -> None:
             nonlocal recorded
             if _is_number(item):
                 kind = _metric_kind_for_path(path)
                 if kind is None:
                     return
+                # A symbol-keyed contribution map names its instrument in the
+                # key; a correlation cell has two axes and no single owner.
+                if metric_map == "contribution":
+                    entry_symbol = keyed_symbol
+                elif metric_map == "correlation":
+                    entry_symbol = None
+                else:
+                    entry_symbol = context.symbol
                 self._analysis_metrics.append(
                     {
                         "metric": kind,
@@ -1164,8 +1214,10 @@ class _EvidenceMixin:
                         "tool": tool_name,
                         "call_id": call_id,
                         "field": path,
-                        "symbol": context.symbol,
+                        "symbol": entry_symbol,
                         "identity_scope": context.scope,
+                        "instrument_scoped": metric_map is not None,
+                        "instrument_symbols": list(keyed_symbols),
                     }
                 )
                 recorded += 1
@@ -1176,14 +1228,40 @@ class _EvidenceMixin:
                 if contradictory:
                     local = _EntityContext(None, "conflict")
                 for key, child in item.items():
+                    key_text = str(key)
+                    parent_kind = _ANALYSIS_KIND_ALIASES.get(key_text.casefold())
+                    child_metric_map = (
+                        parent_kind
+                        if isinstance(child, dict) and parent_kind in {"contribution", "correlation"}
+                        else metric_map
+                    )
+                    child_symbol = keyed_symbol
+                    child_symbols = keyed_symbols
+                    if metric_map == "contribution":
+                        child_symbol = _analysis_symbol_key(key_text)
+                    elif metric_map == "correlation":
+                        child_symbol = None
+                        axis_symbol = _analysis_symbol_key(key_text)
+                        if axis_symbol and axis_symbol not in child_symbols:
+                            child_symbols = (*child_symbols, axis_symbol)
                     visit(
                         child,
-                        f"{path}.{key}" if path else str(key),
+                        f"{path}.{key_text}" if path else key_text,
                         _entity_for_key(local, key, allowed),
+                        metric_map=child_metric_map,
+                        keyed_symbol=child_symbol,
+                        keyed_symbols=child_symbols,
                     )
             elif isinstance(item, list):
                 for index, child in enumerate(item):
-                    visit(child, f"{path}[{index}]", _list_entity_context(item, context))
+                    visit(
+                        child,
+                        f"{path}[{index}]",
+                        _list_entity_context(item, context),
+                        metric_map=metric_map,
+                        keyed_symbol=keyed_symbol,
+                        keyed_symbols=keyed_symbols,
+                    )
 
         visit(value, field_prefix or "", root)
         return recorded
@@ -1606,6 +1684,11 @@ class _EvidenceMixin:
         timestamp_fields = (*_TIMESTAMP_FIELDS, "latest_date", "as_of")
         payload_scope = _declares_currency_scope(payload)
         attribution_context = self._attribution_context(tool_name, payload, arguments)
+        data = payload.get("data")
+        metric = data.get("metric") if isinstance(data, dict) else None
+        unit = metric.get("unit") if isinstance(metric, dict) else None
+        unit = unit.strip().upper() if isinstance(unit, str) else None
+        metric_currency = {"RMB": "CNY", "CNH": "CNY"}.get(unit, unit) if unit in _CURRENCY_CODES else None
 
         def visit(
             value: Any,
@@ -1642,7 +1725,13 @@ class _EvidenceMixin:
                         field=path or "value",
                         value=value,
                         status="observed",
-                        currency=evidence_currency,
+                        currency=(
+                            metric_currency
+                            if tool_name == "get_sec_filings"
+                            and path.startswith("data.metric.points[")
+                            and path.endswith("].val")
+                            else evidence_currency
+                        ),
                         venue=_infer_venue(context.symbol or ""),
                         identity_scope=context.scope,
                         snapshot_id=snapshot_id,
@@ -1726,6 +1815,17 @@ class _EvidenceMixin:
                 for index, item in enumerate(value):
                     visit(item, f"{path}[{index}]", timestamp, currency, None, item_context, snapshot_id, temporal_context)
 
+        if (
+            tool_name == "get_sec_filings"
+            and str(payload.get("market") or "").upper() == "US"
+            and isinstance(data, dict)
+            and isinstance(data.get("ticker"), str)
+            and data["ticker"].strip()
+            and "." not in data["ticker"]
+        ):
+            # An EDGAR filing is a US listing: its bare ticker names the same
+            # instrument as the market-qualified ``.US`` symbol of the request.
+            payload = {**payload, "data": {**data, "ticker": f"{data['ticker'].strip().upper()}.US"}}
         visit(payload, "")
 
 

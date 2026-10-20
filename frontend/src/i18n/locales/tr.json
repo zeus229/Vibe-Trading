@@ -5,6 +5,7 @@
   "charts": {
     "noPriceData": "Bu sembol için henüz fiyat verisi yok",
     "noCorrelationData": "Karşılaştırmak için en az iki sembol seçin",
+    "correlationUndefined": "tanımsız (pencerede fiyat değişimi yok)",
     "noEquityData": "Henüz hesap değeri eğrisi yok; önce geriye dönük test çalıştırın"
   },
   "layout": {
@@ -40,8 +41,8 @@
   "runtime": {
     "monitorBadge": "Çalışma durumu izleyicisi",
     "title": "Canlı / deneme işlem durumu",
-    "subtitlePre": "Salt okunur durum kaynağı:",
-    "subtitlePost": ". Bu sayfa bağlantıları yetkilendirmez, çalıştırıcıları başlatmaz veya durdurmaz, emir göndermez veya iptal etmez, yetki sınırlarını değiştirmez.",
+    "subtitlePre": "Bağlantı durumunu, işlem yetkilerini ve çalıştırıcı etkinliğini inceleyin.",
+    "subtitlePost": " Çalıştırıcı durmuşken model karar sıklığını ve harcama sınırlarını düzenleyebilirsiniz.",
     "refresh": "Yenile",
     "unavailableTitle": "Çalışma durumu alınamıyor",
     "unavailableHint": "Arka uç güncel durum görüntüsü sağlayana kadar bağlantının kullanılamadığını varsayın.",
@@ -81,7 +82,7 @@
     "riskHalted": "risk nedeniyle durdu",
     "riskHaltedDesc": "Bu profilin acil durdurma anahtarı etkin. Durum düzelene kadar bağlantının durduğunu varsayın.",
     "riskActive": "çalışma etkin",
-    "riskActiveDesc": "Çalıştırıcı etkin ve süresi dolmamış bir işlem yetkisi mevcut. Bu sayfa yine de yalnızca salt okunur durum gösterir.",
+    "riskActiveDesc": "Çalıştırıcı etkin ve işlem yetkisi hâlâ geçerli.",
     "riskIdle": "hazır ancak boşta",
     "riskIdleDesc": "Yetkilendirme ve işlem yetkisi mevcut ancak çalıştırıcı etkin değil.",
     "riskDormant": "etkin değil",
@@ -1199,7 +1200,10 @@
     "resumeConnectorTitle": "Acil durdurmayı kaldır ve bağlantı faaliyetlerini yeniden etkinleştir",
     "connectorResumed": "Bağlantı yeniden etkinleştirildi",
     "failedToResumeConnector": "Bağlantı yeniden etkinleştirilemedi.",
-    "messageTooLong": "Mesaj, ekler ve ekip talimatlarıyla birlikte {{limit}} karakteri aşıyor. Göndermeden önce kısaltın."
+    "messageTooLong": "Mesaj, ekler ve ekip talimatlarıyla birlikte {{limit}} karakteri aşıyor. Göndermeden önce kısaltın.",
+    "tokenUsage": {
+      "live": "belirteç"
+    }
   },
   "runDetail": {
     "title": "Çalışma ayrıntıları",
@@ -1305,6 +1309,19 @@
     "ddNotRecovered": "Toparlanmadı",
     "ddDays": "{{count}} gün",
     "dashboard": "Araştırma paneli",
+    "llmUsage": {
+      "tab": "Token kullanımı",
+      "provider": "Sağlayıcı",
+      "model": "Model",
+      "inputTokens": "Girdi belirteçleri",
+      "outputTokens": "Çıktı belirteçleri",
+      "totalTokens": "Toplam belirteç",
+      "calls": "Çağrı sayısı",
+      "cacheRead": "Önbellek okuma belirteçleri",
+      "cacheCreation": "Önbellek oluşturma belirteçleri",
+      "perIteration": "Yineleme ayrıntıları",
+      "iteration": "Yineleme"
+    },
     "positions": {
       "tab": "Pozisyonlar",
       "weightDistribution": "Ağırlık dağılımı",
@@ -1804,7 +1821,10 @@
     "output": "Çıktı",
     "waitingForEvents": "Aracı olayları bekleniyor…",
     "teamStarting": "Ekip hazırlanıyor; ilk güncellemeler birkaç saniye içinde…",
-    "detailsUnavailable": "ayrıntılar alınamıyor"
+    "detailsUnavailable": "ayrıntılar alınamıyor",
+    "tokens": "↑{{input}} ↓{{output}} belirteç",
+    "estimated": "tahmini",
+    "tokenSourceUnlabeled": "kaynak etiketsiz"
   },
   "mandate": {
     "runtimeMandate": "Bağlantı işlem yetkisi",
@@ -2447,5 +2467,27 @@
       "Senior": "Kıdemli",
       "Lead": "Lider"
     }
+  },
+  "runnerBudget": {
+    "unavailable": "Model harcama durumu okunamıyor.",
+    "warning": "İşlem yapılmasa da model çağrıları ücretlidir.",
+    "summary": "{{minutes}} dakikada bir; UTC günü başına en fazla {{turns}} karar ve {{tokens}} token.",
+    "dailySummary": "Her gün {{time}} ({{timezone}}); aralık ayarının yerini alır.",
+    "usage": "Bugün: {{turns}} karar · {{tokens}} token · tahmini {{cost}}.",
+    "estimateUnknown": "Günlük tahmin için fiyatlar ve ölçülen kullanım gerekir.",
+    "estimate": "Ölçülen kullanıma göre günlük tahmini model maliyeti: ${{cost}}.",
+    "configure": "Model zamanlaması ve harcama sınırları",
+    "interval_seconds": "Karar aralığı (saniye)",
+    "max_daily_turns": "UTC günü başına azami karar",
+    "max_daily_tokens": "UTC günü başına azami token",
+    "max_daily_cost_usd": "Günlük tahmini USD sınırı (isteğe bağlı)",
+    "input_usd_per_million": "Milyon girdi tokenı başına USD (isteğe bağlı)",
+    "output_usd_per_million": "Milyon çıktı tokenı başına USD (isteğe bağlı)",
+    "daily_at": "Günlük saat (isteğe bağlı)",
+    "timezone": "Zamanlama saat dilimi",
+    "save": "Ayarları kaydet",
+    "limitsNote": "Her karar yeni bir konuşma başlatır. Sınırlar yanıttan sonra kontrol edilir ve o yanıt kadar aşılabilir. Eksik kullanım veya aşım mevcut durdurma anahtarını tetikler.",
+    "pricesNote": "Fiyatlar operatör tahminidir. En yüksek girdi/önbellek yazma ücretini kullanın; önbellek indirimleri ve yardımcı çağrılar dahil değildir.",
+    "stopToEdit": "Ayarları değiştirmeden önce çalıştırıcıyı durdurun."
   }
 }

@@ -53,15 +53,25 @@
 
 > ⚠️ **Peringatan keamanan:** Akun X `VibeTrading_HKU`, proyek Virtuals `101845`, dan kontrak token `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` bukan aset resmi Vibe-Trading. Kami tidak pernah meluncurkan atau mendukung token maupun memecoin apa pun. Jangan membeli, menghubungkan wallet, atau menandatangani apa pun. [Detail](SECURITY.md#official-channels--impersonation).
 
+- **2026-10-20** 🛠️ **Diagnostik backtest dan ketepatan analisis**: Memberi peringatan untuk kunci konfigurasi yang tidak dikenali, menampilkan korelasi yang tidak terdefinisi sebagai tidak diketahui alih-alih nol, dan menggunakan kembali faktor annualisasi tersimpan saat validasi ulang ([#1935](https://github.com/HKUDS/Vibe-Trading/pull/1935), [#1933](https://github.com/HKUDS/Vibe-Trading/pull/1933), [#1915](https://github.com/HKUDS/Vibe-Trading/pull/1915)). Juga memperbaiki pemeriksaan sampel faktor, validasi masukan alat, klasifikasi pasar dalam jurnal perdagangan, format angka, dan balasan streaming WeCom. Seluruh 14 perbaikan dan batasan yang tersisa ada di [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-19** 🛠️ **Sembilan perbaikan perhitungan keuangan**: Memperbaiki bobot peluruhan faktor, batas harga saham A dan kode Beijing, derivasi arus kuartal keempat SEC, serta jendela estimasi studi peristiwa. Mempertahankan identitas posisi Futu dan nilai MACD/Bollinger yang sangat kecil; menolak varians spesifik negatif dan menerapkan spread serta swap per pasangan pada simbol valas Yahoo ([#1912](https://github.com/HKUDS/Vibe-Trading/pull/1912), [#1920](https://github.com/HKUDS/Vibe-Trading/pull/1920), [#1930](https://github.com/HKUDS/Vibe-Trading/pull/1930)). Rincian sembilan perbaikan dan batasannya ada di [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-17** 🛠️ **Penggunaan token dan keandalan riset**: Lihat penggunaan model pada detail eksekusi, chat, dan swarm ([#1890](https://github.com/HKUDS/Vibe-Trading/pull/1890)). Penjadwal bersama kini menangani riset dan tugas latar belakang opsional ([#1893](https://github.com/HKUDS/Vibe-Trading/pull/1893)); penjadwalan perdagangan live tidak berubah. Memperbaiki penggabungan tanggal/waktu jurnal, jalur bukti, nilai faktor yang sama, lokasi memori, penanganan kesalahan numerik, dan progres kanal. Lihat [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-16** 🛠️ **Keamanan kredensial dan ketepatan perhitungan keuangan**: Memperluas penyamaran rahasia kanal dan penyedia model ([#1880](https://github.com/HKUDS/Vibe-Trading/pull/1880)), memperbarui cache harga setelah data lokal diubah ([#1879](https://github.com/HKUDS/Vibe-Trading/pull/1879)), dan mencegah penghitungan ganda biaya pembalikan posisi ([#1891](https://github.com/HKUDS/Vibe-Trading/pull/1891)). Memperbaiki angka jurnal berformat Eropa, JSON ketat, perbandingan nol dan negatif, periode kepemilikan, bobot minimum, deteksi puncak/lembah datar, serta jalur laporan. Lihat [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-15** 🛠️ **Kontrol biaya model dan keandalan riset**: Runner perdagangan live memakai sesi terpisah untuk setiap keputusan, dengan frekuensi yang dapat diatur dan anggaran penggunaan harian yang tetap tersimpan setelah restart ([#1854](https://github.com/HKUDS/Vibe-Trading/issues/1854)). Pratinjau backtest yang ringan tetap mempertahankan riwayat transaksi lengkap ([#1853](https://github.com/HKUDS/Vibe-Trading/pull/1853), [#1865](https://github.com/HKUDS/Vibe-Trading/pull/1865)). Perbaikan mencakup perhitungan bukti persentase, deduplikasi salinan riwayat eksekusi, waktu sinyal swing, routing kripto, dan penyamaran kredensial. Lihat [CHANGELOG](CHANGELOG.md) untuk cakupan dan batasannya.
+
 - **2026-10-14** 🛠️ **Perbaikan backtest, pencarian, dan pembacaan dokumen**: Rasio risiko dan ekspor ekuitas kini mencakup laba/rugi pada bar pertama ([#1844](https://github.com/HKUDS/Vibe-Trading/pull/1844)). Pencarian menampilkan sesi tanpa duplikasi, mempertahankan judul, dan menyertakan cuplikan konteks ([#1827](https://github.com/HKUDS/Vibe-Trading/pull/1827), [#1834](https://github.com/HKUDS/Vibe-Trading/pull/1834)). Ekstraksi PDF/Office diperbaiki, referensi bukti yang tidak dapat ditelusuri ditolak, serta validasi masukan perhitungan keuangan dan penyamaran kredensial diperkuat.
+
+<details>
+<summary>Berita sebelumnya</summary>
 
 - **2026-10-13** 🧩 **Impor portofolio, adaptasi strategi, dan alat riset**: Impor kepemilikan extraETF hanya-baca mendukung valuasi EUR dengan tanggal dan usulan alokasi; strategi hasil adaptasi memakai bukti backtest-nya sendiri ([#1170](https://github.com/HKUDS/Vibe-Trading/issues/1170), [#1149](https://github.com/HKUDS/Vibe-Trading/issues/1149)). Ditambahkan endpoint model kustom yang telah diuji, papan tugas manual bersama Pixel Office, antarmuka Persia/Turki, kueri mStock hanya-baca, dan data riset Gildata.
   Perbaikan mencakup pembukuan per mata uang penyelesaian, pilihan pasar dan dasar biaya Futu, ukuran lot per saham Hong Kong, pengaturan validasi tersimpan, serta progres eksekusi. Registrasi aturan verifikasi angka dan pemisahan loop agen juga selesai. mStock belum masuk agregasi portofolio; eksekusi opsi Robinhood belum tersedia. Cakupan dan batasan ada di [CHANGELOG](CHANGELOG.md).
 
 - **2026-10-12** 🧮 **Pembaruan riset dan backtest**: memperbaiki eksekusi pembukaan, atribusi saat likuidasi, durasi drawdown, toleransi valuasi, dan waktu laporan SEC dalam IC faktor ([#1780](https://github.com/HKUDS/Vibe-Trading/pull/1780)–[#1794](https://github.com/HKUDS/Vibe-Trading/pull/1794)). Menambahkan 13 faktor fundamental/valuasi, data dan backtest Brasil, templat ZimaOS dengan aktivasi eksplisit, serta progres Feishu. Cakupan dan batasan ada di [CHANGELOG](CHANGELOG.md).
-
-<details>
-<summary>Berita sebelumnya</summary>
 
 - **2026-10-11** 🛠️ **Lima perbaikan prioritas**: setiap nilai data dalam perhitungan turunan memerlukan bukti; opsi perdagangan riil yang belum didukung tetap diblokir. Benchmark luring mempertahankan sumber pilihan, catatan membedakan penutupan impas, dan alat Codex mempertahankan argumen opsional ([#1622](https://github.com/HKUDS/Vibe-Trading/issues/1622), [#1779](https://github.com/HKUDS/Vibe-Trading/pull/1779), [#1781](https://github.com/HKUDS/Vibe-Trading/pull/1781), [#1785](https://github.com/HKUDS/Vibe-Trading/pull/1785)).
 
@@ -882,7 +892,7 @@ Bar: 1m / 5m / 15m / 30m / 1H / 4H / 1D, plus mingguan / bulanan (1W / 1M, diban
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>306 fungsi teruji dalam 23 modul, dapat dipanggil dari setiap transport</sub></summary>
+<summary><b>Quant Library</b> <sub>308 fungsi teruji dalam 24 modul, dapat dipanggil dari setiap transport</sub></summary>
 
 `src/quantlib` menyimpan satu implementasi teruji untuk setiap matematika finansial yang dibutuhkan agent.
 Skill **mengimpor** fungsi-fungsi ini alih-alih membawa formula di dalam

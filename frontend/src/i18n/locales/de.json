@@ -5,6 +5,7 @@
   "charts": {
     "noPriceData": "Noch keine Kursdaten für dieses Symbol",
     "noCorrelationData": "Wählen Sie mindestens zwei Symbole zum Vergleichen",
+    "correlationUndefined": "undefiniert (keine Preisbewegung im Zeitraum)",
     "noEquityData": "Noch keine Kontowert-Kurve — führen Sie zuerst einen Backtest durch"
   },
   "navigation": {
@@ -74,8 +75,8 @@
   "runtime": {
     "monitorBadge": "Runtime-Monitor",
     "title": "Live-/Paper-Runtime-Status",
-    "subtitlePre": "Schreibgeschützter Status von",
-    "subtitlePost": ". Diese Seite autorisiert keine Konnektoren, startet oder stoppt keine Runner, übermittelt oder storniert keine Orders und ändert keine Mandate.",
+    "subtitlePre": "Prüfen Sie den Verbindungsstatus, Handelsmandate und die Aktivität des Runners.",
+    "subtitlePost": " Bei gestopptem Runner können Sie die Häufigkeit der Modellentscheidungen und Ausgabenlimits ändern.",
     "refresh": "Aktualisieren",
     "unavailableTitle": "Runtime-Status nicht verfügbar",
     "unavailableHint": "Behandeln Sie die Connector-Runtime als nicht verfügbar, bis das Backend einen aktuellen Status-Snapshot liefert.",
@@ -115,7 +116,7 @@
     "riskHalted": "Risiko gestoppt",
     "riskHaltedDesc": "Die Notabschaltung ist für dieses Profil ausgelöst. Behandeln Sie die Connector-Runtime als gestoppt, bis der Status sich klärt.",
     "riskActive": "Runtime aktiv",
-    "riskActiveDesc": "Der Runner läuft und ein nicht abgelaufenes Mandat ist vorhanden. Diese Seite bleibt rein schreibgeschützt.",
+    "riskActiveDesc": "Der Runner läuft und sein Handelsmandat ist noch gültig.",
     "riskIdle": "Bereit, aber inaktiv",
     "riskIdleDesc": "Autorisierung und Mandat sind vorhanden, aber der Runner läuft nicht.",
     "riskDormant": "Inaktiv",
@@ -1233,7 +1234,10 @@
     "resumeConnector": "Connector fortsetzen",
     "resumeConnectorTitle": "Kill-Switch löschen und Connector-Aktivität wieder aktivieren",
     "connectorResumed": "Connector fortgesetzt",
-    "failedToResumeConnector": "Connector konnte nicht fortgesetzt werden."
+    "failedToResumeConnector": "Connector konnte nicht fortgesetzt werden.",
+    "tokenUsage": {
+      "live": "Tokens"
+    }
   },
   "runDetail": {
     "title": "Durchlauf-Details",
@@ -1366,6 +1370,19 @@
     "ddNotRecovered": "Nicht erholt",
     "ddDays": "{{count}} T",
     "dashboard": "Research-Dashboard",
+    "llmUsage": {
+      "tab": "Token-Nutzung",
+      "provider": "Anbieter",
+      "model": "Modell",
+      "inputTokens": "Eingabe-Tokens",
+      "outputTokens": "Ausgabe-Tokens",
+      "totalTokens": "Tokens gesamt",
+      "calls": "Aufrufe",
+      "cacheRead": "Cache-Lese-Tokens",
+      "cacheCreation": "Tokens für Cache-Erstellung",
+      "perIteration": "Detail nach Iteration",
+      "iteration": "Iteration"
+    },
     "positions": {
       "tab": "Positionen",
       "weightDistribution": "Gewichtsverteilung",
@@ -1838,7 +1855,10 @@
     "output": "Ausgabe",
     "waitingForEvents": "Warten auf Agent-Ereignisse...",
     "teamStarting": "Das Team startet — erste Updates in wenigen Sekunden…",
-    "detailsUnavailable": "Details nicht verfügbar"
+    "detailsUnavailable": "Details nicht verfügbar",
+    "tokens": "↑{{input}} ↓{{output}} Tokens",
+    "estimated": "geschätzt",
+    "tokenSourceUnlabeled": "Quelle nicht gekennzeichnet"
   },
   "mandate": {
     "runtimeMandate": "Connector-Runtime-Mandat",
@@ -2447,5 +2467,27 @@
       "Senior": "Erfahren",
       "Lead": "Leitung"
     }
+  },
+  "runnerBudget": {
+    "unavailable": "Modellkostenstatus nicht verfügbar.",
+    "warning": "Modellaufrufe kosten auch ohne Handelsausführung Geld.",
+    "summary": "Alle {{minutes}} Minuten; höchstens {{turns}} Entscheidungen und {{tokens}} Token pro UTC-Tag.",
+    "dailySummary": "Täglich um {{time}} ({{timezone}}); ersetzt das Intervall.",
+    "usage": "Heute: {{turns}} Entscheidungen · {{tokens}} Token · geschätzt {{cost}}.",
+    "estimateUnknown": "Eine Tagesschätzung benötigt Preise und gemessenen Verbrauch.",
+    "estimate": "Geschätzte tägliche Modellkosten: etwa ${{cost}}, anhand des Verbrauchs.",
+    "configure": "Modellzeitplan und Kostenlimits",
+    "interval_seconds": "Entscheidungsintervall (Sekunden)",
+    "max_daily_turns": "Maximale Entscheidungen pro UTC-Tag",
+    "max_daily_tokens": "Maximale Token pro UTC-Tag",
+    "max_daily_cost_usd": "Geschätztes USD-Tageslimit (optional)",
+    "input_usd_per_million": "USD pro Million Eingabetoken (optional)",
+    "output_usd_per_million": "USD pro Million Ausgabetoken (optional)",
+    "daily_at": "Tägliche Uhrzeit (optional)",
+    "timezone": "Zeitzone des Zeitplans",
+    "save": "Einstellungen speichern",
+    "limitsNote": "Jede Entscheidung beginnt eine neue Unterhaltung. Limits werden nach der Antwort geprüft und können um diese Antwort überschritten werden. Fehlender Verbrauch oder eine Überschreitung löst den vorhandenen Notstopp aus.",
+    "pricesNote": "Preise sind Betreiberschätzungen. Den höchsten Eingabe-/Cache-Schreibpreis verwenden; Cache-Rabatte und zusätzliche Modellaufrufe sind nicht enthalten.",
+    "stopToEdit": "Vor Änderungen den Runner stoppen."
   }
 }

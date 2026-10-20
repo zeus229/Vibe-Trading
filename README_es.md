@@ -52,15 +52,25 @@
 
 > ⚠️ **Advertencia de seguridad:** la cuenta de X `VibeTrading_HKU`, el proyecto de Virtuals `101845` y el contrato de token `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` no son activos oficiales de Vibe-Trading. Nunca hemos lanzado ni respaldado ningún token o memecoin. No compres, conectes una wallet ni firmes nada. [Detalles](SECURITY.md#official-channels--impersonation).
 
+- **2026-10-20** 🛠️ **Diagnóstico de backtests y precisión del análisis**: Advertimos sobre claves de configuración no reconocidas, mostramos las correlaciones indefinidas como desconocidas en vez de cero y reutilizamos el factor de anualización guardado al revalidar ([#1935](https://github.com/HKUDS/Vibe-Trading/pull/1935), [#1933](https://github.com/HKUDS/Vibe-Trading/pull/1933), [#1915](https://github.com/HKUDS/Vibe-Trading/pull/1915)). También mejoramos las comprobaciones de muestras de factores, la validación de entradas, la clasificación de mercados en diarios de operaciones, el formato numérico y las respuestas en streaming de WeCom. Las 14 correcciones y sus límites están en [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-19** 🛠️ **Nueve correcciones de cálculos financieros**: Corregimos los pesos temporales de factores, los límites de precios de acciones A y los códigos de Pekín, la derivación de flujos del cuarto trimestre de la SEC y las ventanas de estimación de estudios de eventos. Conservamos la identidad de posiciones Futu y valores diminutos de MACD/Bollinger; rechazamos varianzas específicas negativas y aplicamos diferenciales y swaps por par a los símbolos de divisas de Yahoo ([#1912](https://github.com/HKUDS/Vibe-Trading/pull/1912), [#1920](https://github.com/HKUDS/Vibe-Trading/pull/1920), [#1930](https://github.com/HKUDS/Vibe-Trading/pull/1930)). Detalles y límites de las nueve correcciones en [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-17** 🛠️ **Uso de tokens y fiabilidad de la investigación**: Consulta el uso del modelo en el detalle de ejecución, el chat y swarm ([#1890](https://github.com/HKUDS/Vibe-Trading/pull/1890)). Un planificador común gestiona la investigación y las tareas opcionales en segundo plano ([#1893](https://github.com/HKUDS/Vibe-Trading/pull/1893)); la planificación de operaciones reales no cambia. Corregimos fechas y horas del diario, rutas de evidencias, empates de factores, rutas de memoria, errores numéricos y progreso en canales. Véase [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-16** 🛠️ **Protección de credenciales y cálculos financieros**: Ampliamos la ocultación de secretos de canales y proveedores ([#1880](https://github.com/HKUDS/Vibe-Trading/pull/1880)), actualizamos la caché al modificar datos locales ([#1879](https://github.com/HKUDS/Vibe-Trading/pull/1879)) y evitamos duplicar comisiones al invertir una posición ([#1891](https://github.com/HKUDS/Vibe-Trading/pull/1891)). Corregimos importes europeos, JSON estricto, comparaciones con cero y negativos, períodos de tenencia, pesos mínimos, máximos y mínimos planos y rutas de informes. Véase [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-15** 🛠️ **Control del gasto del modelo y fiabilidad de la investigación**: Los ejecutores en vivo usan sesiones independientes por decisión, con frecuencia configurable y presupuestos diarios de uso persistentes ([#1854](https://github.com/HKUDS/Vibe-Trading/issues/1854)). Las vistas previas ligeras conservan el historial completo de operaciones ([#1853](https://github.com/HKUDS/Vibe-Trading/pull/1853), [#1865](https://github.com/HKUDS/Vibe-Trading/pull/1865)). Corregimos cálculos de evidencias porcentuales, duplicados de ejecuciones copiadas, tiempos de señales de giro, enrutamiento de criptomonedas y ocultamiento de credenciales. Alcance y límites en [CHANGELOG](CHANGELOG.md).
+
 - **2026-10-14** 🛠️ **Correcciones de backtests, búsqueda y documentos**: Los indicadores de riesgo y las exportaciones de capital incluyen el resultado de la primera vela ([#1844](https://github.com/HKUDS/Vibe-Trading/pull/1844)). La búsqueda devuelve sesiones sin duplicados, conserva los títulos y muestra fragmentos con contexto ([#1827](https://github.com/HKUDS/Vibe-Trading/pull/1827), [#1834](https://github.com/HKUDS/Vibe-Trading/pull/1834)). Mejoramos la extracción de PDF/Office, rechazamos referencias a evidencias que no se pueden resolver y reforzamos la validación de datos financieros y el ocultamiento de credenciales.
+
+<details>
+<summary>Noticias anteriores</summary>
 
 - **2026-10-13** 🧩 **Importación de carteras, adaptación de estrategias y herramientas de investigación**: La importación de posiciones de extraETF en modo de solo lectura permite valoraciones en EUR con fecha y propuestas de asignación; las estrategias adaptadas usan sus propios resultados de backtest ([#1170](https://github.com/HKUDS/Vibe-Trading/issues/1170), [#1149](https://github.com/HKUDS/Vibe-Trading/issues/1149)). Se añaden conexiones verificadas a modelos personalizados, un tablero manual compartido en Pixel Office, interfaces en persa y turco, consultas de solo lectura a mStock y datos de Gildata.
   Se corrigen la contabilidad por moneda de liquidación, la selección de mercado y la base de coste de Futu, los lotes por valor de Hong Kong, los parámetros de validación guardados y el progreso de ejecución. Se completan las reglas declaradas de verificación numérica y la división del bucle del agente. mStock sigue excluido de la agregación de carteras; la ejecución de opciones de Robinhood no está disponible. Alcance y límites en [CHANGELOG](CHANGELOG.md).
 
 - **2026-10-12** 🧮 **Actualizaciones de investigación y backtesting**: corregidos la ejecución inicial, la atribución al liquidar, la duración de caídas, la tolerancia de valoración y el momento de los informes SEC en el IC ([#1780](https://github.com/HKUDS/Vibe-Trading/pull/1780)–[#1794](https://github.com/HKUDS/Vibe-Trading/pull/1794)). Se añaden 13 factores fundamentales y de valoración, datos y backtests de Brasil, plantillas ZimaOS de activación explícita y progreso en Feishu. Alcance y límites en [CHANGELOG](CHANGELOG.md).
-
-<details>
-<summary>Noticias anteriores</summary>
 
 - **2026-10-11** 🛠️ **Cinco correcciones prioritarias**: cada dato de un cálculo necesita evidencia; se bloquean las opciones reales aún no soportadas. Los índices de referencia sin conexión conservan su fuente, los registros distinguen cierres sin ganancias ni pérdidas y Codex conserva argumentos opcionales ([#1622](https://github.com/HKUDS/Vibe-Trading/issues/1622), [#1779](https://github.com/HKUDS/Vibe-Trading/pull/1779), [#1781](https://github.com/HKUDS/Vibe-Trading/pull/1781), [#1785](https://github.com/HKUDS/Vibe-Trading/pull/1785)).
 
@@ -721,7 +731,7 @@ Barras: 1m / 5m / 15m / 30m / 1H / 4H / 1D, más semanales / mensuales (1W / 1M,
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>306 funciones probadas en 23 módulos, invocables desde cualquier transporte</sub></summary>
+<summary><b>Quant Library</b> <sub>308 funciones probadas en 24 módulos, invocables desde cualquier transporte</sub></summary>
 
 `src/quantlib` contiene una implementación probada de cada pieza de matemática
 financiera que el agente necesita. Las skills **importan** estas funciones en

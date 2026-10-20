@@ -1,6 +1,39 @@
 # Fork divergences from HKUDS/Vibe-Trading
 
-Last upstream sync: 2026-10-10 (upstream `8e430079`, merged onto fork `bfc7a647`).
+Last upstream sync: 2026-10-20 (upstream `fb1851ae`, merged onto fork `9160b7c7`).
+
+## Sync 2026-10-20 (upstream `fb1851ae`)
+
+Upstream `main` was force-pushed after 2026-10-10: the fork's previous sync commit `8e430079` is not an
+ancestor of `fb1851ae`. Its rewritten equivalent is `23c26c8a` (same tree except one deleted session note),
+so this merge used `23c26c8a` as the merge base. The default merge base (`026deaa9`, 2026-10-09) turns every
+file added on both sides into an add/add conflict.
+
+Decisions on top of upstream:
+
+- **Entity isolation stays.** Upstream's keyed-metric recording (`instrument_scoped`, `instrument_symbols`,
+  `_keyed_metric_map_kind`) is layered over the fork's `_EntityContext`/`identity_scope`. A symbol-less aggregate
+  scalar grounds an unscoped claim only, never an instrument's, so
+  `test_scalar_contribution_is_not_reclassified_as_an_instrument_map` asserts an empty per-instrument pool.
+  `_field_sources` keeps keyed-map leaves (the MCP exact-ref contract needs them); `_metric_pool` drops them to
+  avoid counting a leaf twice.
+- **Derived-formula contract.** Upstream's `currency_code` filtering, `operand_transform` for point-valued
+  inputs and structural `1` operand are adopted. The fork's `normalized_x100`, Asistente Casa `percent_points`,
+  `strict_adapter_scope` and `_result_matches(note=...)` stay.
+- **SEC filings.** `get_sec_filings` evidence takes the unit as ISO currency; a bare EDGAR ticker in a US
+  payload is read as `<TICKER>.US` so it does not conflict with the market-qualified request symbol.
+- **Loop/lifecycle.** `loop_grounding.py` and `tool_lifecycle.py` stay the fork's versions (upstream's are
+  the same code without the repair contract, recovery stub, observed-tool-call ledger and `calculate_ppi_indicators`
+  host-assigned call id).
+- **Portfolio.** Native-currency refresh, `account_row`, `native_*` fields and the ARS editor stay.
+  `PORTFOLIO_VALUATION_VERSION` is now 4 (upstream): snapshots stored at version 3 are hidden until the next
+  `refresh`, so the first read after deploy needs a refresh.
+- **br-data.** The standalone `vibe-trading-br-data` sidecar is gone (upstream); the daily sync is the system
+  job `system:br-data-sync`, seeded only with `VIBE_TRADING_ENABLE_SCHEDULER=1` and `VIBE_BR_SYNC_ENABLED=1`.
+  The deployment override sets the first flag but not the second, so no sync is seeded.
+- **Server.** `proxy_headers` + `forwarded_allow_ips` in `server_cli.py` stay.
+- **Docs.** README tool count stays 116 (measured by `tests/test_readme_counts.py`; upstream's 112 excludes
+  the fork's tools).
 
 ## Absorbed by upstream in the 2026-10-10 sync (do not re-add)
 

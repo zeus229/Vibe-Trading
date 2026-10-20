@@ -137,6 +137,11 @@ async def _run_startup_preflight() -> None:
     except Exception:  # pragma: no cover — best-effort
         logging.getLogger(__name__).warning("Legacy state migration failed", exc_info=True)
     run_preflight(console)
+    # Sole scheduler start point (single-writer invariant, scheduler-unification
+    # T12): this lifespan call is the only production site that starts the
+    # scheduled-research kernel, exactly once per process, and it seeds the
+    # protected system jobs into the store before the first tick can run
+    # (order + flag-off early-return documented on the callee).
     _start_scheduled_research_executor()
     from src.config.accessor import get_env_config
 
@@ -182,11 +187,7 @@ app.middleware("http")(_apply_security_headers)
 from src.api.runs_routes import register_runs_routes  # noqa: E402
 register_runs_routes(app)
 
-from src.api.runs_routes import (  # noqa: F401, E402
-    _load_json_file,
-    _load_csv_to_dict,
-    _build_response_from_run_dir,
-)
+from src.api.runs_routes import _build_response_from_run_dir  # noqa: F401, E402
 from src.api.attribution_routes import register_attribution_routes  # noqa: E402
 register_attribution_routes(app)
 

@@ -89,7 +89,10 @@ export function isAuthRequiredError(error: unknown): boolean {
 
 export interface CorrelationResponse {
   labels: string[];
-  matrix: number[][];
+  // Undefined pairs (zero-variance leg — halted series, pegged stablecoin,
+  // fresh listing) come back as null: missing evidence, not 0.0. Mirrors the
+  // regime endpoint's (number | null)[] density convention.
+  matrix: (number | null)[][];
 }
 
 export interface CorrelationAnalysisResponse {
@@ -547,6 +550,7 @@ export const api = {
     const qs = q.toString();
     return request<RunData>(`/runs/${id}${qs ? `?${qs}` : ""}`);
   },
+  getRunPreview: (id: string) => request<RunPreview>(`/runs/${id}/preview`),
   getRunCode: (id: string) => request<Record<string, string>>(`/runs/${id}/code`),
   getRunFactor: (id: string) => request<FactorReportPayload>(`/runs/${id}/factor`),
   getRunAttribution: (id: string) => request<AttributionResponse>(`/runs/${encodeURIComponent(id)}/attribution`),
@@ -766,6 +770,11 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ broker }),
     }),
+  saveRunnerSettings: (broker: string, settings: LiveDecisionSettings) =>
+    request<LiveDecisionBudget>(`/live/runner/settings?broker=${encodeURIComponent(broker)}`, {
+      method: "PUT",
+      body: JSON.stringify(settings),
+    }),
   stopLiveRunner: (broker: string) =>
     request<LiveRunnerResponse>("/live/runner/stop", {
       method: "POST",
@@ -794,7 +803,7 @@ export interface ScheduledRun {
   id: string;
   prompt: string;
   title: string;
-  source_type: "prompt" | "playbook";
+  source_type: "prompt" | "playbook" | "system";
   playbook_slug: string | null;
   end_at: number | null;
   schedule: string;
@@ -1190,6 +1199,14 @@ export interface EquityPoint {
   drawdown: string | number;
 }
 
+/** What a chat run card needs from `GET /runs/{id}/preview`. */
+export interface RunPreview {
+  metrics: BacktestMetrics | null;
+  equity_curve: EquityPoint[];
+  /** False for plain chat replies, which own a run directory but no report. */
+  report_worthy: boolean;
+}
+
 /** Monte Carlo fan-chart payload: percentile envelope + sampled paths over trade order. */
 export interface MonteCarloEquityPaths {
   steps: number[];
@@ -1388,6 +1405,41 @@ export interface AttributionResponse {
   notes: string[];
 }
 
+/**
+ * One provider-reported LLM usage event inside `llm_usage.per_iteration`.
+ * Field names mirror the on-disk artifact written by `agent/src/agent/llm_usage.py`.
+ * The two `cache_*` keys appear only once the provider reports a cache event for
+ * that call, so they are optional — never fabricated.
+ */
+export interface LlmUsageCall {
+  iter: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  cache_read_tokens?: number;
+  cache_creation_tokens?: number;
+}
+
+/**
+ * Run-scoped LLM usage summary returned by `GET /runs/{id}` (`RunResponse.llm_usage`,
+ * optional on the backend and `null`/absent when the run recorded no usage events).
+ */
+export interface LlmUsage {
+  provider: string;
+  model: string;
+  totals: {
+    input_tokens: number;
+    output_tokens: number;
+    total_tokens: number;
+    calls: number;
+    /** Present only after a provider cache event, like the per-iteration keys. */
+    cache_read_tokens?: number;
+    cache_creation_tokens?: number;
+  };
+  per_iteration: LlmUsageCall[];
+  updated_at: string;
+}
+
 export interface RunData {
   status: string;
   run_id: string;
@@ -1400,6 +1452,8 @@ export interface RunData {
   metrics?: BacktestMetrics;
   artifacts?: ArtifactInfo[];
   run_card?: RunCard;
+  /** Provider-reported AgentLoop usage summary; null/absent when the run recorded no usage events. */
+  llm_usage?: LlmUsage | null;
   risk_xray?: RiskXRayPayload;
   rebalance_notes?: RebalanceNotesPayload;
   validation?: ValidationData;
@@ -2048,6 +2102,25 @@ export interface LiveBrokerStatus {
   mandate?: LiveMandateStatus | null;
   runner: LiveRunnerLiveness;
   halted: boolean;
+  decision_budget?: LiveDecisionBudget | null;
+}
+
+export interface LiveDecisionSettings {
+  interval_seconds: number;
+  daily_at: string | null;
+  timezone: string;
+  max_daily_turns: number;
+  max_daily_tokens: number;
+  max_daily_cost_usd: number | null;
+  input_usd_per_million: number | null;
+  output_usd_per_million: number | null;
+}
+
+export interface LiveDecisionBudget {
+  settings?: LiveDecisionSettings;
+  usage?: { day: string; turns: number; tokens: number; estimated_cost_usd: number | null; unaccounted_turns: number };
+  projected_daily_cost_usd?: number | null;
+  error?: string;
 }
 
 /** Response of `GET /live/status` (SPEC §7.5 runner status panel + C2). */
