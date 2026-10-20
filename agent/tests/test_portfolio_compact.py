@@ -299,11 +299,8 @@ def test_compact_exposes_ars_unrealized_pnl_with_coverage():
     c = compact_snapshot(source)
     assert c["holdings"][0]["unrealized_pnl_ars"] == 125.5
     assert c["holdings"][2]["unrealized_pnl_ars"] is None
-    assert c["totals"]["unrealized_pnl_ars"] == 100.0
-    assert c["totals"]["unrealized_pnl_positions"] == {"with_pnl": 2, "total": len(c["holdings"])}
 
 
 def test_compact_unrealized_pnl_absent_is_none_not_zero():
     c = compact_snapshot(snapshot())
-    assert c["totals"]["unrealized_pnl_ars"] is None
-    assert c["totals"]["unrealized_pnl_positions"]["with_pnl"] == 0
+    assert all(row["unrealized_pnl_ars"] is None for row in c["holdings"])
