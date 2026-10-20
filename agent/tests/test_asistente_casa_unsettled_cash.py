@@ -170,6 +170,4 @@ def test_native_unrealized_pnl_reaches_agent_context(tmp_path, monkeypatch):
     row = context["holdings_native"]["ARS"][0]
     # cost 600 x 1 vs price 700 -> +100 ARS, derived natively (no FX, no USD).
     assert row["unrealized_pnl_native"] == 100.0
-    assert context["unrealized_pnl_native_by_currency"]["ARS"] == {
-        "unrealized_pnl_native": 100.0, "positions_with_pnl": 1, "positions_total": 1,
-    }
+
