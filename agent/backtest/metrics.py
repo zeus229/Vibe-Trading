@@ -344,6 +344,7 @@ def win_rate_and_stats(trades: List[TradeRecord]) -> Dict[str, Optional[float]]:
         Dict with win_rate, profit_loss_ratio, max_consecutive_loss,
         avg_holding_bars, profit_factor. profit_loss_ratio and profit_factor
         are ``None`` when no trade lost, since both divide by the losses.
+        Average holding bars includes valid zero-duration completed trades.
     """
     if not trades:
         return {
@@ -379,7 +380,9 @@ def win_rate_and_stats(trades: List[TradeRecord]) -> Dict[str, Optional[float]]:
         else:
             cur_consec = 0
 
-    hold_bars = [t.holding_bars for t in trades if t.holding_bars > 0]
+    # A completed same-bar trade has a valid zero duration and still counts
+    # in the per-trade average. Keep excluding invalid negative durations.
+    hold_bars = [t.holding_bars for t in trades if t.holding_bars >= 0]
     avg_holding = float(np.mean(hold_bars)) if hold_bars else 0.0
 
     return {
@@ -632,6 +635,8 @@ def calc_metrics(
     max_dd = float(dd.min())
 
     calmar = ann_ret / abs(max_dd) if abs(max_dd) > 1e-10 else 0.0
+    if not np.isfinite(calmar):
+        calmar = 0.0
 
     # Sortino: zero-target downside RMS, with all return periods in the divisor.
     if returns_finite:

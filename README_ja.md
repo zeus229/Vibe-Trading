@@ -52,15 +52,25 @@
 
 > ⚠️ **セキュリティ警告：** Xアカウント `VibeTrading_HKU`、Virtualsプロジェクト `101845`、およびトークンコントラクト `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` は、いずれもVibe-Trading公式のものではありません。Vibe-Tradingはこれまで、いかなるトークンやミームコインも発行・公認していません。購入、ウォレットの接続、署名は行わないでください。[詳細](SECURITY.md#official-channels--impersonation)
 
+- **2026-10-20** 🛠️ **バックテスト診断と研究結果の正確性**：認識されない設定キーを警告し、未定義の相関をゼロではなく不明として表示。再検証では保存済みの年率換算係数を再利用します（[#1935](https://github.com/HKUDS/Vibe-Trading/pull/1935), [#1933](https://github.com/HKUDS/Vibe-Trading/pull/1933), [#1915](https://github.com/HKUDS/Vibe-Trading/pull/1915)）。因子のサンプル数チェック、ツール入力検証、取引日誌の市場分類、数値表示、WeComのストリーミング返信も改善。全14件の修正と残る制約は [CHANGELOG](CHANGELOG.md)。
+
+- **2026-10-19** 🛠️ **金融計算の9件の修正**：因子の減衰ウェイト、A株の市場別値幅制限と北京銘柄コード、SEC第4四半期のフロー推計、イベント分析の推定期間を修正。Futu保有銘柄の識別と微小なMACD・ボリンジャーバンドの値を保持し、負の固有分散を拒否。Yahooの為替コードにも通貨ペア別スプレッドとスワップを適用します（[#1912](https://github.com/HKUDS/Vibe-Trading/pull/1912)、[#1920](https://github.com/HKUDS/Vibe-Trading/pull/1920)、[#1930](https://github.com/HKUDS/Vibe-Trading/pull/1930)）。全9件の詳細と制約は [CHANGELOG](CHANGELOG.md)。
+
+- **2026-10-17** 🛠️ **Token 使用量とリサーチの信頼性**：実行詳細・チャット・swarm でモデル使用量を確認できます（[#1890](https://github.com/HKUDS/Vibe-Trading/pull/1890)）。リサーチと任意のバックグラウンドジョブに共通スケジューラを導入しました（[#1893](https://github.com/HKUDS/Vibe-Trading/pull/1893)）。実取引のスケジューラは変更していません。取引記録の日時結合、根拠ファイルのパス、因子の同値処理、メモリ保存先、数値エラー処理、チャネル進捗を修正。詳細は [CHANGELOG](CHANGELOG.md)。
+
+- **2026-10-16** 🛠️ **認証情報の保護と金融計算の修正**：チャネル・モデルの認証情報のマスキングを拡充（[#1880](https://github.com/HKUDS/Vibe-Trading/pull/1880)）、ローカルデータ更新後の価格キャッシュを更新（[#1879](https://github.com/HKUDS/Vibe-Trading/pull/1879)）、ドテン売買の手数料の二重計上を修正（[#1891](https://github.com/HKUDS/Vibe-Trading/pull/1891)）。欧州形式の取引金額、厳密な JSON、ゼロ・負値の比較、保有期間、最低ウェイト、横ばいの高値・安値判定、レポートのパスも修正。[CHANGELOG](CHANGELOG.md) を参照。
+
+- **2026-10-15** 🛠️ **モデル利用費用の管理とリサーチの信頼性**：ライブランナーは判断ごとに独立したセッションを使い、判断間隔と永続化された日次利用上限を設定できます（[#1854](https://github.com/HKUDS/Vibe-Trading/issues/1854)）。軽量なバックテストプレビューと完全な取引履歴を両立（[#1853](https://github.com/HKUDS/Vibe-Trading/pull/1853)、[#1865](https://github.com/HKUDS/Vibe-Trading/pull/1865)）。百分率の根拠計算、コピーした実行履歴の重複排除、スイング信号の発生時点、暗号資産のルーティング、認証情報のマスキングを修正しました。範囲と制約は [CHANGELOG](CHANGELOG.md) を参照。
+
 - **2026-10-14** 🛠️ **バックテスト・検索・文書読み取りの修正**：リスク指標と資産推移のエクスポートに最初のバーの損益を反映（[#1844](https://github.com/HKUDS/Vibe-Trading/pull/1844)）。セッション検索は重複するセッションを除き、タイトルを保持して一致箇所の前後を表示します（[#1827](https://github.com/HKUDS/Vibe-Trading/pull/1827)、[#1834](https://github.com/HKUDS/Vibe-Trading/pull/1834)）。PDF／Office の内容抽出を改善し、解決できない根拠参照を拒否。金融計算の入力検証と認証情報のマスキングも強化しました。
+
+<details>
+<summary>過去のニュース</summary>
 
 - **2026-10-13** 🧩 **ポートフォリオ取り込み・戦略適応・調査ツール**：extraETF の保有明細を読み取り専用で取り込み、日付付きのユーロ評価と資産配分案に対応。適応後の子戦略は自身のバックテスト結果を根拠に使います（[#1170](https://github.com/HKUDS/Vibe-Trading/issues/1170)、[#1149](https://github.com/HKUDS/Vibe-Trading/issues/1149)）。接続テスト済みのカスタムモデル、Pixel Office の共有手動タスクボード、ペルシャ語・トルコ語 UI、mStock の読み取り専用照会、Gildata の調査データを追加しました。
   決済通貨別の損益集計、Futu の市場選択と取得原価、香港株の銘柄別売買単位、保存済み検証設定、実行進捗を修正。数値検証ルールの明示的な登録とエージェントループの分割も完了しました。mStock は引き続きポートフォリオ集計の対象外で、Robinhood のオプション注文は未対応です。範囲と制約は [CHANGELOG](CHANGELOG.md) を参照。
 
 - **2026-10-12** 🧮 **調査とバックテストの更新**：初回約定、清算時の寄与分析、ドローダウン期間、評価許容誤差、因子 IC の SEC 開示タイミングを修正（[#1780](https://github.com/HKUDS/Vibe-Trading/pull/1780)–[#1794](https://github.com/HKUDS/Vibe-Trading/pull/1794)）。基本面・評価因子 13 種、ブラジル市場データとバックテスト、明示的に有効化する ZimaOS テンプレート、Feishu の実行進捗を追加。範囲と制約は [CHANGELOG](CHANGELOG.md) を参照。
-
-<details>
-<summary>過去のニュース</summary>
 
 - **2026-10-11** 🛠️ **優先度の高い 5 件を修正**：導出値の各データ項に根拠を要求し、未対応の実取引オプション注文を拒否。オフライン基準は指定ソースを維持し、取引記録は損益ゼロの決済を識別、Codex ツールは任意引数を保持します（[#1622](https://github.com/HKUDS/Vibe-Trading/issues/1622)、[#1779](https://github.com/HKUDS/Vibe-Trading/pull/1779)、[#1781](https://github.com/HKUDS/Vibe-Trading/pull/1781)、[#1785](https://github.com/HKUDS/Vibe-Trading/pull/1785)）。
 
@@ -716,7 +726,7 @@ Bars: 1m / 5m / 15m / 30m / 1H / 4H / 1D, plus weekly / monthly (1W / 1M, built 
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>23 モジュール・306 個のテスト済み関数、すべての経路から呼び出し可能</sub></summary>
+<summary><b>Quant Library</b> <sub>24 モジュール・308 個のテスト済み関数、すべての経路から呼び出し可能</sub></summary>
 
 `src/quantlib` は、agent が必要とする金融数学のそれぞれについて、テスト済みの実装を
 **1 つだけ**保持します。skill はこれらを **import** するようになり、markdown コード

@@ -115,7 +115,9 @@ def _run_card_data_sources(config: Dict[str, Any], loader: Any) -> List[str]:
 
 # ─── Market detection (lightweight, for signal alignment only) ───
 
-_CRYPTO_RE = _re.compile(r"^[A-Z]+-USDT$|^[A-Z]+/USDT$", _re.I)
+_CRYPTO_RE = _re.compile(
+    r"^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+-USDT$|^(?=[A-Z0-9]*[A-Z])[A-Z0-9]+/USDT$", _re.I
+)
 # Forex / metals in their explicit Yahoo notations, plus the bare-6-char
 # whitelist for XAUUSD / XAGUSD / XPTUSD / XPDUSD and G10 currencies. Mirrors
 # ``backtest.engines._market_hooks._MARKET_PATTERNS`` so the ffill-limit
@@ -132,9 +134,12 @@ _FX_RE = _re.compile(
 
 def _detect_market_for_align(code: str) -> str:
     """Lightweight market detection for ffill_limit calculation."""
-    if _CRYPTO_RE.match(code):
+    from backtest.engines._market_hooks import _detect_market
+
+    market = _detect_market(code.strip().upper())
+    if market == "crypto":
         return "crypto"
-    if _FX_RE.match(code):
+    if market == "forex":
         return "forex"
     return "equity"
 
@@ -1169,6 +1174,8 @@ class BaseEngine(ABC):
             card_warnings.append(config["_run_card_caliber_warning"])
         if config.get("_run_card_annualisation_warning"):
             card_warnings.append(config["_run_card_annualisation_warning"])
+        if config.get("_run_card_unrecognized_config_warning"):
+            card_warnings.append(config["_run_card_unrecognized_config_warning"])
         if benchmark_warning:
             card_warnings.append(benchmark_warning)
         from backtest.run_card import write_run_card

@@ -5,6 +5,7 @@
   "charts": {
     "noPriceData": "Belum ada data harga untuk simbol ini",
     "noCorrelationData": "Pilih setidaknya dua simbol untuk dibandingkan",
+    "correlationUndefined": "belum terdefinisi (tidak ada variasi harga pada jendela)",
     "noEquityData": "Belum ada kurva nilai akun — jalankan backtest terlebih dahulu"
   },
   "navigation": {
@@ -74,8 +75,8 @@
   "runtime": {
     "monitorBadge": "Monitor Runtime",
     "title": "Status Runtime Live / Paper",
-    "subtitlePre": "Status read-only dari",
-    "subtitlePost": ". Halaman ini tidak mengotorisasi connector, menjalankan Runner, menghentikan Runner, mengirim order, membatalkan order, atau mengubah mandat.",
+    "subtitlePre": "Lihat status konektor, mandat perdagangan, dan aktivitas Runner.",
+    "subtitlePost": " Frekuensi keputusan model dan batas pengeluaran dapat diubah saat Runner berhenti.",
     "refresh": "Segarkan",
     "unavailableTitle": "Status runtime tidak tersedia",
     "unavailableHint": "Anggap runtime connector tidak tersedia sampai backend memberikan snapshot status terbaru.",
@@ -115,7 +116,7 @@
     "riskHalted": "risiko dihentikan",
     "riskHaltedDesc": "Penghentian darurat aktif untuk profil ini. Anggap runtime connector berhenti sampai status kembali normal.",
     "riskActive": "runtime aktif",
-    "riskActiveDesc": "Runner aktif dan terdapat mandat yang belum kedaluwarsa. Halaman ini tetap hanya menampilkan status read-only.",
+    "riskActiveDesc": "Runner aktif dan mandat perdagangannya masih berlaku.",
     "riskIdle": "siap tetapi idle",
     "riskIdleDesc": "Otorisasi dan mandat tersedia, tetapi Runner tidak aktif.",
     "riskDormant": "tidak aktif",
@@ -1233,7 +1234,10 @@
     "resumeConnector": "Lanjutkan connector",
     "resumeConnectorTitle": "Nonaktifkan penghentian darurat dan aktifkan kembali aktivitas connector",
     "connectorResumed": "Connector dilanjutkan",
-    "failedToResumeConnector": "Gagal melanjutkan connector."
+    "failedToResumeConnector": "Gagal melanjutkan connector.",
+    "tokenUsage": {
+      "live": "token"
+    }
   },
   "runDetail": {
     "title": "Detail Run",
@@ -1366,6 +1370,19 @@
     "ddNotRecovered": "Belum pulih",
     "ddDays": "{{count}} hari",
     "dashboard": "Dashboard Riset",
+    "llmUsage": {
+      "tab": "Pemakaian token",
+      "provider": "Penyedia",
+      "model": "Model",
+      "inputTokens": "Token input",
+      "outputTokens": "Token output",
+      "totalTokens": "Total token",
+      "calls": "Jumlah panggilan",
+      "cacheRead": "Token baca cache",
+      "cacheCreation": "Token pembuatan cache",
+      "perIteration": "Rincian per iterasi",
+      "iteration": "Iterasi"
+    },
     "positions": {
       "tab": "Posisi",
       "weightDistribution": "Distribusi bobot",
@@ -1838,7 +1855,10 @@
     "output": "Output",
     "waitingForEvents": "Menunggu event dari Agent...",
     "teamStarting": "Tim sedang dimulai — update pertama akan muncul dalam beberapa detik…",
-    "detailsUnavailable": "detail tidak tersedia"
+    "detailsUnavailable": "detail tidak tersedia",
+    "tokens": "↑{{input}} ↓{{output}} token",
+    "estimated": "estimasi",
+    "tokenSourceUnlabeled": "sumber tanpa label"
   },
   "mandate": {
     "runtimeMandate": "Mandat runtime connector",
@@ -2447,5 +2467,27 @@
       "Senior": "Senior",
       "Lead": "Pemimpin"
     }
+  },
+  "runnerBudget": {
+    "unavailable": "Status biaya model tidak tersedia.",
+    "warning": "Panggilan model tetap berbiaya meski tidak ada transaksi.",
+    "summary": "Setiap {{minutes}} menit; maksimum {{turns}} keputusan dan {{tokens}} token per hari UTC.",
+    "dailySummary": "Setiap hari pukul {{time}} ({{timezone}}); menggantikan interval.",
+    "usage": "Hari ini: {{turns}} keputusan · {{tokens}} token · perkiraan {{cost}}.",
+    "estimateUnknown": "Harga dan penggunaan terukur diperlukan untuk perkiraan biaya harian.",
+    "estimate": "Perkiraan biaya model harian: sekitar ${{cost}}, berdasarkan penggunaan.",
+    "configure": "Jadwal dan batas biaya model",
+    "interval_seconds": "Interval keputusan (detik)",
+    "max_daily_turns": "Keputusan maksimum per hari UTC",
+    "max_daily_tokens": "Token maksimum per hari UTC",
+    "max_daily_cost_usd": "Batas perkiraan USD harian (opsional)",
+    "input_usd_per_million": "USD per juta token masukan (opsional)",
+    "output_usd_per_million": "USD per juta token keluaran (opsional)",
+    "daily_at": "Waktu harian (opsional)",
+    "timezone": "Zona waktu jadwal",
+    "save": "Simpan pengaturan",
+    "limitsNote": "Setiap keputusan memakai percakapan baru. Batas diperiksa setelah respons dan dapat terlampaui sebesar respons itu. Penggunaan yang hilang atau anggaran terlampaui memicu sakelar penghentian yang ada.",
+    "pricesNote": "Harga adalah perkiraan operator. Gunakan tarif masukan/penulisan cache tertinggi; diskon cache dan panggilan tambahan tidak termasuk.",
+    "stopToEdit": "Hentikan runner sebelum mengubah pengaturan."
   }
 }

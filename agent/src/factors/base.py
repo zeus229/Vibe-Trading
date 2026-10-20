@@ -294,14 +294,16 @@ def _argmax_last(arr: np.ndarray) -> float:
     if np.isnan(arr).all():
         return np.nan
     arr_filled = np.where(np.isnan(arr), -np.inf, arr)
-    return float(np.argmax(arr_filled))
+    # Ties resolve to the most recent bar, matching bottleneck's move_argmax.
+    return float(len(arr) - 1 - np.argmax(arr_filled[::-1]))
 
 
 def _argmin_last(arr: np.ndarray) -> float:
     if np.isnan(arr).all():
         return np.nan
     arr_filled = np.where(np.isnan(arr), np.inf, arr)
-    return float(np.argmin(arr_filled))
+    # Ties resolve to the most recent bar, matching bottleneck's move_argmin.
+    return float(len(arr) - 1 - np.argmin(arr_filled[::-1]))
 
 
 def ts_argmax(df: pd.DataFrame, n: int) -> pd.DataFrame:
@@ -351,6 +353,9 @@ def delta(df: pd.DataFrame, d: int) -> pd.DataFrame:
 def decay_linear(df: pd.DataFrame, n: int) -> pd.DataFrame:
     """Linear decay-weighted moving average, weights ``n, n-1, ..., 1`` normalized.
 
+    The most recent bar gets weight ``n`` and the oldest bar in the window
+    gets weight ``1`` (Kakushadze, *101 Formulaic Alphas*, Appendix A).
+
     Warmup (first ``n-1`` rows) → NaN.
 
     Uses numpy ``sliding_window_view`` + ``einsum`` for vectorized computation
@@ -359,7 +364,8 @@ def decay_linear(df: pd.DataFrame, n: int) -> pd.DataFrame:
     """
     if n < 1:
         raise ValueError(f"decay_linear window must be >= 1, got {n}")
-    weights = np.arange(n, 0, -1, dtype=np.float64)
+    # Windows run oldest -> newest, so ascending weights put n on today's bar.
+    weights = np.arange(1, n + 1, dtype=np.float64)
     weights /= weights.sum()
 
     def _apply(arr: np.ndarray) -> float:

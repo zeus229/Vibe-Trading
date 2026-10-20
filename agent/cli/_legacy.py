@@ -3912,6 +3912,19 @@ def cmd_live_revoke(broker: str) -> int:
     return EXIT_SUCCESS
 
 
+def _preview_live_spending(broker: str) -> bool:
+    """Show operator settings before either foreground or background start."""
+    from urllib.parse import urlencode
+
+    preview = _live_api_call("GET", "/live/runner/settings?" + urlencode({"broker": broker}))
+    if preview.get("status") == "error":
+        console.print("[red]Could not read runner model-spending settings; not starting.[/red]")
+        return False
+    console.print("[yellow]Model calls are billed independently of trade limits.[/yellow]")
+    console.print_json(data=preview)
+    return True
+
+
 def cmd_live_start(broker: Optional[str] = None) -> int:
     """Start the persistent live runner in the background (SPEC §7.5).
 
@@ -3928,6 +3941,8 @@ def cmd_live_start(broker: Optional[str] = None) -> int:
         Process exit code. ``EXIT_RUN_FAILED`` when the server is unreachable.
     """
     key = (broker or _DEFAULT_LIVE_BROKER).strip().lower()
+    if not _preview_live_spending(key):
+        return EXIT_RUN_FAILED
     result = _live_api_call(
         "POST", "/live/runner/start", body={"broker": key, "foreground": False}
     )
@@ -3987,6 +4002,9 @@ def cmd_live_run(broker: Optional[str] = None) -> int:
     """
     key = (broker or _DEFAULT_LIVE_BROKER).strip().lower()
     runner_id = _runner_id_for(key)
+
+    if not _preview_live_spending(key):
+        return EXIT_RUN_FAILED
 
     result = _live_api_call(
         "POST", "/live/runner/start", body={"broker": key, "foreground": True}
@@ -5279,6 +5297,36 @@ def cmd_connector_start(profile_id: Optional[str]) -> int:
     return cmd_live_start(broker)
 
 
+def cmd_connector_runner_settings(profile_id: Optional[str], settings_file: Optional[str] = None) -> int:
+    """Show model budgets or save a JSON settings file for a stopped runner.
+
+    Args:
+        profile_id: Selected live connector profile.
+        settings_file: Optional JSON file containing DecisionSettings fields.
+
+    Returns:
+        CLI process exit code.
+    """
+    from urllib.parse import urlencode
+
+    code, broker = _live_profile_connector(profile_id, require_runner=True)
+    if code != EXIT_SUCCESS or broker is None:
+        return code
+    path = "/live/runner/settings?" + urlencode({"broker": broker})
+    body = None
+    if settings_file:
+        try:
+            from src.live.runtime.decision_budget import DecisionSettings
+
+            body = DecisionSettings.model_validate_json(Path(settings_file).read_text()).model_dump()
+        except (OSError, ValueError) as exc:
+            console.print(f"[red]Invalid runner settings:[/red] {exc}")
+            return EXIT_USAGE_ERROR
+    result = _live_api_call("PUT" if body is not None else "GET", path, body=body)
+    console.print_json(data=result)
+    return EXIT_RUN_FAILED if result.get("status") == "error" else EXIT_SUCCESS
+
+
 def cmd_connector_stop(profile_id: Optional[str]) -> int:
     """Stop a live remote MCP connector runner."""
     code, broker = _live_profile_connector(profile_id, require_runner=True)
@@ -5421,6 +5469,8 @@ def _dispatch_connector(args: argparse.Namespace) -> int:
         return cmd_connector_status(args.profile)
     if sub == "start":
         return cmd_connector_start(args.profile)
+    if sub == "runner-settings":
+        return cmd_connector_runner_settings(args.profile, args.file)
     if sub == "stop":
         return cmd_connector_stop(args.profile)
     if sub == "halt":
@@ -5436,6 +5486,17 @@ def _dispatch_connector(args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------------------
 # CLI entrypoint
 # ---------------------------------------------------------------------------
+
+def _positive_int(value: str) -> int:
+    """argparse type for counts that must be at least one."""
+    try:
+        number = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"invalid int value: {value!r}") from None
+    if number < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {number}")
+    return number
+
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the CLI parser with subcommands and compatibility flags."""
@@ -5528,7 +5589,7 @@ def _build_parser() -> argparse.ArgumentParser:
     channels_pairing.add_argument("pairing_args", nargs="*", help="Pairing command arguments")
 
     list_parser = subparsers.add_parser("list", help="List runs")
-    list_parser.add_argument("--limit", dest="list_limit", type=int, default=20, help="Maximum number of runs")
+    list_parser.add_argument("--limit", dest="list_limit", type=_positive_int, default=20, help="Maximum number of runs")
 
     show_parser = subparsers.add_parser("show", help="Show run details")
     show_parser.add_argument("run_id", help="Run identifier")
@@ -5593,7 +5654,7 @@ def _build_parser() -> argparse.ArgumentParser:
     memory_search_parser = memory_subparsers.add_parser("search", help="Recall memories for a query")
     memory_search_parser.add_argument("query", help="Search text")
     memory_search_parser.add_argument(
-        "--limit", dest="memory_limit", type=int, default=5, help="Maximum matches (default: 5)"
+        "--limit", dest="memory_limit", type=_positive_int, default=5, help="Maximum matches (default: 5)"
     )
 
     memory_forget_parser = memory_subparsers.add_parser("forget", help="Remove a memory entry")
@@ -5749,6 +5810,12 @@ def _build_parser() -> argparse.ArgumentParser:
     ):
         p = connector_subparsers.add_parser(name, help=help_text)
         _add_connector_profile_arg(p)
+
+    runner_settings = connector_subparsers.add_parser(
+        "runner-settings", help="Preview model spending or save runner cadence/budgets from JSON"
+    )
+    _add_connector_profile_arg(runner_settings)
+    runner_settings.add_argument("--file", help="Validated settings JSON; stop the runner before changing it")
 
     # Alpha Zoo subcommands (registered via cli_handlers.add_subparser)
     from src.factors.cli_handlers import add_subparser as _add_alpha_subparser

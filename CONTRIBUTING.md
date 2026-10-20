@@ -32,6 +32,9 @@ filing dates and require the S&P 500 universe. Results report observed coverage,
 missing symbols and current-constituent survivorship bias. A first large-universe
 download can take minutes; later evaluations reuse the existing panel cache.
 
+Factor benchmarks skip alphas with fewer than two IC observations and report
+the reason. They do not rank an unestimable sample standard deviation as zero.
+
 Analysis drafts and completed results survive navigation and reload in the same
 browser tab. Factor progress reports data loading separately from computation;
 Reconnect resumes the existing job or repeats its identical request ID. Running
@@ -50,10 +53,36 @@ optional dependencies before retrying. Explicit-only sources retain their
 existing currency and fallback boundaries. Missing observations are never
 replaced with invented prices or financial fields.
 
+Standalone revalidation reuses the annualisation factor saved in the run card,
+including the runner's corrections for actual bar spacing. For older cards
+without that field, it reconstructs the factor from the saved configuration and
+equity timestamps; the original per-symbol price indexes are not available.
+
 For AI-assisted or automation-assisted contributions, also see
 [`AGENT_CONTRIBUTOR_GUIDE.md`](AGENT_CONTRIBUTOR_GUIDE.md). It summarizes safe
 local checks, higher-risk broker/MCP/credential surfaces, and the expected PR
 risk notes for agent-authored changes.
+
+## Keep internal documents local
+
+The repository-root `docs/` directory holds local working notes and must not
+be committed. Local agent instructions and memory files (`AGENTS.md`,
+`AGENTS.override.md`, `CLAUDE.md`, `CLAUDE.local.md`, `MEMORY.md`,
+`CODEX_MEMORY.md`, and `NOTES.md`) must also remain untracked at any depth.
+Publish project documentation in `wiki/docs/` or the relevant source directory.
+
+Before committing, run:
+
+```bash
+python tools/ci_private_files_gate.py
+```
+
+This check also runs through `bash tools/ci_grep_gates.sh` in CI on pushes and
+pull requests. It reads the Git index, so force-adding an ignored document is
+still rejected; ignored local files and public documentation are allowed.
+It prints filenames only, never document contents. If a file was accidentally
+staged, use `git rm --cached -- <path>` to stop tracking it while preserving the
+local copy. This does not erase copies in previous commits.
 
 ## Developer Certificate of Origin (DCO)
 

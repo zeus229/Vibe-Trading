@@ -52,15 +52,25 @@
 
 > ⚠️ **Security warning:** The X account `VibeTrading_HKU`, Virtuals project `101845`, and token contract `0x640BDBF77b6447E8b7DB7894cED84BD1c40571f4` are not official Vibe-Trading assets. We have never launched or endorsed any token or memecoin. Do not buy, connect a wallet, or sign anything. [Details](SECURITY.md#official-channels--impersonation).
 
+- **2026-10-20** 🛠️ **Backtest diagnostics and research correctness**: Warn about unrecognized backtest config keys, show undefined correlations as unknown instead of zero, and reuse the saved annualisation factor when revalidating runs ([#1935](https://github.com/HKUDS/Vibe-Trading/pull/1935), [#1933](https://github.com/HKUDS/Vibe-Trading/pull/1933), [#1915](https://github.com/HKUDS/Vibe-Trading/pull/1915)). Also improve factor sample checks, tool input validation, journal market classification, numeric formatting and WeCom streaming. All 14 fixes and remaining limits are in [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-19** 🛠️ **Nine financial correctness fixes**: Correct recency weights in factor decay, A-share board limits and Beijing symbol routing, SEC Q4 flow derivation, and event-study estimation windows. Preserve Futu holdings identity and tiny MACD/Bollinger values; reject negative specific variances and apply pair-specific fees to Yahoo forex symbols ([#1912](https://github.com/HKUDS/Vibe-Trading/pull/1912), [#1920](https://github.com/HKUDS/Vibe-Trading/pull/1920), [#1930](https://github.com/HKUDS/Vibe-Trading/pull/1930)). See [CHANGELOG](CHANGELOG.md) for all nine fixes and limits.
+
+- **2026-10-17** 🛠️ **Token usage and research reliability**: View LLM usage in Run Detail, chat and swarm ([#1890](https://github.com/HKUDS/Vibe-Trading/pull/1890)). Shared scheduling now powers research and optional background jobs ([#1893](https://github.com/HKUDS/Vibe-Trading/pull/1893)); live scheduling is unchanged. Fix journal date/time pairing, evidence paths, factor ties, memory roots, numeric error handling and channel progress. See [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-16** 🛠️ **Credential safety and financial correctness**: Scrub more channel/provider secrets ([#1880](https://github.com/HKUDS/Vibe-Trading/pull/1880)), refresh cached local bars after source edits ([#1879](https://github.com/HKUDS/Vibe-Trading/pull/1879)), and allocate reversal fees once ([#1891](https://github.com/HKUDS/Vibe-Trading/pull/1891)). Correct European journal amounts, strict JSON, zero/negative comparisons, holding periods, weight floors, plateau detection and report paths. See [CHANGELOG](CHANGELOG.md).
+
+- **2026-10-15** 🛠️ **Model spending controls and research reliability**: Live runners use independent decision sessions with configurable cadence and persistent daily usage budgets ([#1854](https://github.com/HKUDS/Vibe-Trading/issues/1854)). Lightweight backtest previews preserve complete trade history ([#1853](https://github.com/HKUDS/Vibe-Trading/pull/1853), [#1865](https://github.com/HKUDS/Vibe-Trading/pull/1865)). Fix percentage evidence arithmetic, copied-run history deduplication, swing-signal timing, crypto routing and credential redaction. See [CHANGELOG](CHANGELOG.md) for scope and limits.
+
 - **2026-10-14** 🛠️ **Backtest, search and document fixes**: Risk ratios and equity exports now include first-bar PnL ([#1844](https://github.com/HKUDS/Vibe-Trading/pull/1844)). Session search returns distinct sessions with preserved titles and contextual snippets ([#1827](https://github.com/HKUDS/Vibe-Trading/pull/1827), [#1834](https://github.com/HKUDS/Vibe-Trading/pull/1834)). Improve PDF/Office extraction, reject unresolved evidence references, and strengthen financial-input validation and credential redaction.
+
+<details>
+<summary>Earlier news</summary>
 
 - **2026-10-13** 🧩 **Portfolio imports, strategy adaptation and research tools**: Read-only extraETF holdings imports support dated EUR valuation and allocation proposals; adapted strategies get their own backtest evidence ([#1170](https://github.com/HKUDS/Vibe-Trading/issues/1170), [#1149](https://github.com/HKUDS/Vibe-Trading/issues/1149)). Add tested custom model endpoints, a shared manual Pixel Office task board, Persian/Turkish UI, mStock read-only queries and Gildata research data.
   Fix settlement-currency accounting, Futu market selection and cost basis, per-symbol HK board lots, saved validation settings and run progress. Complete declared grounding checks and the agent-loop split. mStock remains excluded from portfolio aggregation; Robinhood options execution remains unavailable. See [CHANGELOG](CHANGELOG.md) for scope and limits.
 
 - **2026-10-12** 🧮 **Research and backtest updates**: Correct opening fills, liquidation-time attribution, drawdown duration, valuation tolerances and SEC filing timing in factor IC ([#1780](https://github.com/HKUDS/Vibe-Trading/pull/1780)–[#1794](https://github.com/HKUDS/Vibe-Trading/pull/1794)). Add 13 fundamental/valuation factors, Brazil data and backtests, opt-in ZimaOS templates, and Feishu run progress. See [CHANGELOG](CHANGELOG.md) for scope and data limitations.
-
-<details>
-<summary>Earlier news</summary>
 
 - **2026-10-11** 🛠️ **Five priority fixes**: Derived figures require evidence for every data operand; unsupported live options stay blocked. Offline benchmarks retain their selected source, trade artifacts distinguish break-even exits, and Codex tools preserve optional arguments ([#1622](https://github.com/HKUDS/Vibe-Trading/issues/1622), [#1779](https://github.com/HKUDS/Vibe-Trading/pull/1779), [#1781](https://github.com/HKUDS/Vibe-Trading/pull/1781), [#1785](https://github.com/HKUDS/Vibe-Trading/pull/1785)).
 
@@ -865,7 +875,7 @@ The shared backtest market classifier recognizes `BTC/USD`, `ETH/USD`,
 </details>
 
 <details>
-<summary><b>Quant Library</b> <sub>306 tested functions across 23 modules, callable from every transport</sub></summary>
+<summary><b>Quant Library</b> <sub>308 tested functions across 24 modules, callable from every transport</sub></summary>
 
 `src/quantlib` holds one tested implementation of each piece of finance math the
 agent needs. Skills **import** these rather than carrying formulas inside
@@ -882,6 +892,7 @@ that is a bug, not a pattern.
 | `attribution` | Brinson-Fachler decomposition |
 | `performance` · `fundmath` | TWR / MWR / Modified Dietz; XIRR / MOIC / DPI / TVPI |
 | `factormodel` · `eventstudy` | Factor regressions, event studies; portfolio style exposure reports incomplete factor rows as unmatched weight. |
+| `neutralization` | Optional per-observation OLS/WLS factor residualization, audited control quality selection, and cross-sectional PCA at any panel frequency. [Workflow and examples](agent/src/skills/factor-research/references/neutralization.md). |
 | `multipletesting` · `crossvalidation` | Deflated significance, purged CV; purged walk-forward splits omit folds with no training observations left after purging; Sharpe significance summaries reject non-finite inputs by name. |
 | `impact` | Market-impact models |
 | `volatility` | Heston (1993) stochastic-volatility pricing; Heston pricing requires finite inputs and a positive integration limit; invalid inputs return a domain error. |
@@ -1380,6 +1391,10 @@ Saves write the `channels.<name>` section of `~/.vibe-trading/agent.json` atomic
 
 ### Strategy & Backtesting
 
+Average holding period includes completed same-bar trades (zero bars). The
+existing `avg_holding_days` compatibility key reports the engine's holding-bar
+measure; it is not a conversion to calendar days.
+
 Standalone revalidation (`python -m backtest.validation <run_dir>`) runs all
 three validation tools using saved `config.json` validation parameters; missing
 parameters use the existing defaults. This includes simulation counts, seeds,
@@ -1455,6 +1470,18 @@ signal = engine.compute_signal(panel)
 ```
 
 Correlation market inference recognizes explicit crypto pairs; bare equity tickers such as `ABNB` and `SOL` use the US equity data chain.
+
+### Trade journal fees
+
+Journal PnL includes recorded fees. When one fill closes a position and opens
+an opposite position, its fee is split by quantity between the two legs.
+Profile win rate and the average-win/average-loss ratio use the resulting net
+PnL of FIFO matched portions; those portions are not necessarily whole orders.
+
+Generic journals accept a complete `datetime` column or separate `date` and
+`time` columns (case-insensitive). Split columns are combined before sorting
+and FIFO matching; Excel date serials and time fractions are supported.
+A complete `datetime` column takes precedence when all three are present.
 
 ### Market Research
 
@@ -2009,6 +2036,38 @@ The agent exposes connector-scoped tools named `trading_connections`,
 `trading_positions`, `trading_orders`, `trading_quote`, and `trading_history`.
 Live-broker raw MCP tools are not registered directly as `mcp_<broker>_*`.
 No IBKR order-placement tool is registered.
+
+### Live runner model spending
+
+Model calls are billed even when a mandate permits only one trade or the agent
+places no orders. The runner checks safety every minute, but defaults to a model
+decision every **15 minutes**, at most **26 decisions / 1,000,000 reported tokens
+per UTC day**. Each decision starts a fresh conversation and reconstructs broker
+state under the existing mandate gate.
+
+Configure cadence, a once-daily wall-clock time/timezone, and daily budgets in
+**Runtime → Model schedule and spending limits**, or the chat runner panel.
+Stop the runner before editing. The CLI uses the same authenticated API:
+
+```bash
+vibe-trading connector runner-settings --profile robinhood-live-mcp
+vibe-trading connector runner-settings --profile robinhood-live-mcp --file runner-settings.json
+```
+
+The JSON accepts `interval_seconds`, optional `daily_at` (`HH:MM`) and `timezone`
+(IANA, default `America/New_York`), `max_daily_turns`, `max_daily_tokens`, and
+optional `max_daily_cost_usd`, `input_usd_per_million`, `output_usd_per_million`.
+Both prices are required for a dollar limit. Use the highest applicable input or
+cache-write price; estimates ignore cache discounts and auxiliary model calls.
+Daily projections need measured usage and configured prices; unknown costs stay
+unknown. The same settings are exposed by `GET` / `PUT /live/runner/settings?broker=robinhood`.
+
+Spending history survives restarts. Limits are checked **after each provider
+response**, so a response can overshoot a token or estimated-dollar budget.
+Exhaustion or missing usage trips the existing kill switch and cancels the active
+decision before its tool calls. Existing halt/cancel/flatten behavior applies;
+inspect the broker and usage before resuming. An unfinished decision after a
+crash is blocked for inspection, never silently counted as free.
 
 ### 🔐 TAP Mode — full credential isolation & human-approved writes
 
