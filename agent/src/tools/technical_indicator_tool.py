@@ -280,6 +280,7 @@ class TechnicalIndicatorTool(BaseTool):
         "boundary, serving provenance and a fingerprint of the exact bars used. "
         "Uses the project's data loaders to fetch price history, then computes "
         "indicators locally. "
+        "After context compaction an exact prior result may be restored; use "
         "no_cache=true only when the task genuinely needs a new observation. "
     )
     parameters = {
@@ -313,7 +314,6 @@ class TechnicalIndicatorTool(BaseTool):
                     "read_identity.dataset_fingerprint identifies the exact bars used."
                 ),
             },
-        },
             "no_cache": {
                 "type": "boolean",
                 "description": (
@@ -323,6 +323,7 @@ class TechnicalIndicatorTool(BaseTool):
                 ),
                 "default": False,
             },
+        },
         "required": ["symbol"],
     }
     repeatable = True
