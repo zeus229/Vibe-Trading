@@ -69,7 +69,6 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
     types = {key: Decimal(0) for key in ("ACCIONES", "CEDEARS", "BONOS", "FCI", "EFECTIVO")}
     holdings = []
     invested = Decimal(0)
-    pnl_total, pnl_count = Decimal(0), 0
     for row in snapshot.get("positions", []):
         if row.get("native_currency") != "ARS" or row.get("priced") is not True:
             raise CompactPortfolioError("A holding lacks a priced ARS valuation")
@@ -82,9 +81,6 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
         invested += value
         raw_pnl = row.get("unrealized_pnl_native")
         pnl = _signed_amount(raw_pnl, "unrealized_pnl_native") if raw_pnl is not None else None
-        if pnl is not None:
-            pnl_total += pnl
-            pnl_count += 1
         countries[country] = countries.get(country, Decimal(0)) + value
         types[instrument_type] = types.get(instrument_type, Decimal(0)) + value
         holdings.append(
@@ -131,9 +127,6 @@ def compact_snapshot(snapshot: dict[str, Any]) -> dict[str, Any]:
             # Declared by the connector: settled cash, SIGNED pending settlement and their sum. When a negative
             # pending flow was folded into ``cash_ars``, only this block says which part is really settled.
             "cash_breakdown_ars": cash_breakdown,
-            # Unrealized P/L over the holdings that report one (cost basis known); coverage says how many.
-            "unrealized_pnl_ars": float(pnl_total) if pnl_count else None,
-            "unrealized_pnl_positions": {"with_pnl": pnl_count, "total": len(holdings)},
         },
         "aggregates": {"by_country": buckets(countries), "by_instrument_type": buckets(types)},
         "holdings": holdings,
