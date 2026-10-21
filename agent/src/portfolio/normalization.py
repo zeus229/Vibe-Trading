@@ -254,9 +254,14 @@ def value_position(
             if priced
             else Decimal("0")
         )
+        # Asistente Casa is authoritative for native ARS P&L: an explicit
+        # null means unavailable, even when price and cost are both known.
+        # Other native connectors retain the generic cost-based fallback.
         pnl_native = (
             _decimal(source_pnl)
             if priced and source_pnl is not None
+            else None
+            if row.get("broker") == "asistente-casa"
             else (price - cost) * quantity
             if priced and cost > 0
             else None
