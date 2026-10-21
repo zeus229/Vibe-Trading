@@ -101,7 +101,7 @@ def test_native_account_separates_unsettled_cash(tmp_path, monkeypatch):
     assert allocation["unsettled_cash_native"] == 200.0
 
 
-def _refresh_with_account(tmp_path, monkeypatch, account):
+def _refresh_with_account(tmp_path, monkeypatch, account, *, source_pnl=None):
     profile = TradingProfile(
         id="asistente-casa-live-readonly", connector="asistente-casa", label="Asistente Casa",
         environment="live", transport="local_plugin",
@@ -121,7 +121,7 @@ def _refresh_with_account(tmp_path, monkeypatch, account):
         get_account=lambda profile_id, *, connection_id=None: {"account": account},
         get_positions=lambda profile_id, *, connection_id=None: {"positions": [{
             "symbol": "GGAL", "quantity": "1", "average_cost": "600", "current_price": "700",
-            "market_value": "700", "currency": "ARS"}]},
+            "market_value": "700", "currency": "ARS", "unrealized_pnl": source_pnl}]},
         get_quote=lambda *a, **k: {},
         fx_fetcher=lambda: (_ for _ in ()).throw(AssertionError("no FX")),
     )
@@ -162,12 +162,13 @@ def test_cash_semantics_absent_or_malformed_is_none(tmp_path, monkeypatch, bad):
     assert snapshot["accounts"][0]["cash_semantics"] is None
 
 
-def test_native_unrealized_pnl_reaches_agent_context(tmp_path, monkeypatch):
-    service, _ = _refresh_with_account(tmp_path, monkeypatch, {
+@pytest.mark.parametrize("source_pnl", [123.45, -27.5, 0.0, None])
+def test_native_unrealized_pnl_reaches_agent_context_unchanged(tmp_path, monkeypatch, source_pnl):
+    service, snapshot = _refresh_with_account(tmp_path, monkeypatch, {
         "portfolio_value": "1000", "cash": "300", "unsettled_cash": "0", "currency": "ARS",
-    })
+    }, source_pnl=source_pnl)
+    assert snapshot["positions"][0]["unrealized_pnl_native"] == source_pnl
     context = service.analysis_context()
     row = context["holdings_native"]["ARS"][0]
-    # cost 600 x 1 vs price 700 -> +100 ARS, derived natively (no FX, no USD).
-    assert row["unrealized_pnl_native"] == 100.0
-
+    # Price 700 and cost 600 must NOT synthesize +100 when source P&L is null.
+    assert row["unrealized_pnl_native"] == source_pnl
