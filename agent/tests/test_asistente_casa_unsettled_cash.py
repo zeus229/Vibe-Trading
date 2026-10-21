@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from src.portfolio.config import PortfolioSettingsStore
 from src.portfolio import config as portfolio_config
 from src.portfolio import service as portfolio_service
@@ -97,3 +99,76 @@ def test_native_account_separates_unsettled_cash(tmp_path, monkeypatch):
     assert native["unsettled_cash"] == 200.0
     assert native["unpriced_or_other"] == 0.0
     assert allocation["unsettled_cash_native"] == 200.0
+
+
+def _refresh_with_account(tmp_path, monkeypatch, account, *, source_pnl=None):
+    profile = TradingProfile(
+        id="asistente-casa-live-readonly", connector="asistente-casa", label="Asistente Casa",
+        environment="live", transport="local_plugin",
+        capabilities=("account.read", "positions.read"), readonly=True,
+    )
+    resolver = lambda profile_id: profile if profile_id == profile.id else (_ for _ in ()).throw(ValueError(profile_id))
+    monkeypatch.setattr(portfolio_service, "profile_by_id", resolver)
+    monkeypatch.setattr(trading_connections, "profile_by_id", resolver)
+    monkeypatch.setattr(portfolio_config, "profile_by_id", resolver)
+    monkeypatch.setattr(portfolio_config, "list_profiles", lambda: [profile])
+    settings = PortfolioSettingsStore(tmp_path / "portfolio.json")
+    settings.connection_store.ensure("ars", profile.id, "ARS")
+    settings.save({"display_currency": "ARS", "sources": [{
+        "connection_id": "ars", "label": "ARS", "enabled": True, "order": 0, "include_cash": True}]})
+    service = PortfolioService(
+        PortfolioStore(tmp_path / "portfolio.sqlite3"), settings_store=settings,
+        get_account=lambda profile_id, *, connection_id=None: {"account": account},
+        get_positions=lambda profile_id, *, connection_id=None: {"positions": [{
+            "symbol": "GGAL", "quantity": "1", "average_cost": "600", "current_price": "700",
+            "market_value": "700", "currency": "ARS", "unrealized_pnl": source_pnl}]},
+        get_quote=lambda *a, **k: {},
+        fx_fetcher=lambda: (_ for _ in ()).throw(AssertionError("no FX")),
+    )
+    return service, service.refresh()
+
+
+def test_cash_semantics_survive_negative_pending_folded_into_cash(tmp_path, monkeypatch):
+    # settled 500, pending -200 -> the connector folds economic cash (300) into ``cash``.
+    service, snapshot = _refresh_with_account(tmp_path, monkeypatch, {
+        "portfolio_value": "1000", "cash": "300", "unsettled_cash": "0", "currency": "ARS",
+        "cash_semantics": {
+            "settled_cash_ars": 500.0, "unsettled_signed_ars": -200.0, "economic_cash_ars": 300.0,
+            "projection": "negative_pending_folded_into_cash", "cash_field_meaning": "economic",
+            "secret_extra": "dropped",
+        },
+    })
+    account = snapshot["accounts"][0]
+    assert account["cash_native"] == 300.0 and account["unsettled_cash_native"] == 0.0
+    assert account["cash_semantics"]["settled_cash_ars"] == 500.0
+    assert account["cash_semantics"]["unsettled_signed_ars"] == -200.0
+    assert account["cash_semantics"]["economic_cash_ars"] == 300.0
+    assert "secret_extra" not in account["cash_semantics"]
+    allocation = service.analysis_context()["account_allocation"][0]
+    assert allocation["cash_semantics"]["unsettled_signed_ars"] == -200.0
+
+
+@pytest.mark.parametrize("bad", [
+    None,
+    {"settled_cash_ars": 1.0},
+    {"settled_cash_ars": "x", "unsettled_signed_ars": 0, "economic_cash_ars": 0},
+    {"settled_cash_ars": float("nan"), "unsettled_signed_ars": 0, "economic_cash_ars": 0},
+])
+def test_cash_semantics_absent_or_malformed_is_none(tmp_path, monkeypatch, bad):
+    account = {"portfolio_value": "1000", "cash": "300", "unsettled_cash": "0", "currency": "ARS"}
+    if bad is not None:
+        account["cash_semantics"] = bad
+    _, snapshot = _refresh_with_account(tmp_path, monkeypatch, account)
+    assert snapshot["accounts"][0]["cash_semantics"] is None
+
+
+@pytest.mark.parametrize("source_pnl", [123.45, -27.5, 0.0, None])
+def test_native_unrealized_pnl_reaches_agent_context_unchanged(tmp_path, monkeypatch, source_pnl):
+    service, snapshot = _refresh_with_account(tmp_path, monkeypatch, {
+        "portfolio_value": "1000", "cash": "300", "unsettled_cash": "0", "currency": "ARS",
+    }, source_pnl=source_pnl)
+    assert snapshot["positions"][0]["unrealized_pnl_native"] == source_pnl
+    context = service.analysis_context()
+    row = context["holdings_native"]["ARS"][0]
+    # Price 700 and cost 600 must NOT synthesize +100 when source P&L is null.
+    assert row["unrealized_pnl_native"] == source_pnl
