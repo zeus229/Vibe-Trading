@@ -317,6 +317,15 @@ def get_provider_capabilities(
     normalized = (provider or "").strip().lower().replace("_", "-")
     if normalized == "custom":
         return ProviderCapabilities("custom", None, "OPENAI_BASE_URL", capture_reasoning=True)
+    if normalized == "minimax" and model == "MiniMax-M3.1-Flash":
+        # Flash returns reasoning separately and requires it on subsequent tool turns.
+        return ProviderCapabilities(
+            "minimax",
+            "MINIMAX_API_KEY",
+            "MINIMAX_BASE_URL",
+            capture_reasoning=True,
+            send_reasoning_content=True,
+        )
     if normalized == "openai-codex":
         return _PROVIDERS["openai-codex"]
     if normalized and normalized != "openai":
