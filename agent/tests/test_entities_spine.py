@@ -436,6 +436,29 @@ def test_load_cashflows_reads_european_grouping_without_mangling_it(tmp_path):
     assert load_cashflows(path)[0].amount == pytest.approx(1234.50)
 
 
+def test_load_cashflows_reads_dot_grouping_with_no_fraction(tmp_path):
+    """'1.234.567' is 1234567, the same way '1,234,567' already is.
+
+    Two or more of the same separator cannot be a decimal point, so the number
+    is unambiguous whichever locale wrote it -- the multi-comma case is already
+    resolved that way. Without the matching dot rule the cell reaches float()
+    unchanged and the row fails as "not usable".
+    """
+    path = _write_csv(
+        tmp_path,
+        "flows.csv",
+        'date,amount,kind,currency\n2024-03-31,"1.234.567",coupon,USD\n',
+    )
+    assert load_cashflows(path)[0].amount == pytest.approx(1234567.0)
+
+    comma = _write_csv(
+        tmp_path,
+        "commas.csv",
+        'date,amount,kind,currency\n2024-03-31,"1,234,567",coupon,USD\n',
+    )
+    assert load_cashflows(comma)[0].amount == pytest.approx(1234567.0)
+
+
 def test_load_cashflows_refuses_an_ambiguous_single_comma(tmp_path):
     """'1,234' is 1234 in a US export and 1.234 in a European one."""
     path = _write_csv(

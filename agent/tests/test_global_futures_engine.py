@@ -65,6 +65,8 @@ class TestExtractProduct:
             ("NQ2503", "NQ"),
             ("ES.CME", "ES"),
             ("ZCH4", "ZC"),
+            ("OJF25", "OJ"),
+            ("ZRH25", "ZR"),
             ("6EZ4", "6E"),
             ("6JH25", "6J"),
             ("6B", "6B"),
@@ -201,6 +203,22 @@ class TestCommission:
         comm = engine.calc_commission(5, 5000.0, 1, is_open=True)
         assert comm == pytest.approx(5.0)
 
+    @pytest.mark.parametrize("symbol", ["MYMZ4", "M2KZ4"])
+    def test_every_micro_equity_index_pays_the_micro_rate(self, symbol: str) -> None:
+        """The micro equity-index contracts are priced like their siblings.
+
+        MES/MNQ already carried the micro rate; MYM/M2K used to fall through
+        to the full-size default and cost 4x what the same family pays.
+        """
+        engine = _make_engine()
+        comm = engine.calc_commission_for_symbol(symbol, 1, 5000.0, is_open=True)
+        assert comm == pytest.approx(0.62)
+
+    def test_unlisted_product_keeps_the_default(self) -> None:
+        engine = _make_engine()
+        comm = engine.calc_commission_for_symbol("XYZF25", 1, 5000.0, is_open=True)
+        assert comm == pytest.approx(2.50)
+
 
 # ---------------------------------------------------------------------------
 # Contract multiplier
@@ -217,6 +235,11 @@ class TestContractMultiplier:
             ("GCM25", 100),
             ("SIH25", 5000),
             ("ZCH4", 50),
+            ("OJF25", 150),
+            ("ZRH25", 2000),
+            ("KC=F", 375),
+            ("SBH25", 1120),
+            ("CTZ4", 500),
             ("ZBM5", 1000),
             ("MESZ4", 5),
             ("6EZ4", 125000),

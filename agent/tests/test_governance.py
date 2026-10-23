@@ -720,6 +720,35 @@ def test_the_chain_continues_across_a_rotation(tmp_path):
     assert result.record_count == 9
 
 
+def test_a_second_rotation_is_not_refused_as_corruption(tmp_path):
+    # Rotation guards itself by verifying the chain first, which is right --
+    # but the active file after the FIRST rotation legitimately starts mid
+    # chain (seq 6 above), so verifying that file alone reports a seq_gap and
+    # a healthy ledger can never be sealed twice. The guard has to ask the
+    # same question the module's own whole-history verifier asks.
+    from src.governance.ledger import (
+        archive_segments,
+        rotate_if_needed,
+        verify_chain_with_archives,
+    )
+
+    led = tmp_path / "audit_chain.jsonl"
+    for i in range(5):
+        append_record(led, {"action": "order", "n": i})
+    first = rotate_if_needed(led, max_bytes=100)
+    for i in range(5, 10):
+        append_record(led, {"action": "order", "n": i})
+
+    assert verify_chain_with_archives(led).ok is True  # nothing is wrong here
+
+    second = rotate_if_needed(led, max_bytes=100)
+
+    assert second is not None
+    assert second != first
+    assert archive_segments(led) == [first, second]
+    assert verify_chain_with_archives(led).ok is True
+
+
 def test_deleting_a_whole_sealed_segment_is_detected(tmp_path):
     # This is what rotation would have cost us if the chain restarted: a
     # segment could be removed wholesale and each remaining file would still
