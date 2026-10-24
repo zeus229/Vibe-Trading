@@ -15,7 +15,7 @@ from backtest.engines.argentina_equity import ArgentinaEquityEngine
 SESSIONS = tuple(date(2024, 5, d) for d in (27, 28, 29, 30, 31))
 
 
-def _engine(*, adjustment="hold", cash=1000):
+def _engine(*, adjustment="hold", cash=1000, fee=0):
     return ArgentinaEquityEngine({
         "initial_cash": cash,
         "position_adjustment": adjustment,
@@ -26,7 +26,7 @@ def _engine(*, adjustment="hold", cash=1000):
         "ar_settlement_sessions": SESSIONS,
         "ar_brokerage_rate": 0,
         "ar_exchange_fee_rate": 0,
-        "ar_fixed_fee": 0,
+        "ar_fixed_fee": fee,
         "ar_slippage": 0,
     })
 
