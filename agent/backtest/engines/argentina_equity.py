@@ -95,6 +95,10 @@ class ArgentinaEquityEngine(BaseEngine):
                         raise ValueError(
                             f"{symbol}: price_series must be 'adjusted' or 'unadjusted'"
                         )
+                    if "credit_date" in item:
+                        credit = _parse_session(item["credit_date"], f"{symbol}: credit_date")
+                        if credit < date.fromisoformat(effective):
+                            raise ValueError(f"{symbol}: credit_date precedes effective_date")
                     previous = effective
             self.instruments[symbol.upper()] = {**info, "tick_size": tick}
             if info["kind"] == "cedear":
@@ -111,8 +115,9 @@ class ArgentinaEquityEngine(BaseEngine):
         if calendar is None:
             self.settlement_sessions = None
         else:
-            if not isinstance(calendar, (list, tuple)) or not calendar or any(type(x) is not date for x in calendar):
-                raise ValueError("ar_settlement_sessions must contain explicit date objects")
+            if not isinstance(calendar, (list, tuple)) or not calendar:
+                raise ValueError("ar_settlement_sessions must contain explicit session dates")
+            calendar = [_parse_session(x, "ar_settlement_sessions") for x in calendar]
             if list(calendar) != sorted(set(calendar)):
                 raise ValueError("ar_settlement_sessions must be strictly increasing")
             self.settlement_sessions = tuple(calendar)
@@ -198,6 +203,17 @@ class ArgentinaEquityEngine(BaseEngine):
                     frame, symbol, instrument["ratio_history"],
                     tolerance=self.ratio_jump_tolerance,
                 )
+                credits = {str(item["effective_date"]): item.get("credit_date")
+                           for item in instrument["ratio_history"]}
+                for event in events:
+                    credit = credits.get(event["effective_date"])
+                    if credit is None:
+                        raise ValueError(
+                            f"{symbol}: ratio change on {event['effective_date']} needs the "
+                            "depositary credit_date of the additional certificates; "
+                            "positions held through it cannot be sold before then"
+                        )
+                    event["credit_date"] = str(_parse_session(credit, f"{symbol}: credit_date"))
                 self.ratio_adjustments.extend(events)
                 jumps = unexplained_discontinuities(frame, self.max_unexplained_cedear_move)
                 if jumps:
@@ -220,73 +236,46 @@ class ArgentinaEquityEngine(BaseEngine):
 
     def available_cash(self, timestamp: pd.Timestamp) -> float:
         """Buying power for normal BYMA settlement, including matching sales."""
-        if self.settlement_sessions is None:
-            raise ValueError("BYMA buying power requires a verified settlement calendar")
-        today = _trade_date(timestamp)
-        if today is None:
-            raise ValueError("BYMA buying power requires a session timestamp")
-        purchase_due = settlement_date(today, self.settlement_sessions)
-        return available_for_settlement(
-            self.capital, self.fill_records, today, purchase_due,
-            self.settlement_sessions,
-        )
+        return argentina_available_cash(self, self, timestamp)
 
     def projected_reduction_buying_power(
         self, reductions: list, timestamp: pd.Timestamp,
     ) -> float:
-        """Match sales and purchases with the same normal settlement date.
-
-        This assumes one validated currency/clearing pool and normal-cash
-        settlement, not same-day instant cash or permission to withdraw.
-        """
-        if self.settlement_sessions is None:
-            raise ValueError("BYMA netting requires a verified settlement calendar")
-        today = _trade_date(timestamp)
-        if today is None:
-            raise ValueError("BYMA netting requires a valid session date")
-        settlement_date(today, self.settlement_sessions)
-        return sum(order.capital_credit for order in reductions)
+        """Match sales and purchases with the same normal settlement date."""
+        return argentina_reduction_buying_power(self, self, reductions, timestamp)
 
     def can_liquidate_at_end(self, symbol: str, timestamp: pd.Timestamp) -> bool:
-        """The terminal close obeys the same sell-settlement rule as signals."""
-        today = _trade_date(timestamp)
-        sessions = self.settlement_sessions
-        if today is None or sessions is None:
-            return False
-        return argentina_sell_is_settled(self, symbol, today, sessions)
+        """The terminal close obeys the same sell rules as signals."""
+        return argentina_sell_allowed(self, self, symbol, _trade_date(timestamp))
 
     def _engine_diagnostics(self) -> dict:
         """Declare what the terminal equity includes beyond settled cash."""
-        if not self.equity_snapshots:
-            return {}
-        last_day = _trade_date(self.equity_snapshots[-1].timestamp)
-        sessions = self.settlement_sessions
-        if last_day is None or sessions is None:
-            return {}
-        receivable = pending_sale_proceeds(self.fill_records, last_day, sessions)
-        return {
-            "ar_price_basis": "source_split_dividend_adjusted_ohlc_raw_volume",
-            "ar_cedear_ratio_adjustments": list(self.ratio_adjustments),
-            "ar_dropped_non_session_bars": dict(self.dropped_non_session_bars),
-            "ar_unsettled_sale_receivable_at_end": round(receivable, 6),
-            "ar_unliquidated_position_count": len(self.unliquidated_positions),
-            "ar_unliquidated_positions": [
-                {k: (round(v, 6) if isinstance(v, float) else v) for k, v in item.items()}
-                for item in self.unliquidated_positions
-            ],
-            "ar_terminal_equity_basis": (
-                "unsettled_positions_marked_net_of_estimated_exit_costs"
-                if self.unliquidated_positions
-                else "all_positions_liquidated_at_last_close"
-            ),
-        }
+        return argentina_diagnostics(self, self)
+
+    def unit_scale(self, symbol: str, timestamp) -> Decimal:
+        """Adjusted units per real certificate on *timestamp*'s session.
+
+        Bars before an in-window ratio change were restated in post-change
+        units, so one real pre-change certificate is ``new/old`` of them.
+        """
+        today = _trade_date(timestamp)
+        scale = Decimal(1)
+        if today is None:
+            return scale
+        for event in self.ratio_adjustments:
+            if event["symbol"].upper() == symbol.upper() and date.fromisoformat(event["effective_date"]) > today:
+                scale *= Decimal(str(event["new_ratio"])) / Decimal(str(event["old_ratio"]))
+        return scale
 
     def round_size(self, raw_size: float, price: float) -> float:
+        """Whole real lots: before a ratio change one lot spans ``new/old`` units."""
         instrument = self._instrument(self._active_symbol)
         if not math.isfinite(raw_size) or raw_size <= 0:
             return 0.0
-        lot = instrument["lot_size"]
-        return float(math.floor(raw_size / lot) * lot)
+        lot = Decimal(instrument["lot_size"]) * self.unit_scale(
+            self._active_symbol, getattr(self, "_bar_ts", None))
+        lots = (Decimal(repr(raw_size)) / lot).to_integral_value(rounding=ROUND_FLOOR)
+        return float(lots * lot)
 
     def calc_commission(self, size: float, price: float, direction: int, is_open: bool) -> float:
         self._instrument(self._active_symbol)
@@ -303,9 +292,26 @@ class ArgentinaEquityEngine(BaseEngine):
             raise ValueError("invalid order direction")
         side = 1 if direction == 1 else -1
         slipped = Decimal(str(price)) * (Decimal(1) + side * Decimal(str(self.slippage_rate)))
-        tick = instrument["tick_size"]
+        # Real ticks apply to real certificates; adjusted prices before a
+        # ratio change are ``old/new`` of them, and so is the tick.
+        tick = instrument["tick_size"] / self.unit_scale(
+            self._active_symbol, getattr(self, "_bar_ts", None))
         rounding = ROUND_CEILING if side > 0 else ROUND_FLOOR
         return float((slipped / tick).to_integral_value(rounding=rounding) * tick)
+
+
+def _parse_session(value, label: str) -> date:
+    """Accept a ``date`` or a strict ISO ``YYYY-MM-DD`` string (JSON configs)."""
+    if type(value) is date:
+        return value
+    if isinstance(value, str):
+        try:
+            parsed = date.fromisoformat(value)
+        except ValueError:
+            parsed = None
+        if parsed is not None and parsed.isoformat() == value:
+            return parsed
+    raise ValueError(f"{label} must contain explicit session dates (YYYY-MM-DD)")
 
 
 def _trade_date(value) -> date | None:
@@ -345,15 +351,126 @@ def argentina_sell_is_settled(
         return False
 
 
+def _lifecycle_openings(state: BaseEngine, symbol: str) -> list:
+    """Opening fills of the currently held position (since its last close)."""
+    openings = []
+    for fill in reversed(getattr(state, "fill_records", ()) or ()):
+        if fill.symbol != symbol:
+            continue
+        if fill.action == "close":
+            break
+        if fill.action in ("open", "increase"):
+            openings.append(fill)
+    return openings
+
+
+def argentina_ratio_credit_ok(
+    state: BaseEngine, rules: "ArgentinaEquityEngine", symbol: str, today: date,
+) -> bool:
+    """Block sales of certificates not yet credited after a ratio change.
+
+    From the ex-date the position is valued in post-change units, but Caja de
+    Valores credits the additional certificates only on ``credit_date``. A
+    position opened before the ex-date may be sold only by a trade that
+    settles on/after that credit. BaseEngine does not pass the order size, so
+    this conservatively blocks the whole position, not just the extra units.
+    """
+    openings = _lifecycle_openings(state, symbol)
+    first = min((_trade_date(f.timestamp) for f in openings), default=None)
+    if first is None:
+        return True
+    for event in rules.ratio_adjustments:
+        if event["symbol"].upper() != symbol.upper():
+            continue
+        ex = date.fromisoformat(event["effective_date"])
+        if not first < ex <= today:
+            continue
+        credit = date.fromisoformat(event["credit_date"])
+        try:
+            if settlement_date(today, rules.settlement_sessions) < credit:
+                return False
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def argentina_sell_allowed(
+    state: BaseEngine, rules: "ArgentinaEquityEngine", symbol: str, today: date | None,
+) -> bool:
+    """Settled securities and credited certificates: the BYMA sell rule."""
+    sessions = rules.settlement_sessions
+    if today is None or sessions is None:
+        return False
+    return (argentina_sell_is_settled(state, symbol, today, sessions)
+            and argentina_ratio_credit_ok(state, rules, symbol, today))
+
+
+def argentina_available_cash(
+    state: BaseEngine, rules: "ArgentinaEquityEngine", timestamp,
+) -> float:
+    """Buying power for a purchase at *timestamp*, from *state*'s ledger."""
+    if rules.settlement_sessions is None:
+        raise ValueError("BYMA buying power requires a verified settlement calendar")
+    today = _trade_date(timestamp)
+    if today is None:
+        raise ValueError("BYMA buying power requires a session timestamp")
+    purchase_due = settlement_date(today, rules.settlement_sessions)
+    return available_for_settlement(
+        state.capital, state.fill_records, today, purchase_due,
+        rules.settlement_sessions,
+    )
+
+
+def argentina_reduction_buying_power(
+    state: BaseEngine, rules: "ArgentinaEquityEngine", reductions: list, timestamp,
+) -> float:
+    """Same-bar sales fund same-bar purchases: equal normal settlement dates.
+
+    Assumes one validated currency/clearing pool, not instant cash or a
+    permission to withdraw before settlement.
+    """
+    if rules.settlement_sessions is None:
+        raise ValueError("BYMA netting requires a verified settlement calendar")
+    today = _trade_date(timestamp)
+    if today is None:
+        raise ValueError("BYMA netting requires a valid session date")
+    settlement_date(today, rules.settlement_sessions)
+    return sum(order.capital_credit for order in reductions)
+
+
+def argentina_diagnostics(state: BaseEngine, rules: "ArgentinaEquityEngine") -> dict:
+    """Run facts: price basis, ratio handling and terminal equity contents."""
+    if not state.equity_snapshots:
+        return {}
+    last_day = _trade_date(state.equity_snapshots[-1].timestamp)
+    sessions = rules.settlement_sessions
+    if last_day is None or sessions is None:
+        return {}
+    receivable = pending_sale_proceeds(state.fill_records, last_day, sessions)
+    retained = state.unliquidated_positions
+    return {
+        "ar_price_basis": "source_split_dividend_adjusted_ohlc_raw_volume",
+        "ar_cedear_ratio_adjustments": list(rules.ratio_adjustments),
+        "ar_dropped_non_session_bars": dict(rules.dropped_non_session_bars),
+        "ar_unsettled_sale_receivable_at_end": round(receivable, 6),
+        "ar_unliquidated_position_count": len(retained),
+        "ar_unliquidated_positions": [
+            {k: (round(v, 6) if isinstance(v, float) else v) for k, v in item.items()}
+            for item in retained
+        ],
+        "ar_terminal_equity_basis": (
+            "unsettled_positions_marked_net_of_estimated_exit_costs"
+            if retained
+            else "all_positions_liquidated_at_last_close"
+        ),
+    }
+
+
 def argentina_can_execute(
     state: BaseEngine, rules: ArgentinaEquityEngine,
     symbol: str, direction: int, bar: pd.Series,
 ) -> bool:
-    """State/rules helper shared by future standalone and composite routing.
-
-    The runner remains blocked until settled-cash and corporate-action events
-    integrate safely with BaseEngine.
-    """
+    """State/rules helper shared by standalone and composite routing."""
     rules._instrument(symbol)
     if direction not in (0, 1):
         return False
@@ -373,8 +490,4 @@ def argentina_can_execute(
         return False
     if direction == 1:
         return True
-    today = _trade_date(bar.name)
-    sessions = rules.settlement_sessions
-    if today is None or sessions is None:
-        return False
-    return argentina_sell_is_settled(state, symbol, today, sessions)
+    return argentina_sell_allowed(state, rules, symbol, _trade_date(bar.name))

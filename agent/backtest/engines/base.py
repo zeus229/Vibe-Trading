@@ -577,6 +577,7 @@ class BaseEngine(ABC):
         # metrics instead of only to a subclass that overrode the hook.
         self.plan_rejections: Counter = Counter()
         self._bar_idx: int = 0
+        self._bar_ts: Optional[pd.Timestamp] = None  # session being executed
         self._active_symbol: str = ""  # set by _rebalance/_close_position for subclass use
         # Positions the terminal close was not allowed to sell (see
         # can_liquidate_at_end). Empty for every market that keeps the default.
@@ -1280,6 +1281,7 @@ class BaseEngine(ABC):
 
         for i, ts in enumerate(dates):
             self._bar_idx = i
+            self._bar_ts = ts
 
             stop_run = self.before_rebalance_bar(ts, data_map, codes)
             execute_targets = execution_dates is None or ts in execution_dates

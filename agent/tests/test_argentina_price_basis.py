@@ -40,7 +40,9 @@ AAPL_SESSIONS = tuple(date.fromisoformat(row[0]) for row in AAPL_BA_2024_RATIO_C
 )
 RATIO_10_TO_20 = [
     {"effective_date": "2020-01-01", "ratio": "10"},
-    {"effective_date": "2024-01-24", "ratio": "20"},
+    # Banco Comafi notice to BCBA, 2024-01-08 (RESFC-2023-22529-APN-DIR#CNV):
+    # ex-date 2024-01-24, record 2024-01-25, credit 2024-01-26.
+    {"effective_date": "2024-01-24", "ratio": "20", "credit_date": "2024-01-26"},
 ]
 
 
@@ -252,12 +254,15 @@ def test_holding_cedear_through_real_ratio_change_books_no_artificial_loss(tmp_p
     (buy, sell) = engine.fill_records
     # Same quantity on both sides: the engine holds post-change units throughout.
     assert buy.signed_quantity == -sell.signed_quantity
-    # Entry on the 2024-01-16 open (21670 old units = 10835 new units).
+    # Entry on the 2024-01-16 open (21670 per real certificate = 10835 per
+    # adjusted unit). Before the change one real certificate is 2 units, so
+    # 100000 ARS buys 4 whole certificates = 8 units, never a half certificate.
     assert buy.execution_price == pytest.approx(10835.0)
-    # 9 units, 10835 -> 12002.5, no fees: +10.5%. Unadjusted, the same trade
-    # would have read 9 x (12002.5 - 21670) = -45% of capital.
+    assert buy.signed_quantity == 8
+    # 8 units, 10835 -> 12002.5, no fees: +9.3%. Unadjusted, the same trade
+    # would have read 4 x (12002.5 - 21670) = -39% of capital.
     assert sell.execution_price == pytest.approx(12002.5)
-    assert metrics["total_return"] == pytest.approx(9 * (12002.5 - 10835.0) / 100_000)
+    assert metrics["total_return"] == pytest.approx(8 * (12002.5 - 10835.0) / 100_000)
     assert metrics["ar_cedear_ratio_adjustments"][0]["source_basis"] == "unadjusted"
     assert metrics["ar_price_basis"] == "source_split_dividend_adjusted_ohlc_raw_volume"
 
