@@ -83,3 +83,16 @@ def test_cedear_rejects_invalid_ratio_history(config):
     ]
     with pytest.raises(ValueError, match="ratio history"):
         ArgentinaEquityEngine({**config, "ar_instruments": {"AAPL.BA": info}})
+
+
+def test_ratio_lookup_is_point_in_time(config):
+    info = dict(config["ar_instruments"]["AAPL.BA"])
+    info["ratio_history"] = [
+        {"effective_date": "2020-01-01", "ratio": "10"},
+        {"effective_date": "2025-06-01", "ratio": "20"},
+    ]
+    engine = ArgentinaEquityEngine({**config, "ar_instruments": {"AAPL.BA": info}})
+    assert str(engine.ratio_at("AAPL.BA", "2024-12-31")) == "10"
+    assert str(engine.ratio_at("AAPL.BA", "2025-06-01")) == "20"
+    with pytest.raises(ValueError, match="no effective ratio"):
+        engine.ratio_at("AAPL.BA", "2019-12-31")
