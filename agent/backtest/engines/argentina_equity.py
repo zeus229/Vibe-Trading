@@ -56,6 +56,27 @@ class ArgentinaEquityEngine(BaseEngine):
                 raise ValueError(f"{symbol}: positive tick_size required") from None
             if not tick.is_finite() or tick <= 0:
                 raise ValueError(f"{symbol}: positive finite tick_size required")
+            if not symbol.upper().endswith(".BA"):
+                raise ValueError(f"{symbol}: expected a .BA listing")
+            if info["kind"] == "cedear":
+                if not info.get("underlying"):
+                    raise ValueError(f"{symbol}: CEDEAR underlying required")
+                ratios = info.get("ratio_history")
+                if not isinstance(ratios, list) or not ratios:
+                    raise ValueError(f"{symbol}: dated ratio_history required")
+                previous = ""
+                for item in ratios:
+                    if not isinstance(item, dict) or "effective_date" not in item or "ratio" not in item:
+                        raise ValueError(f"{symbol}: invalid ratio entry")
+                    date = str(item["effective_date"])
+                    try:
+                        valid_date = pd.Timestamp(date).strftime("%Y-%m-%d") == date
+                        ratio = Decimal(str(item["ratio"]))
+                    except (ValueError, TypeError, ArithmeticError):
+                        raise ValueError(f"{symbol}: invalid ratio entry") from None
+                    if not valid_date or not ratio.is_finite() or ratio <= 0 or date <= previous:
+                        raise ValueError(f"{symbol}: ratio history must be valid and increasing")
+                    previous = date
             self.instruments[symbol.upper()] = {**info, "tick_size": tick}
 
         currencies = {x["currency"] for x in self.instruments.values()}
