@@ -268,3 +268,48 @@ aborts.
   rarely in backtests because placeholder bars are not executable.
 - Unchanged from earlier milestones: gate g, the 61 pre-existing suite
   failures, CI 3.11/3.14 legs, `.BA` routing disabled.
+
+
+## Official ratio-event evidence and runner readiness (2026-10-24)
+
+Official BYMA publication (2020-10-19):
+https://www.byma.com.ar/newsroom/novedades-cedears
+establishes **2020-10-22 ex-price**, **2020-10-23 record date** and
+**2020-10-26 credit of additional certificates** for 39 changed programs.
+For 2024-01-24 AAPL 10:1 -> 20:1, the CNV-authorized conversion and 2024-01-26
+credit are discussed by the broker's explanatory article:
+https://help.brubank.com/es/articles/8862355-cambio-de-ratios-de-cedears
+This secondary description is **not a substitute** for dated issuer/depositary
+instrument-level primary documentation; locate and preserve that source for
+final upstream acceptance.
+
+**Newly identified execution correctness risk:**
+`argentina_data.reconcile_ratio_changes` back-adjusts OHLCV before the
+ex-date and deliberately *does not change live position quantities*. That
+can be a valid synthetic adjusted-unit strategy model, but it is not a
+faithful ledger of deliverable CEDEAR quantities across the ex/record/credit
+window. BYMA's 2020 announcement explicitly distinguishes ex-price and
+credit dates. Do not allow a backtest to sell synthetic additional units on
+2020-10-22 if the certificates would only be credited on 2020-10-26, absent
+explicitly verified broker/clearing support.
+
+Runner's `ar_equity` route and `CompositeEngine` remain fail-closed.
+Before removing either guard:
+1. Add deterministic, non-lookahead fixtures straddling each ex/record/credit
+   transition (2020 and 2024), including hold-through, same-day sale, sale
+   before additional credit, and acquisition after ex-date.
+2. Establish and test what **adjusted price units** mean for lot size,
+   tick rounding, fixed commissions, fills, position valuation and available
+   certificates. Restrict crossings or report an explicit synthetic-only
+   mode when trade deliverability is unproven.
+3. Validate source-specific ratios and effective dates from primary
+   documentation. Do not infer authoritative metadata solely from price
+   discontinuities or today's ratio list.
+4. Prove standalone runner and composite routing use the *same* date/cash/
+   rules state and invoke the data preparation hook before signals.
+5. Keep unsupported currency mixes, missing quote metadata, unverifiable
+   ratio histories and insufficient calendar coverage fail-closed.
+6. Run BYMA and existing-market regressions; publish an upstream-clean PR
+   from an isolated change set, not the fork's unrelated history.
+
+This gate review is a design audit, **not test execution** or release approval.
