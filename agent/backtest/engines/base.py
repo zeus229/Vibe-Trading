@@ -600,6 +600,19 @@ class BaseEngine(ABC):
         """
         return sum(order.capital_credit for order in reductions)
 
+    def prepare_market_data(
+        self, data_map: Dict[str, pd.DataFrame],
+    ) -> Dict[str, pd.DataFrame]:
+        """Validate or normalize loaded bars before signals see them.
+
+        Default returns the frames untouched, so every market keeps its
+        loader output. A market whose source data needs a documented unit
+        convention (e.g. a depositary-receipt ratio change) overrides this;
+        running before signal generation keeps signals and fills on the
+        same price basis.
+        """
+        return data_map
+
     def can_liquidate_at_end(self, symbol: str, timestamp: pd.Timestamp) -> bool:
         """Whether the terminal forced close may sell *symbol* on the last bar.
 
@@ -959,6 +972,7 @@ class BaseEngine(ABC):
             sys.exit(1)
         data_map = _maybe_enrich_fundamentals(data_map, config)
         data_map = _maybe_enrich_events(data_map, config)
+        data_map = self.prepare_market_data(data_map)
 
         # 2. Generate signals
         signal_map = signal_engine.generate(data_map)

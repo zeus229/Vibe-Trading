@@ -23,7 +23,7 @@ def config():
 
 def test_share_and_cedear_long_only(config):
     engine = ArgentinaEquityEngine(config)
-    bar = pd.Series({"close": 100.0})
+    bar = pd.Series({"close": 100.0, "volume": 1.0})
     for code in ("YPFD.BA", "AAPL.BA"):
         assert engine.can_execute(code, 1, bar)
         assert not engine.can_execute(code, 0, bar)  # no position/fill/calendar evidence
@@ -47,7 +47,7 @@ def test_tick_rounding_against_trader(config):
 def test_unknown_instrument_fails_closed(config):
     engine = ArgentinaEquityEngine(config)
     with pytest.raises(ValueError, match="unregistered"):
-        engine.can_execute("AL30.BA", 1, pd.Series({"close": 100}))
+        engine.can_execute("AL30.BA", 1, pd.Series({"close": 100, "volume": 1.0}))
 
 
 def test_missing_metadata_and_mixed_currency_fail_closed(config):
@@ -113,7 +113,7 @@ def test_byma_settlement_eligibility_uses_actual_sessions(config):
     assert argentina_sell_is_settled(engine, "YPFD.BA", date(2024, 5, 28), sessions)
     assert not argentina_sell_is_settled(engine, "YPFD.BA", date(2024, 5, 26), sessions)
     assert argentina_can_execute(engine, engine, "YPFD.BA", 0,
-                                  pd.Series({"close": 100}, name=pd.Timestamp("2024-05-28")))
+                                  pd.Series({"close": 100, "volume": 1.0}, name=pd.Timestamp("2024-05-28")))
 
 
 def test_scale_in_resets_byma_settlement_hold(config):
@@ -135,7 +135,7 @@ def test_missing_settlement_evidence_fails_closed(config):
     engine.positions["YPFD.BA"] = object()
     engine.fill_records = []
     assert not engine.can_execute(
-        "YPFD.BA", 0, pd.Series({"close": 100}, name=pd.Timestamp("2024-05-28"))
+        "YPFD.BA", 0, pd.Series({"close": 100, "volume": 1.0}, name=pd.Timestamp("2024-05-28"))
     )
     with pytest.raises(ValueError, match="strictly increasing"):
         ArgentinaEquityEngine({

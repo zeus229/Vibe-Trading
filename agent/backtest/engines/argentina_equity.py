@@ -19,6 +19,16 @@ import pandas as pd
 from backtest.engines.base import BaseEngine
 from backtest.engines.argentina_settlement import settlement_date
 from backtest.engines.argentina_reconciliation import available_for_settlement, pending_sale_proceeds
+from backtest.engines.argentina_data import (
+    DEFAULT_MAX_UNEXPLAINED_CEDEAR_MOVE,
+    DEFAULT_MAX_UNEXPLAINED_SHARE_MOVE,
+    DEFAULT_RATIO_JUMP_TOLERANCE,
+    PRICE_SERIES_DECLARATIONS,
+    drop_non_session_bars,
+    reconcile_ratio_changes,
+    unexplained_discontinuities,
+    validate_frame_contract,
+)
 
 
 class ArgentinaEquityEngine(BaseEngine):
@@ -81,6 +91,10 @@ class ArgentinaEquityEngine(BaseEngine):
                         raise ValueError(f"{symbol}: invalid ratio entry") from None
                     if not valid_date or not ratio.is_finite() or ratio <= 0 or effective <= previous:
                         raise ValueError(f"{symbol}: ratio history must be valid and increasing")
+                    if item.get("price_series") not in PRICE_SERIES_DECLARATIONS:
+                        raise ValueError(
+                            f"{symbol}: price_series must be 'adjusted' or 'unadjusted'"
+                        )
                     previous = effective
             self.instruments[symbol.upper()] = {**info, "tick_size": tick}
             if info["kind"] == "cedear":
@@ -106,6 +120,24 @@ class ArgentinaEquityEngine(BaseEngine):
         self.brokerage_rate = self._nonnegative(config.get("ar_brokerage_rate", 0.0), "ar_brokerage_rate")
         self.exchange_fee_rate = self._nonnegative(config.get("ar_exchange_fee_rate", 0.0), "ar_exchange_fee_rate")
         self.fixed_fee = self._nonnegative(config.get("ar_fixed_fee", 0.0), "ar_fixed_fee")
+        self.ratio_jump_tolerance = self._nonnegative(
+            config.get("ar_ratio_jump_tolerance", DEFAULT_RATIO_JUMP_TOLERANCE),
+            "ar_ratio_jump_tolerance",
+        )
+        self.max_unexplained_cedear_move = self._nonnegative(
+            config.get("ar_max_unexplained_cedear_move", DEFAULT_MAX_UNEXPLAINED_CEDEAR_MOVE),
+            "ar_max_unexplained_cedear_move",
+        )
+        self.max_unexplained_share_move = self._nonnegative(
+            config.get("ar_max_unexplained_share_move", DEFAULT_MAX_UNEXPLAINED_SHARE_MOVE),
+            "ar_max_unexplained_share_move",
+        )
+        for key, value in (("ar_max_unexplained_cedear_move", self.max_unexplained_cedear_move),
+                           ("ar_max_unexplained_share_move", self.max_unexplained_share_move)):
+            if not 0 < value < 1:
+                raise ValueError(f"{key} must be between 0 and 1")
+        self.ratio_adjustments: list[dict] = []
+        self.dropped_non_session_bars: dict[str, int] = {}
 
     @staticmethod
     def _nonnegative(value, key: str) -> float:
@@ -140,6 +172,51 @@ class ArgentinaEquityEngine(BaseEngine):
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
         return argentina_can_execute(self, self, symbol, direction, bar)
+
+    def prepare_market_data(self, data_map: dict) -> dict:
+        """Hold loaded bars to one declared, consistent BYMA price basis.
+
+        Requires the loader's declared quote currency to match metadata,
+        drops zero-volume placeholder bars on non-sessions, reconciles every
+        declared CEDEAR ratio change with the observed prices, and rejects a
+        large CEDEAR move no declared change explains. Fails closed.
+        """
+        if self.settlement_sessions is None:
+            raise ValueError("BYMA data validation requires a verified settlement calendar")
+        prepared = {}
+        self.ratio_adjustments = []
+        self.dropped_non_session_bars = {}
+        for symbol, frame in data_map.items():
+            instrument = self._instrument(symbol)
+            validate_frame_contract(frame, symbol, instrument["currency"])
+            attrs = dict(frame.attrs)
+            frame, dropped = drop_non_session_bars(frame, symbol, self.settlement_sessions)
+            if dropped:
+                self.dropped_non_session_bars[symbol] = dropped
+            if instrument["kind"] == "cedear":
+                frame, events = reconcile_ratio_changes(
+                    frame, symbol, instrument["ratio_history"],
+                    tolerance=self.ratio_jump_tolerance,
+                )
+                self.ratio_adjustments.extend(events)
+                jumps = unexplained_discontinuities(frame, self.max_unexplained_cedear_move)
+                if jumps:
+                    raise ValueError(
+                        f"{symbol}: unexplained CEDEAR price discontinuities on "
+                        f"{', '.join(jumps[:5])}; declare the ratio change in "
+                        "ratio_history (effective_date, ratio) or exclude the window"
+                    )
+            else:
+                jumps = unexplained_discontinuities(frame, self.max_unexplained_share_move)
+                if jumps:
+                    raise ValueError(
+                        f"{symbol}: price discontinuities on {', '.join(jumps[:5])} "
+                        "look like an unadjusted split; use a split-adjusted source "
+                        "or exclude the window"
+                    )
+            frame.attrs.update(attrs)
+            prepared[symbol] = frame
+        return prepared
 
     def available_cash(self, timestamp: pd.Timestamp) -> float:
         """Buying power for normal BYMA settlement, including matching sales."""
@@ -188,6 +265,9 @@ class ArgentinaEquityEngine(BaseEngine):
             return {}
         receivable = pending_sale_proceeds(self.fill_records, last_day, sessions)
         return {
+            "ar_price_basis": "source_split_dividend_adjusted_ohlc_raw_volume",
+            "ar_cedear_ratio_adjustments": list(self.ratio_adjustments),
+            "ar_dropped_non_session_bars": dict(self.dropped_non_session_bars),
             "ar_unsettled_sale_receivable_at_end": round(receivable, 6),
             "ar_unliquidated_position_count": len(self.unliquidated_positions),
             "ar_unliquidated_positions": [
@@ -282,6 +362,14 @@ def argentina_can_execute(
     except (TypeError, ValueError):
         return False
     if not math.isfinite(price) or price <= 0:
+        return False
+    # A bar with no reported volume is a source placeholder (stale print,
+    # holiday fill); its price was not executable.
+    try:
+        volume = float(bar.get("volume"))
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(volume) or volume <= 0:
         return False
     if direction == 1:
         return True

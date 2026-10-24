@@ -38,7 +38,8 @@ def _execute(engine, targets, dates=("2024-05-27", "2024-05-28", "2024-05-29"), 
     codes = list(targets)
     prices = prices or {code: [100.0] * len(dates) for code in codes}
     frames = {
-        code: pd.DataFrame({"open": prices[code], "close": prices[code]}, index=dates)
+        code: pd.DataFrame({"open": prices[code], "close": prices[code],
+                            "volume": [1_000.0] * len(dates)}, index=dates)
         for code in codes
     }
     close = pd.DataFrame(prices, index=dates)
@@ -231,7 +232,9 @@ def test_run_backtest_reports_retained_position_end_to_end(tmp_path):
 
     class Loader:
         def fetch(self, *args, **kwargs):
-            return {"YPFD.BA": bars.copy()}
+            frame = bars.copy()
+            frame.attrs["quote_currency"] = "ARS"  # as the Yahoo/yfinance loaders declare
+            return {"YPFD.BA": frame}
 
     class Signal:
         def generate(self, data_map):
