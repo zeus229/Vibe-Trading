@@ -1,6 +1,6 @@
 # BYMA equity and CEDEAR backtesting — implementation contract
 
-Status: design/preparation only. **Do not remove the existing `ar_equity` fail-closed guard until implementation, source validation and tests are complete.** No bonds, ONs, bills or fixed-income engine in scope.
+Status: isolated implementation and integration tests added; **not yet runtime-verified**. **Do not remove the existing `ar_equity` fail-closed guard until implementation, source validation and tests are complete.** No bonds, ONs, bills or fixed-income engine in scope.
 
 ## Goal
 Add a reusable, upstream-friendly `ArgentinaEquityEngine` for BYMA-listed common shares and CEDEARs, without depending on PPI or Asistente Casa. Preserve existing `.BA` symbol detection and Yahoo → yfinance → local provider routing. Avoid changing other markets' execution semantics.
@@ -41,3 +41,29 @@ Add a reusable, upstream-friendly `ArgentinaEquityEngine` for BYMA-listed common
 - Deterministic outputs and clear unsupported-case errors.
 - No dependency on private APIs, credentials, PPI or Asistente Casa.
 - No bond support and no unverified historical total-return claims.
+
+
+## Settlement-matched YPFD → GGAL rotation milestone (2026-10-24)
+
+- BaseEngine now exposes default-compatible `available_cash(timestamp)` and
+  `projected_reduction_buying_power(reductions, timestamp)` hooks. Non-BYMA
+  engines retain the old immediate-capital behavior by default.
+- BYMA evaluates buying power by **purchase settlement date**, not only
+  withdrawable settled cash: an ARS T+1 sale can fund an ARS T+1 purchase
+  on the same trading day. No assumption that such proceeds may be withdrawn.
+- Isolated tests: `agent/tests/test_argentina_reconciliation.py` and
+  `agent/tests/test_argentina_equity_primitives.py`.
+- Actual `BaseEngine._execute_bars` integration fixture:
+  `agent/tests/test_argentina_rotation_integration.py` (hold and rebalance,
+  order independence, double-spend bounds, commission accounting).
+- **Verification pending:** no pytest/CI run has yet been observed for this
+  feature branch. Do not mark this milestone PASS or enable runner/composite
+  routing until these tests and affected-market regression suites execute.
+- Run from the repository environment:
+  `pytest agent/tests/test_argentina_reconciliation.py agent/tests/test_argentina_equity_primitives.py agent/tests/test_argentina_settlement.py agent/tests/test_argentina_cash.py agent/tests/test_argentina_rotation_integration.py -q`
+- Then run affected market/composite suites and the upstream CI checks.
+- Remaining integration issues: terminal forced liquidation does not consult
+  BYMA sale eligibility; corporate actions and CEDEAR total-return provenance
+  are not complete; multi-currency netting is intentionally prohibited.
+- Broker-specific pre-funding, netting permissions and trading-line variants
+  are explicit limitations; do not claim identical buying power at every broker.
