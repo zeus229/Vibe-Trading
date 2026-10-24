@@ -11,7 +11,7 @@ def config():
     return {
         "ar_instruments": {
             "YPFD.BA": {"kind": "share", "currency": "ARS", "lot_size": 1, "tick_size": "0.05"},
-            "AAPL.BA": {"kind": "cedear", "currency": "ARS", "lot_size": 1, "tick_size": "0.05"},
+            "AAPL.BA": {"kind": "cedear", "currency": "ARS", "lot_size": 1, "tick_size": "0.05", "underlying": "AAPL", "ratio_history": [{"effective_date": "2020-01-01", "ratio": "10"}]},
         },
         "ar_brokerage_rate": 0.001,
         "ar_exchange_fee_rate": 0.0001,
@@ -66,3 +66,20 @@ def test_missing_metadata_and_mixed_currency_fail_closed(config):
 def test_invalid_costs_rejected(config, key, value):
     with pytest.raises(ValueError, match="finite and nonnegative"):
         ArgentinaEquityEngine({**config, key: value})
+
+
+def test_cedear_requires_dated_ratio_history(config):
+    info = dict(config["ar_instruments"]["AAPL.BA"])
+    info.pop("ratio_history")
+    with pytest.raises(ValueError, match="ratio_history"):
+        ArgentinaEquityEngine({**config, "ar_instruments": {"AAPL.BA": info}})
+
+
+def test_cedear_rejects_invalid_ratio_history(config):
+    info = dict(config["ar_instruments"]["AAPL.BA"])
+    info["ratio_history"] = [
+        {"effective_date": "2024-01-01", "ratio": "10"},
+        {"effective_date": "2023-01-01", "ratio": "0"},
+    ]
+    with pytest.raises(ValueError, match="ratio history"):
+        ArgentinaEquityEngine({**config, "ar_instruments": {"AAPL.BA": info}})
