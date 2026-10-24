@@ -1,6 +1,6 @@
 # BYMA equity and CEDEAR backtesting — implementation contract
 
-Status: settlement/netting milestone **verified locally on 2026-10-24** (see the milestone section); `.BA` routing in `runner.py`/`composite.py` remains **disabled**. **Do not remove the existing `ar_equity` fail-closed guard until implementation, source validation and tests are complete.** No bonds, ONs, bills or fixed-income engine in scope.
+Status (2026-10-24): settlement/netting, data-audit and ratio-window gates verified locally; `.BA` routing in `runner.py`/`composite.py` is **enabled for the fork branch only**, still fail-closed without declared metadata, calendar and credit dates (see the last section). Earlier sections that say routing is disabled are historical. The unconditional `ar_equity` guard was replaced on 2026-10-24 by the engine's own fail-closed checks after the gates below passed; keep upstream routing off until the upstream PR criteria are met. No bonds, ONs, bills or fixed-income engine in scope.
 
 ## Goal
 Add a reusable, upstream-friendly `ArgentinaEquityEngine` for BYMA-listed common shares and CEDEARs, without depending on PPI or Asistente Casa. Preserve existing `.BA` symbol detection and Yahoo → yfinance → local provider routing. Avoid changing other markets' execution semantics.
@@ -313,3 +313,106 @@ Before removing either guard:
    from an isolated change set, not the fork's unrelated history.
 
 This gate review is a design audit, **not test execution** or release approval.
+
+
+## Primary ratio sources, ex->credit window and `.BA` routing (2026-10-24)
+
+### Official ratio evidence (issuer: Banco Comafi, issuer of these CEDEAR programs)
+
+| Event | Document | Ex-date | Record | Credit | Ratios (old -> new) |
+|---|---|---|---|---|---|
+| 2020, 39 programs, RESFC-2020-20830-APN-DIR#CNV (2020-10-15) | Comafi to BCBA and holders, 2020-10-16, hosted by BYMA: `data-widgets.byma.com.ar/wp-content/uploads/2020/10/Banco-Comafi-Cambio-ratio-39-Cedears.pdf` (sha256 `99ef5d32...a4095`) | Thu 2020-10-22 | Fri 10-23 | Mon 10-26 | MSFT 5:1->10:1, GOOGL 29:1->58:1, AMZN 72:1->144:1, NVDA 12:1->24:1, MELI 2:1->60:1 (table is an image; read from the rendered page). AAPL and KO not in the list. |
+| 2022, 33 programs, RESFC-2022-21967-APN-DIR#CNV (2022-10-05) | Comafi "Anuncio Fecha Efectiva", 2022-11-03: `comafi.com.ar/custodiaglobal/Multimedios/pdfs/9552.pdf` (sha256 `60547853...ec55f9`); application notice 2022-10-11 `.../9391.pdf` | Thu 2022-11-17 | Fri 11-18 | Tue 11-22 (11-21 holiday) | MSFT 10:1->30:1 |
+| 2024, 30 programs, RESFC-2023-22529-APN-DIR#CNV (2023-11-29) | Comafi to BCBA, 2024-01-08: `comafi.com.ar/custodiaglobal/Multimedios/pdfs/11879.pdf` (sha256 `d14dd012...26ede12`) | Wed 2024-01-24 | Thu 01-25 | Fri 01-26 | AAPL 10:1->20:1, MELI 60:1->120:1 (and 28 others) |
+
+The 2022 and 2024 notices call the credit date "preliminary, to be confirmed";
+the ex-dates match the observed Yahoo price steps (MSFT.BA 2022-11-17,
+AAPL.BA and MELI.BA 2024-01-24). The BYMA newsroom post
+(`byma.com.ar/newsroom/novedades-cedears`, 2020-10-19) repeats the 2020 dates.
+The broker article cited earlier is superseded by these issuer documents.
+The NVDA.BA x4 step on 2021-07-20 is the US 4:1 *underlying* split, not a
+ratio change; no CEDEAR notice was located, so it stays fail-closed unless a
+user declares it.
+
+Inferred-vs-official check: every inferred 2020/2022/2024 ratio matched the
+issuer tables; NVDA's inferred 3->6 is 12->24 expressed in Yahoo's
+split-adjusted underlying units.
+
+### Ex-date -> credit window (implemented)
+
+- `ratio_history` entries take `credit_date`; an in-window change without it
+  fails closed. Positions opened before the ex-date may only be sold by a
+  trade whose normal settlement falls on/after the credit date
+  (`argentina_ratio_credit_ok`); the same rule binds the terminal close.
+  BaseEngine passes no order size, so the whole position is held back, not
+  only the additional certificates (conservative).
+- Finding: all three official events set credit = ex + 2 sessions, and all
+  happened under T+2, so an **ex-date sale settles exactly on the credit date
+  and is deliverable**. The rule only binds under T+1 (from 2024-05-27) or if
+  the calendar is wrong: tests show a 2022 calendar that omits the 11-21
+  holiday refuses the ex-date sale, and a synthetic T+1 event (clearly marked,
+  not official) defers the sale to the session that settles on the credit.
+- Purchases on/after the ex-date follow normal settlement only.
+
+### Units: adjusted prices vs real certificates (implemented)
+
+Before an in-window change, one real certificate is `new/old` adjusted units.
+`ArgentinaEquityEngine.unit_scale` drives `round_size` (whole real lots: e.g.
+AAPL buys an even number of units before 2024-01-24) and `apply_slippage`
+(real tick / scale: 0.5 ARS -> 0.25 on restated AAPL prices). Commissions are
+invariant (same notional; one fixed fee per order). Valuation is continuous.
+Trade artifacts report post-change units and prices (AAPL 2023-06-02:
+2108 units at 4503.5 = 1054 certificates at 9007).
+`BaseEngine` now records `_bar_ts` next to `_bar_idx` for these rules.
+
+### Routing (implemented)
+
+- `runner._create_market_engine`: `ar_equity` -> `ArgentinaEquityEngine`.
+  Missing `ar_instruments`, calendar, credit dates, quote currency, or an
+  ARS/USD mix still fail closed; `ar_settlement_sessions` accepts strict
+  ISO strings (JSON config).
+- `CompositeEngine`: builds the BYMA rule book and evaluates buying power,
+  same-bar netting, sell/credit eligibility, terminal liquidation, data
+  preparation and diagnostics against the **composite's** ledger
+  (state/rules helpers shared with the standalone engine, like HOSE/India).
+  `.BA` codes cannot share a composite with any other market (raises at
+  construction), on top of the existing mixed-currency guard.
+- Tests prove standalone and composite runs produce identical fills, equity
+  and returns, in hold and rebalance modes, and that `prepare_market_data`
+  runs before signals.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| BYMA tests (`test_argentina_*.py`, incl. new `test_argentina_ratio_events.py`, `test_argentina_runner_composite.py`) + yfinance currency, with `--disable-socket` | 112 passed |
+| Mutations: credit rule off -> 4 failures; unit scale off -> 5 failures | caught |
+| Engines/loaders/runner regressions (BaseEngine, India, Korea, Vietnam, Brazil, Composite, China, crypto, forex, global, UK, rebalance, `test_backtest_*`, loaders, runner, registry, UI services) | 2128 passed, 9 skipped |
+| ruff on changed files; CI syntax step; gates a-f | ok (7 ruff findings exist only in untouched files); gate g still fails (pre-existing) |
+| Full suite (CI ignores) | 61 failed, 21391 passed, 173 skipped; the 61 are identical to the pre-existing set |
+
+Real-data runs through `python -m backtest.runner` (Yahoo, 2023-06-01..2025-06-30,
+10M ARS, 0.5% + 0.08% fees, 0.1% slippage; calendar = GGAL.BA traded days,
+an **audit approximation**, not an official BYMA calendar):
+
+| Run | Total return | Max DD | Trades | Notes |
+|---|---|---|---|---|
+| YPFD/GGAL monthly 60-day momentum rotation, hold | +175.9% | -35.7% | 7 | equal-weight benchmark +830% |
+| same, rebalance | +166.9% | -35.8% | 147 | |
+| AAPL.BA buy and hold, declared 2024 change | +166.7% | -33.3% | 1 | equity +1.16% on 2024-01-24 (no unit loss); benchmark +181% |
+| AAPL.BA without the declared change | aborted | | | `unexplained CEDEAR price discontinuities on 2024-01-24` |
+
+### Limitations / pending
+
+- No official BYMA session calendar ships with the engine; users must
+  supply one (the smoke used traded days). A verified calendar source is
+  needed before claiming historical fidelity.
+- Credit dates for 2022/2024 are the issuer's "preliminary" dates; the
+  confirmation notices were not located.
+- Whole-position hold during the credit window (no size-aware partial sale).
+- Underlying splits that Yahoo adjusts (e.g. AAPL 2020 4:1) are not mapped to
+  real lots/ticks; NVDA 2021 undeclared fails closed.
+- USD (`D`) lines and composites mixing `.BA` with other markets remain
+  unsupported; `local` source lacks a declared quote currency.
+- Gate g, the 61 pre-existing suite failures, CI 3.11/3.14 legs and an
+  upstream-clean change set remain before any upstream PR.
