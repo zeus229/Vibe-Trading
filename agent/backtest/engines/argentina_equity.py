@@ -18,7 +18,7 @@ import pandas as pd
 
 from backtest.engines.base import BaseEngine
 from backtest.engines.argentina_settlement import settlement_date
-from backtest.engines.argentina_reconciliation import available_for_settlement
+from backtest.engines.argentina_reconciliation import available_for_settlement, pending_sale_proceeds
 
 
 class ArgentinaEquityEngine(BaseEngine):
@@ -169,6 +169,37 @@ class ArgentinaEquityEngine(BaseEngine):
             raise ValueError("BYMA netting requires a valid session date")
         settlement_date(today, self.settlement_sessions)
         return sum(order.capital_credit for order in reductions)
+
+    def can_liquidate_at_end(self, symbol: str, timestamp: pd.Timestamp) -> bool:
+        """The terminal close obeys the same sell-settlement rule as signals."""
+        today = _trade_date(timestamp)
+        sessions = self.settlement_sessions
+        if today is None or sessions is None:
+            return False
+        return argentina_sell_is_settled(self, symbol, today, sessions)
+
+    def _engine_diagnostics(self) -> dict:
+        """Declare what the terminal equity includes beyond settled cash."""
+        if not self.equity_snapshots:
+            return {}
+        last_day = _trade_date(self.equity_snapshots[-1].timestamp)
+        sessions = self.settlement_sessions
+        if last_day is None or sessions is None:
+            return {}
+        receivable = pending_sale_proceeds(self.fill_records, last_day, sessions)
+        return {
+            "ar_unsettled_sale_receivable_at_end": round(receivable, 6),
+            "ar_unliquidated_position_count": len(self.unliquidated_positions),
+            "ar_unliquidated_positions": [
+                {k: (round(v, 6) if isinstance(v, float) else v) for k, v in item.items()}
+                for item in self.unliquidated_positions
+            ],
+            "ar_terminal_equity_basis": (
+                "unsettled_positions_marked_net_of_estimated_exit_costs"
+                if self.unliquidated_positions
+                else "all_positions_liquidated_at_last_close"
+            ),
+        }
 
     def round_size(self, raw_size: float, price: float) -> float:
         instrument = self._instrument(self._active_symbol)

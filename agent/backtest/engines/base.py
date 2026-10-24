@@ -578,6 +578,9 @@ class BaseEngine(ABC):
         self.plan_rejections: Counter = Counter()
         self._bar_idx: int = 0
         self._active_symbol: str = ""  # set by _rebalance/_close_position for subclass use
+        # Positions the terminal close was not allowed to sell (see
+        # can_liquidate_at_end). Empty for every market that keeps the default.
+        self.unliquidated_positions: List[Dict[str, Any]] = []
 
     def available_cash(self, timestamp: pd.Timestamp) -> float:
         """Spendable funds for an order at timestamp, without changing equity.
@@ -596,6 +599,16 @@ class BaseEngine(ABC):
         markets can return zero so a sale never finances a same-bar purchase.
         """
         return sum(order.capital_credit for order in reductions)
+
+    def can_liquidate_at_end(self, symbol: str, timestamp: pd.Timestamp) -> bool:
+        """Whether the terminal forced close may sell *symbol* on the last bar.
+
+        Default True keeps the legacy behavior of every market. A market whose
+        securities cannot be sold before settlement overrides this so the
+        end-of-backtest close does not bypass the rule that gates signal exits.
+        Positions it refuses stay open and are valued, not traded.
+        """
+        return True
 
     # ── Market rule interface (subclass must implement) ──
 
@@ -1416,6 +1429,8 @@ class BaseEngine(ABC):
         if len(dates) > 0:
             _last_row = min(self._bar_idx, len(dates) - 1)
             last_ts = dates[_last_row]
+            self.unliquidated_positions = []
+            retained_value = 0.0
             for c in list(self.positions.keys()):
                 pos = self.positions[c]
                 mark_price = self._safe_price(
@@ -1425,23 +1440,46 @@ class BaseEngine(ABC):
                 )
                 self._active_symbol = c
                 exit_price = self.apply_slippage(mark_price, -pos.direction)
+                if not self.can_liquidate_at_end(c, last_ts):
+                    # The market's sell rule (e.g. unsettled securities) also
+                    # binds the terminal close: keep the position open and
+                    # value it at what a close would net, without booking a
+                    # trade the rules would not have allowed.
+                    proceeds = self._close_proceeds(pos, exit_price)
+                    retained_value += proceeds
+                    self.unliquidated_positions.append({
+                        "symbol": c,
+                        "size": pos.size,
+                        "entry_price": pos.entry_price,
+                        "mark_price": mark_price,
+                        "estimated_exit_price": exit_price,
+                        "estimated_net_proceeds": proceeds,
+                    })
+                    continue
                 self._close_position(c, exit_price, last_ts, "end_of_backtest")
 
             # The final snapshot feeds metrics and artifacts.  Replace its
             # pre-liquidation mark with post-liquidation cash so terminal
             # slippage and exit commission are reflected in reported equity.
             if self.equity_snapshots:
+                terminal_equity = self.capital + retained_value
                 self.equity_snapshots[-1] = EquitySnapshot(
                     timestamp=last_ts,
                     capital=self.capital,
-                    unrealized=0.0,
-                    equity=self.capital,
-                    positions=0,
+                    unrealized=terminal_equity - self.capital - sum(
+                        self._calc_margin(p.symbol, p.size, p.entry_price, p.leverage)
+                        for p in self.positions.values()
+                    ),
+                    equity=terminal_equity,
+                    positions=len(self.positions),
                 )
             if self.actual_position_snapshots:
-                self.actual_position_snapshots[-1] = (
-                    last_ts, {code: 0.0 for code in codes}
-                )
+                final_weights = {code: 0.0 for code in codes}
+                if self.positions and self.equity_snapshots[-1].equity > 1e-12:
+                    final_weights = self._actual_weights(
+                        close_df, last_ts, codes, self.equity_snapshots[-1].equity
+                    )
+                self.actual_position_snapshots[-1] = (last_ts, final_weights)
 
         # Clean up temporary instance attributes
         self._close_arr = None
@@ -2155,6 +2193,19 @@ class BaseEngine(ABC):
         )
         frame.index.name = "timestamp"
         return frame
+
+    def _close_proceeds(self, pos: Position, exit_price: float) -> float:
+        """Capital a close at *exit_price* would return, without closing.
+
+        Mirrors the credit in ``_close_position`` (margin + pnl - exit
+        commission) so a position valued this way is worth exactly what the
+        close would have booked.
+        """
+        self._active_symbol = pos.symbol
+        pnl = self._calc_pnl(pos.symbol, pos.direction, pos.size, pos.entry_price, exit_price)
+        margin = self._calc_margin(pos.symbol, pos.size, pos.entry_price, pos.leverage)
+        exit_comm = self.calc_commission(pos.size, exit_price, pos.direction, is_open=False)
+        return margin + pnl - exit_comm
 
     def _close_position(
         self,
