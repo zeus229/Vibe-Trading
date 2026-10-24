@@ -416,3 +416,102 @@ an **audit approximation**, not an official BYMA calendar):
   unsupported; `local` source lacks a declared quote currency.
 - Gate g, the 61 pre-existing suite failures, CI 3.11/3.14 legs and an
   upstream-clean change set remain before any upstream PR.
+
+
+## First conversational attempt in production and automatic preparation (2026-10-24)
+
+### Diagnosis (session `0eb5d346faaa`, run `20261024_051528_10_57d0a5`, trial image `byma-trial-742c489a`)
+
+The agent recognised YPFD.BA and called `backtest` **six** times; logs show four
+distinct causes, not only missing metadata:
+
+| # | Exact error | Cause |
+|---|---|---|
+| 1 | `unsupported engine 'argentina_equity'` (schema) | The user named the engine; no skill said engines are selected from codes, and the schema message did not say so. |
+| 2 | `ar_instruments must declare BYMA instrument metadata` | Message gave no shape. |
+| 3-4 | `explicit share/cedear classification required` | Agent invented `classification`, copied PPI fields (`instrument_type`, `market`) from an Asistente Casa tool; the message never named `kind`. |
+| 5 | `positive integer lot_size required` | The engine reported one field per failure: a guessing loop. |
+| 6 | `positive tick_size required` | Next would have been `ar_settlement_sessions`; the agent then searched the web. |
+
+Silent issue: the generic `commission: 0.001` was ignored by the BYMA engine,
+so costs would have been zero. The fixed `tick_size` model was also wrong:
+BYMA ticks are price bands.
+
+### Official source for ticks and lots
+
+BYMA Circular N° 3569, Anexo "Reglas de Negocio en el Segmento PPT Operaciones
+de Contado", version 04-07-2024
+(`data-widgets.byma.com.ar/wp-content/uploads/2024/07/BYMA-CIR3569-Anexo-v20240704.pdf`,
+sha256 `811dec4c...3c19ad`): "Alteración mínima de las órdenes, Renta Variable"
+bands (0.001 up to 1 ARS ... 25 for 10,000-50,000, 50 above), explicitly
+including CEDEARs; standard term "Contado con Liquidación en 24 hs". The
+minimum order quantity is defined only as the listing authorization's
+quantity (no number), so one share per lot remains an assumption.
+
+### Implemented
+
+- `argentina_metadata.py`: CIR 3569 tick bands; Yahoo-descriptor
+  classification (existing `yahoo_client.get_quote_summary`): "CEDEAR" text =>
+  CEDEAR; untruncated name without it => share; truncated/ambiguous => unknown;
+  observed-session calendar (dates with traded volume, conservative) plus a
+  labelled weekday tail for final settlements.
+- `ArgentinaEquityEngine`: `ar_instruments` and `ar_settlement_sessions` are
+  optional. Declared values always win; missing ones are resolved per loaded
+  symbol and labelled `official` / `derived` / `third_party` / `assumption`.
+  Shares are completed automatically; CEDEARs are **not** (no automatic
+  official ratio/credit source) and fail closed. All configuration problems
+  are reported at once with exact keys and an example. Omitted `tick_size`
+  uses CIR 3569 bands on the real certificate price. Generic `commission` is
+  the brokerage rate unless `ar_brokerage_rate` is set; no fees is reported as
+  `none_configured`.
+- Reporting: scalar `ar_data_basis` (fits the tool's 2,000-char stdout tail in
+  the measured run) and `artifacts/byma_preparation.json` with full provenance
+  (standalone and composite).
+- Runner schema message for `engine` now says market engines come from codes.
+- `strategy-generate` skill documents `.BA` configs, provenance labels, and
+  forbids filling metadata via web or broker tools.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| BYMA tests incl. new `test_argentina_auto_prepare.py` (`--disable-socket`) | 133 passed |
+| Replay: minimal config of the failed request through `runner.main` | runs first time; exact failed final config also runs |
+| Engine/loader/runner/skill regressions | 3054 passed, 9 skipped (+15 `test_runtime_runner.py` only fail under `--disable-socket`; 32/32 pass normally) |
+| Full suite (CI ignores) | 61 failed, 21420 passed, 173 skipped; the 61 are identical to the pre-existing set |
+| Live (real Yahoo + descriptor) via `python -m backtest.runner`, YPFD.BA 2024-06-01..09-30, 1M ARS, 95%, commission 0.1% | first attempt OK: total return -4.63%, max DD -20.16%, 1 trade; 82 traded days; stdout 1,952 chars incl. `ar_data_basis` |
+| Live AAPL.BA with the same minimal config | fails closed once, naming CEDEAR evidence and every key to declare |
+
+### Limitations
+
+- Yahoo's descriptor is third-party evidence, not an official BYMA
+  classification; truncated names fail closed.
+- Derived calendar can only delay settlement (missing sessions); the tail
+  after the last bar does not know holidays (affects only final settlement
+  dating). A declared calendar overrides it.
+- CIR 3569 v2024-07-04 is applied to earlier dates as an assumption (count
+  reported). Lots of one share are an assumption.
+- `ar_data_basis` sits mid-output; very long stdout (e.g. 20 dropped hold
+  adjustments) could push it out of the 2,000-char tail; the artifact remains.
+- True conversational verification needs the image deployed; see the plan.
+
+### Controlled deployment plan (not executed)
+
+1. Commit/push the branch; build `vibe-trading:byma-trial-<sha12>-<ts>` from a
+   clean `git archive` (as for the trial), compare against the running trial
+   image (same packages; only the expected files differ) and run BYMA tests
+   inside the image.
+2. Backup `vibe-home` with `backup_vibe_home.py --execute` and verify hashes
+   and `integrity_check`; keep the current trial image and add tag
+   `rollback-pre-byma-autoprep-<date>`; prod `main` image
+   (`rollback-pre-byma-trial-20261024`) stays protected.
+3. Preflight a new trial override and the rollback override (current trial
+   image) through `vibe_compose.sh ... config` (PPI_TRADING_DISABLED, project,
+   image, volumes, port).
+4. Run the same gated deploy script with automatic rollback (image, health,
+   restarts, mounts, approved smoke, probe vs baseline, startup fingerprint).
+5. In the UI ask: "Backtest buy-and-hold de YPFD.BA del 2024-06-01 al
+   2024-09-30, 1.000.000 ARS, 95%, comisión 0,1%". Accept only if the first
+   `backtest` call succeeds and the answer reports the `ar_data_basis` labels.
+6. Rollback paths: to the previous trial image (new rollback override) or to
+   prod `main` (`rollback_byma_trial.sh`).
