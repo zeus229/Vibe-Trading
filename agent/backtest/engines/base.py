@@ -579,6 +579,24 @@ class BaseEngine(ABC):
         self._bar_idx: int = 0
         self._active_symbol: str = ""  # set by _rebalance/_close_position for subclass use
 
+    def available_cash(self, timestamp: pd.Timestamp) -> float:
+        """Spendable funds for an order at timestamp, without changing equity.
+
+        Default preserves legacy immediate-settlement capital across markets.
+        Markets with unsettled receivables may override this hook.
+        """
+        return self.capital
+
+    def projected_reduction_buying_power(
+        self, reductions: list, timestamp: pd.Timestamp,
+    ) -> float:
+        """Incremental buying power from planned closes on this bar.
+
+        Default is the legacy immediate-credit behavior. Settlement-based
+        markets can return zero so a sale never finances a same-bar purchase.
+        """
+        return sum(order.capital_credit for order in reductions)
+
     # ── Market rule interface (subclass must implement) ──
 
     @abstractmethod
@@ -1323,7 +1341,7 @@ class BaseEngine(ABC):
                 return result
 
             planned = _plans(1.0, observe=True)
-            if sum(order.cost for order in planned) > self.capital + 1e-9:
+            if sum(order.cost for order in planned) > self.available_cash(ts) + 1e-9:
                 # The trial plans of the search are not findings: one starved
                 # open used to be booked as a zero_size rejection on every
                 # bisection step (#1470). The sleeve that leaves the basket is
@@ -1338,7 +1356,7 @@ class BaseEngine(ABC):
                 for _ in range(50):
                     mid = (low + high) / 2.0
                     candidate = _plans(mid, observe=False)
-                    if sum(order.cost for order in candidate) <= self.capital + 1e-9:
+                    if sum(order.cost for order in candidate) <= self.available_cash(ts) + 1e-9:
                         low, fitting = mid, candidate
                     else:
                         high = mid
@@ -1557,7 +1575,7 @@ class BaseEngine(ABC):
 
         if target_dir != 0 and symbol not in self.positions:
             order = self._plan_open_order(symbol, target_weight, df, ts, equity)
-            if order is not None and order.cost <= self.capital + 1e-9:
+            if order is not None and order.cost <= self.available_cash(ts) + 1e-9:
                 self._execute_open_order(order, ts)
 
     def _plan_open_order(
@@ -1803,15 +1821,15 @@ class BaseEngine(ABC):
                 reductions.append(self._plan_reduction(before, target_size, price))
 
         projected_capital = (
-            self.capital
-            + sum(order.capital_credit for order in reductions)
+            self.available_cash(ts)
+            + self.projected_reduction_buying_power(reductions, ts)
             - sum(order.cost for order in opens)
         )
         self._validate_rebalance_values(projected_capital)
         if projected_capital < -1e-9:
             fitted = self._fit_rebalance_opens(opens, reductions, ts)
             if fitted is None:
-                if sum(order.capital_credit for order in reductions) < 0:
+                if self.projected_reduction_buying_power(reductions, ts) < 0:
                     # The reductions themselves consume cash (a close whose loss
                     # exceeds its margin): no dropping of opens repairs that, so
                     # the bar aborts atomically as #1274 decided.
@@ -1868,10 +1886,10 @@ class BaseEngine(ABC):
         (#1274), and otherwise — cash was already below zero — drops every
         open and still runs the reductions (#1542).
         """
-        released = sum(order.capital_credit for order in reductions)
+        released = self.projected_reduction_buying_power(reductions, ts)
 
         def _fits(candidate: list[_OpenOrder]) -> bool:
-            projected = self.capital + released - sum(order.cost for order in candidate)
+            projected = self.available_cash(ts) + released - sum(order.cost for order in candidate)
             self._validate_rebalance_values(projected)
             return projected >= -1e-9
 
@@ -1970,7 +1988,7 @@ class BaseEngine(ABC):
         before = self.positions[order.symbol]
         if order.direction != before.direction:
             raise ValueError("position increase direction must match the open position")
-        if order.cost > self.capital + 1e-7:
+        if order.cost > self.available_cash(ts) + 1e-7:
             raise RuntimeError(
                 f"planned order for {order.symbol} exceeds available capital"
             )
@@ -2068,7 +2086,7 @@ class BaseEngine(ABC):
 
     def _execute_open_order(self, order: _OpenOrder, ts: pd.Timestamp) -> None:
         """Commit a previously priced opening order."""
-        if order.cost > self.capital + 1e-7:
+        if order.cost > self.available_cash(ts) + 1e-7:
             raise RuntimeError(
                 f"planned order for {order.symbol} exceeds available capital"
             )
