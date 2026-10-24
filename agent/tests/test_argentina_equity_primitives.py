@@ -143,7 +143,7 @@ def test_missing_settlement_evidence_fails_closed(config):
         })
 
 
-def test_byma_available_cash_excludes_unsettled_sales(config):
+def test_byma_buying_power_includes_same_settlement_sales(config):
     from backtest.engines.base import BaseEngine
 
     sessions = tuple(date(2024, 5, day) for day in (27, 28, 29))
@@ -159,17 +159,25 @@ def test_byma_available_cash_excludes_unsettled_sales(config):
     ]
     ts = pd.Timestamp("2024-05-27")
     assert BaseEngine.available_cash(engine, ts) == 1100.0
-    assert engine.available_cash(ts) == 500.0
+    assert engine.available_cash(ts) == 1100.0  # T+1 sale funds a T+1 buy
     assert engine.available_cash(pd.Timestamp("2024-05-28")) == 1100.0
 
 
-def test_byma_same_bar_reductions_do_not_replenish_buying_power(config):
+def test_byma_same_bar_reductions_can_fund_matched_settlement(config):
     from backtest.engines.base import BaseEngine
 
-    engine = ArgentinaEquityEngine(config)
+    engine = ArgentinaEquityEngine({
+        **config,
+        "ar_settlement_sessions": [date(2024, 5, 27), date(2024, 5, 28)],
+    })
     reductions = [SimpleNamespace(capital_credit=900.0)]
     ts = pd.Timestamp("2024-05-27")
     assert BaseEngine.projected_reduction_buying_power(engine, reductions, ts) == 900.0
-    assert engine.projected_reduction_buying_power(reductions, ts) == 0.0
+    assert engine.projected_reduction_buying_power(reductions, ts) == 900.0
+    assert engine.available_cash(ts) == engine.capital
+
+
+def test_byma_no_calendar_still_fails_closed(config):
+    engine = ArgentinaEquityEngine(config)
     with pytest.raises(ValueError, match="verified settlement calendar"):
-        engine.available_cash(ts)
+        engine.available_cash(pd.Timestamp("2024-05-27"))
