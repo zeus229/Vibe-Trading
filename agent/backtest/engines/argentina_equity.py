@@ -11,12 +11,13 @@ No brokerage defaults are represented as official BYMA rates.
 from __future__ import annotations
 
 import math
+from datetime import date, datetime
 from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 
 import pandas as pd
 
 from backtest.engines.base import BaseEngine
-from backtest.engines.vietnam_equity import newest_opening_bar_idx
+from backtest.engines.argentina_settlement import settlement_date
 
 
 class ArgentinaEquityEngine(BaseEngine):
@@ -28,7 +29,8 @@ class ArgentinaEquityEngine(BaseEngine):
             "YPFD.BA": {"kind": "share", "currency": "ARS", "lot_size": 1,
                         "tick_size": "0.05"},
             "AAPL.BA": {"kind": "cedear", "currency": "ARS", "lot_size": 1,
-                        "tick_size": "0.05"},
+                        "tick_size": "0.05", "underlying": "AAPL",
+                        "ratio_history": [{"effective_date": "2020-01-01", "ratio": "10"}]},
         }
 
     Tick sizes in the example are *illustrative*, not an assertion about
@@ -90,6 +92,15 @@ class ArgentinaEquityEngine(BaseEngine):
         if len(currencies) != 1:
             raise ValueError("BYMA engine has a single cash ledger; mixed ARS/USD is unsupported")
         self.currency = next(iter(currencies))
+        calendar = config.get("ar_settlement_sessions")
+        if calendar is None:
+            self.settlement_sessions = None
+        else:
+            if not isinstance(calendar, (list, tuple)) or not calendar or any(type(x) is not date for x in calendar):
+                raise ValueError("ar_settlement_sessions must contain explicit date objects")
+            if list(calendar) != sorted(set(calendar)):
+                raise ValueError("ar_settlement_sessions must be strictly increasing")
+            self.settlement_sessions = tuple(calendar)
         self.slippage_rate = self._nonnegative(config.get("ar_slippage", 0.0), "ar_slippage")
         self.brokerage_rate = self._nonnegative(config.get("ar_brokerage_rate", 0.0), "ar_brokerage_rate")
         self.exchange_fee_rate = self._nonnegative(config.get("ar_exchange_fee_rate", 0.0), "ar_exchange_fee_rate")
@@ -128,14 +139,6 @@ class ArgentinaEquityEngine(BaseEngine):
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
         return argentina_can_execute(self, self, symbol, direction, bar)
-        # Conservative long-only cash-account model. A direction of 0 closes.
-        if direction not in (0, 1):
-            return False
-        price = bar.get("close")
-        try:
-            return math.isfinite(float(price)) and float(price) > 0
-        except (TypeError, ValueError):
-            return False
 
     def round_size(self, raw_size: float, price: float) -> float:
         instrument = self._instrument(self._active_symbol)
@@ -164,13 +167,51 @@ class ArgentinaEquityEngine(BaseEngine):
         return float((slipped / tick).to_integral_value(rounding=rounding) * tick)
 
 
-def argentina_can_execute(state: BaseEngine, rules: ArgentinaEquityEngine, symbol: str, direction: int, bar: pd.Series) -> bool:
-    """Shared state/rules hook for standalone and composite execution.
+def _trade_date(value) -> date | None:
+    """Extract a session date only from an explicit timestamp or date."""
+    if type(value) is date:
+        return value
+    if isinstance(value, (datetime, pd.Timestamp)) and not pd.isna(value):
+        return value.date()
+    return None
 
-    Do not use this helper to enable .BA routing yet: settlement cash,
-    point-in-time corporate actions and a verified calendar remain mandatory.
-    Reuse Vietnam's fill-ledger lookup to avoid trusting the first entry bar
-    after scale-ins; actual sell eligibility requires a dated BYMA calendar.
+
+def argentina_sell_is_settled(
+    state: BaseEngine, symbol: str, today: date, sessions: tuple[date, ...],
+) -> bool:
+    """Require the newest opening fill of the held position to be settled.
+
+    BaseEngine compresses scale-ins into one position without per-lot holdings,
+    so this conservatively blocks partial sells until the newest lot settles.
+    """
+    if type(today) is not date or not sessions or today not in sessions:
+        return False
+    if symbol not in state.positions:
+        return False
+    opening = None
+    for fill in reversed(getattr(state, "fill_records", ()) or ()):
+        if fill.symbol == symbol and fill.action in ("open", "increase"):
+            opening = fill
+            break
+    if opening is None:
+        return False
+    opened = _trade_date(opening.timestamp)
+    if opened is None:
+        return False
+    try:
+        return settlement_date(opened, sessions) <= today
+    except (TypeError, ValueError):
+        return False
+
+
+def argentina_can_execute(
+    state: BaseEngine, rules: ArgentinaEquityEngine,
+    symbol: str, direction: int, bar: pd.Series,
+) -> bool:
+    """State/rules helper shared by future standalone and composite routing.
+
+    The runner remains blocked until settled-cash and corporate-action events
+    integrate safely with BaseEngine.
     """
     rules._instrument(symbol)
     if direction not in (0, 1):
@@ -181,9 +222,10 @@ def argentina_can_execute(state: BaseEngine, rules: ArgentinaEquityEngine, symbo
         return False
     if not math.isfinite(price) or price <= 0:
         return False
-    if direction == 0 and symbol in state.positions:
-        # Inspect the newest fill, but fail closed without a validated
-        # settlement-date mapping (bar offsets are insufficient for BYMA).
-        newest_opening_bar_idx(state, symbol)
+    if direction == 1:
+        return True
+    today = _trade_date(bar.name)
+    sessions = rules.settlement_sessions
+    if today is None or sessions is None:
         return False
-    return direction == 1
+    return argentina_sell_is_settled(state, symbol, today, sessions)
