@@ -177,3 +177,94 @@ Deferred: general event feed, dividend payment/withholding ledger and broker-
 faithful taxable total-return reconstruction. Those may become reusable upstream
 features later, but are not prerequisites for a transparent V1 comparable to
 existing market engines.
+
+
+## Yahoo/yfinance data audit and price-basis gates (2026-10-24)
+
+Live audit of Yahoo v8 chart payloads (`events=div,splits`, 2010-2026) and the
+repo's `yahoo` and `yfinance` loaders for YPFD.BA, GGAL.BA, PAMP.BA, the
+CEDEARs AAPL, MSFT, KO, GOOGL, AMZN, NVDA, MELI, SPY, TSLA (.BA), the USD
+lines AAPLD/GGALD/YPFDD.BA, and the US underlyings/ADRs. Scripts and raw
+payloads stayed in a local scratch directory; nothing private was used.
+
+### Findings
+
+| Area | Finding |
+|---|---|
+| Currency | Yahoo declares `ARS` for every base `.BA` line and `USD` for the `D` lines. The loaders' ARS-pool contract rejects USD lines (fail closed, consistent with the single-ledger engine). |
+| yfinance loader | **Bug:** `_declared_currency` required `dict`, but yfinance 1.7.0 (locked) returns a `HistoryMetadata` `Mapping`, so every LSE/BYMA/TSX symbol read as "no currency" and the whole yfinance path rejected them. Existing tests stubbed the probe. Fixed (accept `Mapping`) with a regression test. |
+| Loader agreement | After the fix, `yahoo` and `yfinance` match bar for bar on the audited window (max relative close diff 4e-7, identical volume, midnight index, `quote_currency=ARS`). |
+| Adjustment | OHLC is split- and dividend-adjusted (adjclose/close factor, e.g. YPFD 0.847 at the start); volume stays raw. Same caliber as other markets. |
+| Share splits | Yahoo records and adjusts share splits (YPFD.BA / YPFDD.BA 10:1 on 2026-08-03): the series is continuous. |
+| CEDEAR "splits" | Yahoo's CEDEAR split events are the underlying's splits (AAPL 2020 4:1, TSLA, GOOGL/AMZN 2022, NVDA 2024) and are adjusted. |
+| CEDEAR ratio changes | **Not adjusted.** The implied ratio `underlying x CCL / CEDEAR` (CCL from GGAL.BA x 10 / GGAL) shows level shifts that match raw price drops: AAPL 10->20 on 2024-01-24 (AAPL.BA 25100 -> 12697.5; Yahoo only records a 2:1 "split" on AAPLD.BA), MSFT 5->10->30 (2020-10-22, 2022-11-17), GOOGL 29->58, AMZN 72->144, NVDA 3->6 (2020-10-22) and x4 on 2021-07-20. MELI.BA shows raw drops on 2020-10-22 (x0.034) and 2024-01-24 (x0.51), not verified with the implied-ratio method. KO (5), TSLA (15) and YPFD vs YPF were stable. A naive backtest books each as a 50-75% loss. |
+| Placeholder bars | Many flat OHLC bars with zero volume (MSFT.BA 1640, KO.BA 1290 since 2010), including holidays (YPFD.BA 2018-01-01). They are stale, not executable prices. USD lines have hundreds of null rows (dropped by the loader). |
+| Real moves | GGAL.BA/PAMP.BA fell ~47% on 2019-08-12 (PASO): genuine, must not be "corrected". |
+| Minor | A few bars with high/low inconsistent with open/close (<=7 per series); not used for fills, left as is. |
+
+The ratio values above are **inferred from prices** for the audit; official
+ratios and dates must come from BYMA/Caja de Valores/CNV disclosures.
+
+### Implemented (minimal, reusable)
+
+- `BaseEngine.prepare_market_data(data_map)`: new hook run after loading and
+  before signal generation; default returns the frames unchanged (all other
+  markets unaffected). Signals and fills therefore share one price basis.
+- `agent/backtest/engines/argentina_data.py` + `ArgentinaEquityEngine.prepare_market_data`:
+  - require OHLCV columns, a unique ascending index and a loader-declared
+    `quote_currency` equal to the instrument metadata (the `local` loader
+    declares none, so it is rejected for BYMA v1);
+  - drop zero-volume placeholder bars on dates outside the settlement
+    calendar; a traded bar on a non-session fails closed;
+  - for each declared CEDEAR ratio change inside the window, compare the
+    close move between the last traded bar before and the first on/after the
+    effective date with the unadjusted factor `old/new` and with ~1
+    (tolerance `ar_ratio_jump_tolerance`, default 20%). Exactly one match is
+    required (optional `price_series: adjusted|unadjusted` must agree);
+    unadjusted evidence rescales earlier OHLC by `old/new` and volume by the
+    inverse, like a split adjustment. Ambiguous (e.g. 10->11), contradicted
+    or unverifiable changes fail closed;
+  - reject undeclared one-bar moves beyond 40% for CEDEARs
+    (`ar_max_unexplained_cedear_move`) and beyond 75% for shares
+    (`ar_max_unexplained_share_move`, catches unadjusted >=4:1 splits while
+    allowing the 2019 PASO move).
+- Zero/missing-volume bars are not executable (`argentina_can_execute`).
+- Diagnostics: `ar_price_basis = source_split_dividend_adjusted_ohlc_raw_volume`,
+  `ar_cedear_ratio_adjustments`, `ar_dropped_non_session_bars`.
+
+Performance is an **adjusted-price backtest**: dividends live in the source's
+adjusted prices; no cashflow, payment date, withholding or FX entry is
+created.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_*.py` | 75 passed (17 new in `test_argentina_price_basis.py`) |
+| `test_yfinance_declared_currency.py` | 8 passed; with the old `dict` check 4 fail |
+| Engines, loaders and backtest regressions (BaseEngine, India, Korea, Vietnam, Brazil, Composite, China, crypto, forex, global, UK, rebalance, `test_backtest_*`, `test_yfinance*`, `test_yahoo*`, `test_*loader*`, Argentina) | 1984 passed, 9 skipped |
+| Full suite (CI ignores) | 61 failed, 21362 passed, 173 skipped; the 61 are **identical** to the pre-existing set (passes +25 = new tests) |
+| ruff on changed files, CI syntax step, gates a-f | ok; gate g still fails (pre-existing, unchanged) |
+| Live smoke (not a test): real Yahoo 2019-2026 frames through `prepare_market_data` | YPFD/GGAL/PAMP unchanged; every inferred ratio change for AAPL, MSFT, GOOGL, AMZN, NVDA detected as unadjusted and rescaled; KO/TSLA clean; MSFT without declared history fails closed naming 2020-10-22 and 2022-11-17 |
+
+Key deterministic case: inlined public Yahoo AAPL.BA quotes (2024-01-15..02-02)
+held through the 10->20 change return +10.5% (9 units, 10835 -> 12002.5
+adjusted) instead of -45% unadjusted; without the declared change the run
+aborts.
+
+### Pending after this gate
+
+- Official ratio histories (dates and ratios) per CEDEAR from Caja de
+  Valores/BYMA; the engine trusts the declared dates and only checks prices.
+- USD (`D`) lines: loaders reject them by the ARS pool contract; a separate
+  USD pool/FX design is required before supporting them.
+- `local` source for BYMA needs a way to declare `quote_currency`.
+- Adjusted levels: like any split adjustment, pre-change price *levels* are
+  restated with later information; returns are not. Lot size, tick grid and
+  fixed fees apply to adjusted units (finer than real pre-change lots).
+- Unadjusted share splits below 4:1 are not caught by the 75% band.
+- MELI/SPY and other CEDEARs not covered by the smoke need their own ratio
+  histories before use; stale-print-heavy CEDEARs (MSFT/KO.BA pre-2020) trade
+  rarely in backtests because placeholder bars are not executable.
+- Unchanged from earlier milestones: gate g, the 61 pre-existing suite
+  failures, CI 3.11/3.14 legs, `.BA` routing disabled.
