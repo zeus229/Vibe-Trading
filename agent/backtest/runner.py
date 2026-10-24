@@ -161,7 +161,10 @@ class BacktestConfigSchema(BaseModel):
     @classmethod
     def valid_engine(cls, v: str) -> str:
         if v not in _VALID_ENGINES:
-            raise ValueError(f"unsupported engine {v!r}, must be one of {_VALID_ENGINES}")
+            raise ValueError(
+                f"unsupported engine {v!r}, must be one of {_VALID_ENGINES}; market rule "
+                "engines (e.g. BYMA for .BA codes) are selected from `codes`, keep 'daily'"
+            )
         return v
 
     @field_validator("source")
