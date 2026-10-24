@@ -73,15 +73,15 @@ class ArgentinaEquityEngine(BaseEngine):
                 for item in ratios:
                     if not isinstance(item, dict) or "effective_date" not in item or "ratio" not in item:
                         raise ValueError(f"{symbol}: invalid ratio entry")
-                    date = str(item["effective_date"])
+                    effective = str(item["effective_date"])
                     try:
-                        valid_date = pd.Timestamp(date).strftime("%Y-%m-%d") == date
+                        valid_date = pd.Timestamp(effective).strftime("%Y-%m-%d") == effective
                         ratio = Decimal(str(item["ratio"]))
                     except (ValueError, TypeError, ArithmeticError):
                         raise ValueError(f"{symbol}: invalid ratio entry") from None
-                    if not valid_date or not ratio.is_finite() or ratio <= 0 or date <= previous:
+                    if not valid_date or not ratio.is_finite() or ratio <= 0 or effective <= previous:
                         raise ValueError(f"{symbol}: ratio history must be valid and increasing")
-                    previous = date
+                    previous = effective
             self.instruments[symbol.upper()] = {**info, "tick_size": tick}
             if info["kind"] == "cedear":
                 self.ratio_changes[symbol.upper()] = tuple(
@@ -129,13 +129,13 @@ class ArgentinaEquityEngine(BaseEngine):
         if instrument["kind"] != "cedear":
             raise ValueError(f"{symbol}: not a CEDEAR")
         try:
-            date = pd.Timestamp(as_of).strftime("%Y-%m-%d")
+            as_of_day = pd.Timestamp(as_of).strftime("%Y-%m-%d")
         except (ValueError, TypeError):
             raise ValueError("invalid as_of date") from None
         matches = [ratio for effective, ratio in self.ratio_changes[symbol.upper()]
-                   if effective <= date]
+                   if effective <= as_of_day]
         if not matches:
-            raise ValueError(f"{symbol}: no effective ratio at {date}")
+            raise ValueError(f"{symbol}: no effective ratio at {as_of_day}")
         return matches[-1]
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
