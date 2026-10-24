@@ -18,7 +18,7 @@ import pandas as pd
 
 from backtest.engines.base import BaseEngine
 from backtest.engines.argentina_settlement import settlement_date
-from backtest.engines.argentina_reconciliation import available_settled_capital
+from backtest.engines.argentina_reconciliation import available_for_settlement
 
 
 class ArgentinaEquityEngine(BaseEngine):
@@ -142,21 +142,33 @@ class ArgentinaEquityEngine(BaseEngine):
         return argentina_can_execute(self, self, symbol, direction, bar)
 
     def available_cash(self, timestamp: pd.Timestamp) -> float:
-        """Read-only buying power net of unsettled sales; fail if unverified."""
+        """Buying power for normal BYMA settlement, including matching sales."""
         if self.settlement_sessions is None:
             raise ValueError("BYMA buying power requires a verified settlement calendar")
         today = _trade_date(timestamp)
         if today is None:
             raise ValueError("BYMA buying power requires a session timestamp")
-        return available_settled_capital(
-            self.capital, self.fill_records, today, self.settlement_sessions,
+        purchase_due = settlement_date(today, self.settlement_sessions)
+        return available_for_settlement(
+            self.capital, self.fill_records, today, purchase_due,
+            self.settlement_sessions,
         )
 
     def projected_reduction_buying_power(
         self, reductions: list, timestamp: pd.Timestamp,
     ) -> float:
-        """No unsettled sale proceeds may fund same-session purchases."""
-        return 0.0
+        """Match sales and purchases with the same normal settlement date.
+
+        This assumes one validated currency/clearing pool and normal-cash
+        settlement, not same-day instant cash or permission to withdraw.
+        """
+        if self.settlement_sessions is None:
+            raise ValueError("BYMA netting requires a verified settlement calendar")
+        today = _trade_date(timestamp)
+        if today is None:
+            raise ValueError("BYMA netting requires a valid session date")
+        settlement_date(today, self.settlement_sessions)
+        return sum(order.capital_credit for order in reductions)
 
     def round_size(self, raw_size: float, price: float) -> float:
         instrument = self._instrument(self._active_symbol)
