@@ -1816,14 +1816,13 @@ def _select_market_engine(source: str, config: dict, codes: List[str]):
     if "br_equity" in markets:
         from backtest.engines.brazil_equity import BrazilEquityEngine
         return BrazilEquityEngine(config)
-    # Argentina market-data routing is supported, but BYMA execution rules
-    # are not modeled yet. Fail closed instead of silently applying US/crypto
-    # commissions, lot sizes, settlement, or short-selling assumptions.
+    # Argentina (BYMA) routing — same reason as India. The engine itself
+    # fails closed without declared instrument metadata (share/CEDEAR, quote
+    # currency, lot, tick, dated CEDEAR ratios) and a settlement calendar,
+    # rather than applying US/crypto lot, settlement or shorting defaults.
     if "ar_equity" in markets:
-        raise ValueError(
-            "Argentina .BA market data is supported, but Argentina backtest "
-            "execution rules are not modeled yet"
-        )
+        from backtest.engines.argentina_equity import ArgentinaEquityEngine
+        return ArgentinaEquityEngine(config)
 
     # Index symbols (^SPX, ^FTSE, ...) — priced like a US/global-listed
     # instrument (GlobalEquityEngine, US rules) and never the China/crypto

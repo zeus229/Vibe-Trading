@@ -32,6 +32,22 @@ def test_argentina_fallback_chain_is_yahoo_first() -> None:
     assert FALLBACK_CHAINS["ar_equity"] == ["yahoo", "yfinance", "local"]
 
 
-def test_argentina_backtest_fails_closed_until_execution_rules_exist() -> None:
-    with pytest.raises(ValueError, match="Argentina backtest execution rules are not modeled"):
+def test_argentina_backtest_routes_to_byma_engine() -> None:
+    from datetime import date
+
+    from backtest.engines.argentina_equity import ArgentinaEquityEngine
+
+    config = {
+        "ar_instruments": {
+            "GGAL.BA": {"kind": "share", "currency": "ARS", "lot_size": 1, "tick_size": "0.05"},
+        },
+        "ar_settlement_sessions": ["2024-05-27", "2024-05-28"],
+    }
+    engine = _create_market_engine("yahoo", config, ["GGAL.BA"])
+    assert isinstance(engine, ArgentinaEquityEngine)
+    assert engine.settlement_sessions == (date(2024, 5, 27), date(2024, 5, 28))
+
+
+def test_argentina_backtest_without_byma_metadata_still_fails_closed() -> None:
+    with pytest.raises(ValueError, match="ar_instruments must declare BYMA instrument metadata"):
         _create_market_engine("yahoo", {}, ["GGAL.BA"])
