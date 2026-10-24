@@ -1,9 +1,9 @@
 """Read-only BYMA settlement reconciliation for the existing BaseEngine fill ledger.
 
-BaseEngine.capital recognizes sale proceeds on execution. For BYMA cash
-accounts, those proceeds are receivables, not immediately spendable. Derive
-the outstanding receivables from immutable fills and subtract them from
-BaseEngine.capital; never post a second sale or mutate its positions.
+BaseEngine.capital recognizes sale proceeds on execution. Those proceeds
+are not withdrawable until settlement, but can fund a buy settling on or
+after the sale (same currency and settlement pool). Determine buying power
+for the destination settlement date without posting cash twice.
 
 This adapter is independent of brokers, Asistente Casa, and private APIs.
 It is deliberately not wired into runner: the order planner also needs to
@@ -86,3 +86,52 @@ def available_settled_capital(
     if not isfinite(amount):
         raise ValueError("recognized capital must be finite")
     return amount - pending_sale_proceeds(fills, as_of, settlement_sessions)
+
+
+
+def available_for_settlement(
+    recognized_capital: float,
+    fills: Iterable[object],
+    as_of: date,
+    purchase_settlement: date,
+    settlement_sessions: Iterable[date],
+) -> float:
+    """Buying power for a dated purchase, net of later-settling receivables.
+
+    Sales settling on or before the purchase's due date are usable for
+    matched-date settlement even if not yet withdrawable. Other receivables
+    are excluded. All fills must be from the same currency/clearing account.
+    Callers must account for broker permissions and clearing guarantees.
+    """
+    capital = float(recognized_capital)
+    if not isfinite(capital):
+        raise ValueError("recognized capital must be finite")
+    if type(as_of) is not date or type(purchase_settlement) is not date:
+        raise ValueError("settlement dates must be date objects")
+    sessions = tuple(settlement_sessions)
+    if not sessions or any(type(day) is not date for day in sessions):
+        raise ValueError("verified settlement calendar required")
+    if sessions != tuple(sorted(set(sessions))) or as_of not in sessions or purchase_settlement not in sessions:
+        raise ValueError("trade and purchase settlement must be in the verified calendar")
+    if purchase_settlement < as_of:
+        raise ValueError("purchase settlement cannot precede trade date")
+    unavailable = 0.0
+    for fill in fills:
+        if fill.action not in ("open", "increase", "reduce", "close"):
+            raise ValueError("unknown BYMA fill action")
+        traded = _session_date(fill.timestamp)
+        if traded > as_of:
+            raise ValueError("future fill cannot fund current purchases")
+        if fill.action not in ("reduce", "close"):
+            continue
+        qty = float(fill.signed_quantity)
+        price = float(fill.execution_price)
+        fee = float(fill.fee)
+        if not all(isfinite(v) for v in (qty, price, fee)) or qty >= 0 or price <= 0 or fee < 0:
+            raise ValueError("invalid BYMA sale fill")
+        proceeds = -qty * price - fee
+        if not isfinite(proceeds) or proceeds < 0:
+            raise ValueError("negative or non-finite BYMA sale proceeds")
+        if settlement_date(traded, sessions) > purchase_settlement:
+            unavailable += proceeds
+    return capital - unavailable
