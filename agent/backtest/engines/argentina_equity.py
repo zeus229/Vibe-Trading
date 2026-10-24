@@ -16,6 +16,7 @@ from decimal import Decimal, ROUND_CEILING, ROUND_FLOOR
 import pandas as pd
 
 from backtest.engines.base import BaseEngine
+from backtest.engines.vietnam_equity import newest_opening_bar_idx
 
 
 class ArgentinaEquityEngine(BaseEngine):
@@ -126,7 +127,7 @@ class ArgentinaEquityEngine(BaseEngine):
         return matches[-1]
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
-        self._instrument(symbol)
+        return argentina_can_execute(self, self, symbol, direction, bar)
         # Conservative long-only cash-account model. A direction of 0 closes.
         if direction not in (0, 1):
             return False
@@ -161,3 +162,28 @@ class ArgentinaEquityEngine(BaseEngine):
         tick = instrument["tick_size"]
         rounding = ROUND_CEILING if side > 0 else ROUND_FLOOR
         return float((slipped / tick).to_integral_value(rounding=rounding) * tick)
+
+
+def argentina_can_execute(state: BaseEngine, rules: ArgentinaEquityEngine, symbol: str, direction: int, bar: pd.Series) -> bool:
+    """Shared state/rules hook for standalone and composite execution.
+
+    Do not use this helper to enable .BA routing yet: settlement cash,
+    point-in-time corporate actions and a verified calendar remain mandatory.
+    Reuse Vietnam's fill-ledger lookup to avoid trusting the first entry bar
+    after scale-ins; actual sell eligibility requires a dated BYMA calendar.
+    """
+    rules._instrument(symbol)
+    if direction not in (0, 1):
+        return False
+    try:
+        price = float(bar.get("close"))
+    except (TypeError, ValueError):
+        return False
+    if not math.isfinite(price) or price <= 0:
+        return False
+    if direction == 0 and symbol in state.positions:
+        # Inspect the newest fill, but fail closed without a validated
+        # settlement-date mapping (bar offsets are insufficient for BYMA).
+        newest_opening_bar_idx(state, symbol)
+        return False
+    return direction == 1
