@@ -18,6 +18,7 @@ import pandas as pd
 
 from backtest.engines.base import BaseEngine
 from backtest.engines.argentina_settlement import settlement_date
+from backtest.engines.argentina_reconciliation import available_settled_capital
 
 
 class ArgentinaEquityEngine(BaseEngine):
@@ -139,6 +140,23 @@ class ArgentinaEquityEngine(BaseEngine):
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
         return argentina_can_execute(self, self, symbol, direction, bar)
+
+    def available_cash(self, timestamp: pd.Timestamp) -> float:
+        """Read-only buying power net of unsettled sales; fail if unverified."""
+        if self.settlement_sessions is None:
+            raise ValueError("BYMA buying power requires a verified settlement calendar")
+        today = _trade_date(timestamp)
+        if today is None:
+            raise ValueError("BYMA buying power requires a session timestamp")
+        return available_settled_capital(
+            self.capital, self.fill_records, today, self.settlement_sessions,
+        )
+
+    def projected_reduction_buying_power(
+        self, reductions: list, timestamp: pd.Timestamp,
+    ) -> float:
+        """No unsettled sale proceeds may fund same-session purchases."""
+        return 0.0
 
     def round_size(self, raw_size: float, price: float) -> float:
         instrument = self._instrument(self._active_symbol)
