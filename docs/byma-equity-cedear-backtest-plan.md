@@ -1,6 +1,6 @@
 # BYMA equity and CEDEAR backtesting — implementation contract
 
-Status: isolated implementation and integration tests added; **not yet runtime-verified**. **Do not remove the existing `ar_equity` fail-closed guard until implementation, source validation and tests are complete.** No bonds, ONs, bills or fixed-income engine in scope.
+Status: settlement/netting milestone **verified locally on 2026-10-24** (see the milestone section); `.BA` routing in `runner.py`/`composite.py` remains **disabled**. **Do not remove the existing `ar_equity` fail-closed guard until implementation, source validation and tests are complete.** No bonds, ONs, bills or fixed-income engine in scope.
 
 ## Goal
 Add a reusable, upstream-friendly `ArgentinaEquityEngine` for BYMA-listed common shares and CEDEARs, without depending on PPI or Asistente Casa. Preserve existing `.BA` symbol detection and Yahoo → yfinance → local provider routing. Avoid changing other markets' execution semantics.
@@ -56,14 +56,95 @@ Add a reusable, upstream-friendly `ArgentinaEquityEngine` for BYMA-listed common
 - Actual `BaseEngine._execute_bars` integration fixture:
   `agent/tests/test_argentina_rotation_integration.py` (hold and rebalance,
   order independence, double-spend bounds, commission accounting).
-- **Verification pending:** no pytest/CI run has yet been observed for this
-  feature branch. Do not mark this milestone PASS or enable runner/composite
-  routing until these tests and affected-market regression suites execute.
-- Run from the repository environment:
-  `pytest agent/tests/test_argentina_reconciliation.py agent/tests/test_argentina_equity_primitives.py agent/tests/test_argentina_settlement.py agent/tests/test_argentina_cash.py agent/tests/test_argentina_rotation_integration.py -q`
-- Then run affected market/composite suites and the upstream CI checks.
-- Remaining integration issues: terminal forced liquidation does not consult
-  BYMA sale eligibility; corporate actions and CEDEAR total-return provenance
-  are not complete; multi-currency netting is intentionally prohibited.
+- Terminal forced liquidation now consults the market's sell rule through
+  `BaseEngine.can_liquidate_at_end(symbol, timestamp)` (default `True`, so
+  every other market is unchanged). BYMA refuses the end-of-backtest sale of
+  a position whose newest opening fill has not settled: the position stays
+  open, no `end_of_backtest` trade/fill is invented, the final snapshot keeps
+  `positions > 0`, and equity values it at what the close would net
+  (last close, slippage/tick, exit commission). `_engine_diagnostics()`
+  declares `ar_unliquidated_position_count`, `ar_unliquidated_positions`,
+  `ar_terminal_equity_basis` and `ar_unsettled_sale_receivable_at_end`
+  (terminal equity includes proceeds that settle after the last bar).
+
+### Local verification evidence (2026-10-24)
+
+Environment: dedicated worktree of `feat/byma-equity-cedear-backtest`
+(base `8d4b0a4b`), Python 3.12.3 venv with `pip install -e ".[dev]"`
+(CI uses 3.11/3.14 and extra `openbb,stats,anthropic,matrix`). No PPI,
+Asistente Casa, broker or private service involved; fixtures are synthetic.
+
+Defects found and fixed:
+
+1. `ArgentinaEquityEngine.__init__` bound a local `date` while validating
+   CEDEAR ratio history, shadowing `datetime.date`; every engine constructed
+   with `ar_settlement_sessions` raised `NameError`. This made 9 of the 11
+   initial failures (all settlement/rotation tests had never run). Locals
+   renamed (also in `ratio_at`).
+2. `test_rotation_includes_all_trade_fees_in_final_equity` called
+   `_engine(fee=5)`, which the helper did not accept. Helper now maps `fee`
+   to `ar_fixed_fee` (plus optional rates, slippage, tick, calendar).
+3. Terminal liquidation bypassed BYMA sale eligibility (reproduced: buy on
+   the last bar and the same-day `end_of_backtest` sale with a fake round
+   trip). Fixed as described above.
+
+Results:
+
+| Check | Result |
+|---|---|
+| `test_argentina_*.py` before fixes | 11 failed, 34 passed |
+| `test_argentina_*.py` after fixes | 58 passed |
+| Engine/market regressions: `test_base_engine`, India, Korea, Vietnam, Brazil routing, `test_composite_*`, market hooks, China A/futures, crypto, forex, global equity/futures, robustness, metrics JSON, rebalance, UK, `test_backtest_*`, Argentina | 1017 passed, 1 skipped |
+| `ruff check` on changed/Argentina files | clean |
+| `tools/ci_grep_gates.sh` | gates a–f ok; **gate g fails** (see pending) |
+| `tools/test_ci_*_gate.py` | 39 passed |
+| CI syntax step (compileall/py_compile incl. `backtest/runner.py`) | ok |
+| Full suite (CI ignores) on this branch | 61 failed, 21337 passed, 173 skipped |
+| Full suite on unmodified `8d4b0a4b` | 72 failed, 21313 passed, 173 skipped |
+| Difference | the 11 Argentina failures fixed here; the other 61 are **identical** on both trees |
+| 9 MCP-registry failures among the 61 | pass in isolation (36/36): order-dependent registry pollution, pre-existing |
+
+New integration coverage in `test_argentina_rotation_integration.py`
+(each in `hold` and `rebalance`): T+2 position not rotatable the next day
+and no funds used twice; rotation across the 2024-05-27 T+2→T+1 cutover;
+terminal liquidation blocked for unsettled positions, with exit-cost-netted
+equity; settled positions still liquidated and receivable declared; ledger
+identity (initial cash ± every fill's notional and fee, with proportional and
+fixed fees, slippage and tick rounding) equals final capital and equity; full
+`run_backtest` pipeline reports the retained position. Mutation checks:
+making `can_liquidate_at_end` always true fails 5 tests; making same-bar
+reductions provide no buying power fails 5 tests.
+
+Maturity compatibility: under the normal-cash rule table, a later trade can
+never settle before an earlier sale (lag only drops 2→1 at the cutover, and
+5/24 T+2 and 5/27 T+1 both settle 5/28), so the "sale settles after the
+purchase" guard in `available_for_settlement` is defense in depth, tested at
+unit level (`test_t2_sale_cannot_fund_an_earlier_settling_buy`,
+`test_t1_sale_cannot_fund_same_day_cash_settlement`). Mixed ARS/USD is still
+rejected at construction.
+
+### Real pending items
+
+- `tools/ci_grep_gates.sh` gate g rejects tracked internal documents on this
+  branch: `AGENTS.md`, `docs/ASISTENTE_CASA_EQUITY_RISK_GROUNDING_HANDOFF.md`,
+  this plan, and two `docs/sessions/` notes. Must be resolved (untrack or
+  move to `wiki/docs/`) before any upstream PR; the branch also carries
+  ~895 fork commits ahead of `origin/main` that need to be isolated.
+- The 61 pre-existing full-suite failures (grounding preservation/formula/
+  repair, README engine counts, OU missing-lag pairs, order-dependent MCP
+  registry tests) are not from this milestone but block a green CI on this
+  branch.
+- Not yet run: CI's Python 3.11/3.14 legs and optional extras.
+- The settlement calendar must cover the settlement date of the last bar;
+  otherwise the run fails closed (`settlement calendar does not cover`).
+- Retained terminal positions are valued, not sold; no trade-level stats
+  (win rate, holding time) include them. Readers must check
+  `ar_unliquidated_position_count`.
+- Same-day buy-and-sell (intraday netting) of one instrument is blocked
+  conservatively; scale-ins block partial sells until the newest lot settles.
+- Corporate actions, dividends and point-in-time CEDEAR ratio effects on
+  positions are not implemented; multi-currency netting is prohibited.
 - Broker-specific pre-funding, netting permissions and trading-line variants
   are explicit limitations; do not claim identical buying power at every broker.
+- `.BA` routing in `runner.py`/`composite.py` stays disabled until the above
+  data/event contracts exist.
