@@ -1,9 +1,11 @@
 """BYMA execution primitive tests. No claims about complete total-return backtesting."""
 
 import pytest
+from datetime import date
+from types import SimpleNamespace
 import pandas as pd
 
-from backtest.engines.argentina_equity import ArgentinaEquityEngine
+from backtest.engines.argentina_equity import ArgentinaEquityEngine, argentina_sell_is_settled, argentina_can_execute
 
 
 @pytest.fixture
@@ -24,7 +26,7 @@ def test_share_and_cedear_long_only(config):
     bar = pd.Series({"close": 100.0})
     for code in ("YPFD.BA", "AAPL.BA"):
         assert engine.can_execute(code, 1, bar)
-        assert engine.can_execute(code, 0, bar)
+        assert not engine.can_execute(code, 0, bar)  # no position/fill/calendar evidence
         assert not engine.can_execute(code, -1, bar)
 
 
@@ -96,3 +98,46 @@ def test_ratio_lookup_is_point_in_time(config):
     assert str(engine.ratio_at("AAPL.BA", "2025-06-01")) == "20"
     with pytest.raises(ValueError, match="no effective ratio"):
         engine.ratio_at("AAPL.BA", "2019-12-31")
+
+def test_byma_settlement_eligibility_uses_actual_sessions(config):
+    sessions = (date(2024, 5, 24), date(2024, 5, 27),
+                date(2024, 5, 28), date(2024, 5, 29))
+    cfg = {**config, "ar_settlement_sessions": sessions}
+    engine = ArgentinaEquityEngine(cfg)
+    engine.positions["YPFD.BA"] = object()
+    engine.fill_records = [
+        SimpleNamespace(symbol="YPFD.BA", action="open",
+                        timestamp=pd.Timestamp("2024-05-24")),
+    ]
+    assert not argentina_sell_is_settled(engine, "YPFD.BA", date(2024, 5, 27), sessions)
+    assert argentina_sell_is_settled(engine, "YPFD.BA", date(2024, 5, 28), sessions)
+    assert not argentina_sell_is_settled(engine, "YPFD.BA", date(2024, 5, 26), sessions)
+    assert argentina_can_execute(engine, engine, "YPFD.BA", 0,
+                                  pd.Series({"close": 100}, name=pd.Timestamp("2024-05-28")))
+
+
+def test_scale_in_resets_byma_settlement_hold(config):
+    sessions = tuple(date(2024, 5, day) for day in (27, 28, 29, 30))
+    engine = ArgentinaEquityEngine({**config, "ar_settlement_sessions": sessions})
+    engine.positions["YPFD.BA"] = object()
+    engine.fill_records = [
+        SimpleNamespace(symbol="YPFD.BA", action="open",
+                        timestamp=pd.Timestamp("2024-05-27")),
+        SimpleNamespace(symbol="YPFD.BA", action="increase",
+                        timestamp=pd.Timestamp("2024-05-28")),
+    ]
+    assert not argentina_sell_is_settled(engine, "YPFD.BA", date(2024, 5, 28), sessions)
+    assert argentina_sell_is_settled(engine, "YPFD.BA", date(2024, 5, 29), sessions)
+
+
+def test_missing_settlement_evidence_fails_closed(config):
+    engine = ArgentinaEquityEngine(config)
+    engine.positions["YPFD.BA"] = object()
+    engine.fill_records = []
+    assert not engine.can_execute(
+        "YPFD.BA", 0, pd.Series({"close": 100}, name=pd.Timestamp("2024-05-28"))
+    )
+    with pytest.raises(ValueError, match="strictly increasing"):
+        ArgentinaEquityEngine({
+            **config, "ar_settlement_sessions": [date(2024, 5, 28), date(2024, 5, 27)]
+        })
