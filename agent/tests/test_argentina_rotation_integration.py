@@ -75,3 +75,21 @@ def test_simultaneous_orders_do_not_double_spend_proceeds(mode):
     assert rotated
     assert sum(f.signed_quantity * f.execution_price + f.fee for f in rotated) <= 1000 + 1e-9
     assert engine.equity_snapshots[-1].equity == pytest.approx(1000)
+
+
+@pytest.mark.parametrize("mode", ["hold", "rebalance"])
+def test_rotation_includes_all_trade_fees_in_final_equity(mode):
+    engine = _execute(_engine(adjustment=mode, fee=5), {
+        "GGAL.BA": [0, 1, 1],
+        "YPFD.BA": [1, 0, 0],
+    })
+    # Four fills: buy YPF, sell YPF, buy GGAL, terminal sell GGAL.
+    # Each fill incurs a configured 5 ARS fee and prices stay flat.
+    assert [(f.symbol, f.action) for f in engine.fill_records] == [
+        ("YPFD.BA", "open"),
+        ("YPFD.BA", "close"),
+        ("GGAL.BA", "open"),
+        ("GGAL.BA", "close"),
+    ]
+    assert engine.equity_snapshots[-1].equity == pytest.approx(980)
+    assert engine.capital == pytest.approx(980)
