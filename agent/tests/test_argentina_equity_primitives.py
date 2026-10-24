@@ -50,10 +50,14 @@ def test_unknown_instrument_fails_closed(config):
         engine.can_execute("AL30.BA", 1, pd.Series({"close": 100, "volume": 1.0}))
 
 
-def test_missing_metadata_and_mixed_currency_fail_closed(config):
+def test_invalid_metadata_and_mixed_currency_fail_closed(config):
     bad = dict(config)
+    # Omitted tick_size means BYMA CIR 3569 bands; an invalid one still fails.
     bad["ar_instruments"] = {"YPFD.BA": {"kind": "share", "currency": "ARS", "lot_size": 1}}
-    with pytest.raises(ValueError, match="tick_size"):
+    assert ArgentinaEquityEngine(bad).instruments["YPFD.BA"]["tick_size"] is None
+    bad["ar_instruments"] = {"YPFD.BA": {"kind": "share", "currency": "ARS", "lot_size": 1,
+                                         "tick_size": "-1"}}
+    with pytest.raises(ValueError, match="tick_size must be a positive number"):
         ArgentinaEquityEngine(bad)
     bad["ar_instruments"] = {
         **config["ar_instruments"],

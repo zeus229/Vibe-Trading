@@ -48,6 +48,15 @@ def test_argentina_backtest_routes_to_byma_engine() -> None:
     assert engine.settlement_sessions == (date(2024, 5, 27), date(2024, 5, 28))
 
 
-def test_argentina_backtest_without_byma_metadata_still_fails_closed() -> None:
-    with pytest.raises(ValueError, match="ar_instruments must declare BYMA instrument metadata"):
-        _create_market_engine("yahoo", {}, ["GGAL.BA"])
+def test_argentina_backtest_without_metadata_is_prepared_or_fails_closed() -> None:
+    """No ar_instruments: the engine builds, and preparation must resolve each
+    loaded symbol; one it cannot classify fails closed naming the keys."""
+    import pandas as pd
+
+    engine = _create_market_engine("yahoo", {}, ["GGAL.BA"])
+    engine.describe_instrument = lambda symbol: None  # descriptor unavailable
+    frame = pd.DataFrame({"open": [1.0], "high": [1.0], "low": [1.0], "close": [1.0],
+                          "volume": [10.0]}, index=pd.DatetimeIndex(["2024-05-27"]))
+    frame.attrs["quote_currency"] = "ARS"
+    with pytest.raises(ValueError, match=r"GGAL\.BA\.kind as 'share' or 'cedear'"):
+        engine.prepare_market_data({"GGAL.BA": frame})

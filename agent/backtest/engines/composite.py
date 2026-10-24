@@ -221,6 +221,16 @@ class CompositeEngine(BaseEngine):
 
     # ── BYMA state/rules hooks (pool ledger evaluated by the rule book) ──
 
+    def _write_artifacts(self, run_dir, *args, **kwargs) -> None:
+        super()._write_artifacts(run_dir, *args, **kwargs)
+        if self._ar_rules is not None:
+            from backtest.engines.argentina_equity import (
+                argentina_diagnostics,
+                write_preparation_artifact,
+            )
+
+            write_preparation_artifact(run_dir, argentina_diagnostics(self, self._ar_rules))
+
     def prepare_market_data(self, data_map):
         if self._ar_rules is None:
             return super().prepare_market_data(data_map)
