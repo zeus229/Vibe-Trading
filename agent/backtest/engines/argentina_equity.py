@@ -42,6 +42,7 @@ class ArgentinaEquityEngine(BaseEngine):
         if not isinstance(instruments, dict) or not instruments:
             raise ValueError("ar_instruments must declare BYMA instrument metadata")
         self.instruments = {}
+        self.ratio_changes = {}
         for symbol, info in instruments.items():
             if not isinstance(info, dict) or info.get("kind") not in ("share", "cedear"):
                 raise ValueError(f"{symbol}: explicit share/cedear classification required")
@@ -78,6 +79,11 @@ class ArgentinaEquityEngine(BaseEngine):
                         raise ValueError(f"{symbol}: ratio history must be valid and increasing")
                     previous = date
             self.instruments[symbol.upper()] = {**info, "tick_size": tick}
+            if info["kind"] == "cedear":
+                self.ratio_changes[symbol.upper()] = tuple(
+                    (item["effective_date"], Decimal(str(item["ratio"])))
+                    for item in info["ratio_history"]
+                )
 
         currencies = {x["currency"] for x in self.instruments.values()}
         if len(currencies) != 1:
@@ -103,6 +109,21 @@ class ArgentinaEquityEngine(BaseEngine):
             return self.instruments[symbol.upper()]
         except KeyError:
             raise ValueError(f"{symbol}: unregistered BYMA instrument") from None
+
+    def ratio_at(self, symbol: str, as_of: str) -> Decimal:
+        """Look up a CEDEAR ratio without using future metadata."""
+        instrument = self._instrument(symbol)
+        if instrument["kind"] != "cedear":
+            raise ValueError(f"{symbol}: not a CEDEAR")
+        try:
+            date = pd.Timestamp(as_of).strftime("%Y-%m-%d")
+        except (ValueError, TypeError):
+            raise ValueError("invalid as_of date") from None
+        matches = [ratio for effective, ratio in self.ratio_changes[symbol.upper()]
+                   if effective <= date]
+        if not matches:
+            raise ValueError(f"{symbol}: no effective ratio at {date}")
+        return matches[-1]
 
     def can_execute(self, symbol: str, direction: int, bar: pd.Series) -> bool:
         self._instrument(symbol)
