@@ -17,17 +17,17 @@ Add a reusable, upstream-friendly `ArgentinaEquityEngine` for BYMA-listed common
 2. Resolve **actual trading currency per security** (ARS vs USD counter) from trustworthy point-in-time metadata; never infer ARS from the `.BA` suffix. Reject mixed-currency portfolios unless the framework supports explicit FX conversion and multi-currency cash.
 3. Distinguish exchange trading calendar from settlement calendar. Version settlement conventions by effective date; validate historical rules against BYMA official notices (including the 2024 switch from T+2 to T+1 for contado normal).
 4. Require documented lot and tick sizes, trading session/venue, and fee schedules; configurable broker commissions with no invented universal defaults. Disable shorting/margin initially.
-5. Data must be executable unadjusted OHLCV with declared currency, provenance and timestamp. Avoid adjusted-close fills. Reject missing/stale/inconsistent bars and look-ahead.
-6. CEDEAR metadata must include underlying, conversion ratio and **effective dates of ratio changes**, splits and relevant corporate actions. Dividend cashflows require explicit currency, payment date, withholding and conversion policy. If complete event accounting is unavailable for the requested window, fail closed rather than output a misleading total return.
+5. Price adjustment and execution units must follow an **explicit, consistent convention**: Vibe's existing Yahoo/yfinance path uses split/dividend-adjusted OHLCV. Do not mix adjusted prices with unadjusted share counts, point-in-time lot/tick schedules or nominal fees without validating the outcome. Require declared quote currency, adjustment provenance and timestamp. Reject missing/stale/inconsistent bars and look-ahead.
+6. CEDEAR metadata must identify underlying and **effective-dated conversion ratio history**. Validate representative ratio/split transitions and price/quantity consistency without assuming Yahoo's adjusted OHLCV covers every CEDEAR event. If unsupported changes occur in the requested interval, fail closed with a clear explanation. A full dividend cashflow ledger (payment dates, taxes, FX, withholding) is **out of scope for v1**; do not label an adjusted-price simulation as broker-realized cashflows.
 7. Never assume Yahoo's current CEDEAR ratio was valid historically. Official issuer/depositary and CNV disclosures are primary references; Yahoo is a price provider, not the authoritative corporate-action register.
 8. No broker trading path or external side effects. Keep `PPI_TRADING_DISABLED` unaffected.
 
 ## Proposed implementation surface
 - `agent/backtest/engines/argentina_equity.py` — `ArgentinaEquityEngine` inheriting `BaseEngine`.
 - Explicit market-rule version table with source references and effective dates; two calendars.
-- Instrument metadata resolver, corporate-action event feed and price validation; reuse existing loader registry rather than adding a proprietary dependency.
+- Instrument metadata and adjusted-price provenance validation; reuse existing Yahoo/yfinance/local loader registry rather than adding a proprietary dependency. No full corporate-action cashflow engine in v1.
 - `runner.py` and `composite.py` route `ar_equity` only once the engine's correctness gates pass; composite must not use an empty sub-engine's positions for settlement decisions.
-- Regression tests for YPFD.BA, GGAL.BA, AAPL.BA, an ARS/USD counter, mixed currency, holidays, insufficient cash, fees, ratio changes, splits, dividends, and missing corporate-action metadata.
+- Regression tests for YPFD.BA, GGAL.BA, AAPL.BA, ARS/USD counters, mixed currency, holidays, insufficient cash, fees, adjusted-vs-unadjusted price consistency, and known CEDEAR ratio/split changes. Dividends are tested as adjusted-series behavior, not cash distributions.
 - End-to-end smoke using fixture bars; optional live Yahoo smoke is non-deterministic and must not replace fixture tests.
 
 ## Sources to verify and cite in final PR
@@ -142,9 +142,38 @@ rejected at construction.
   `ar_unliquidated_position_count`.
 - Same-day buy-and-sell (intraday netting) of one instrument is blocked
   conservatively; scale-ins block partial sells until the newest lot settles.
-- Corporate actions, dividends and point-in-time CEDEAR ratio effects on
-  positions are not implemented; multi-currency netting is prohibited.
+- Point-in-time CEDEAR ratio effects on positions and price/quantity consistency
+  are not yet validated; multi-currency netting is prohibited. A complete
+  corporate-action/dividend cash ledger is deferred beyond v1.
 - Broker-specific pre-funding, netting permissions and trading-line variants
   are explicit limitations; do not claim identical buying power at every broker.
 - `.BA` routing in `runner.py`/`composite.py` stays disabled until the above
   data/event contracts exist.
+
+
+## V1 scope simplification: adjusted-price backtesting (2026-10-24)
+
+Review of upstream market engines found no per-market dividend/split cash ledger
+in the Brazil, Vietnam, India or Korea rule engines. The shared Yahoo client
+uses a split-adjusted quote series and an adjclose/close factor for dividend
+adjustment, while yfinance downloads with `auto_adjust=True`. BYMA v1 should
+**reuse these existing price loaders**, not introduce an independent event-ledger
+framework that would diverge from upstream.
+
+Before enabling .BA routing, complete these narrower gates:
+
+1. Audit exactly what Yahoo and yfinance deliver for representative .BA shares
+   and CEDEARs, including whether adjustment, currency and volume units agree.
+2. Show synthetic price/quantity/fee tests for a split and a CEDEAR ratio change;
+   the execution must not create artificial gain/loss from unit rescaling.
+3. Explicitly reject a ratio transition when historical metadata or price
+   conventions cannot prove consistent quantities and values; no look-ahead.
+4. Describe performance as **adjusted-price backtest**, not realized cash
+   dividend accounting. No inferred payment dates, withholding, dividend FX
+   conversions or tax entries. Preserve the existing BYMA fail-closed route
+   until the consistency tests and affected-market regressions pass.
+
+Deferred: general event feed, dividend payment/withholding ledger and broker-
+faithful taxable total-return reconstruction. Those may become reusable upstream
+features later, but are not prerequisites for a transparent V1 comparable to
+existing market engines.
