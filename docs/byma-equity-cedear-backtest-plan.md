@@ -703,3 +703,52 @@ Session `fc6833de0626`, run `20261026_113342_44_5e17c3`, image
   separate trading and settlement calendars in the engine.
 - The BYMA "Calendario Bursátil" also lists US holidays and derivative
   expiries; their effect on CEDEAR settlement is not modelled.
+
+
+## AAPL.BA second UI run: unit-ratio notation and misleading fallback (2026-10-26)
+
+Session `b7289a95f7ea`, run `20261026_123840_32_466741`, image
+`byma-trial-5bf7b11f`. The backtest completed (+1.88%); the answer was an
+English "could not safely lock the instrument identity or price evidence".
+
+### Diagnosis
+
+- Settlement is correct in the run: buy 2024-01-03 -> 01-05, sell 2024-03-27
+  -> **2024-04-04** (`cash_ledger.csv`, status `derived`).
+- The refusal was not about identity. The draft had a table
+  `| Ratio anterior | 10:1 |` / `| Ratio nuevo | 20:1 |`; the figure scanner
+  read each `:1` as a measured figure "1". The agent declared one "1" from
+  `json.ar_data_basis` (a text field: `not_in_referenced_call`) and left the
+  other undeclared; its correction then removed the ratios 10 and 20
+  (`correction_contract_violation: required_figure_removed`). After three
+  rejected drafts the gate used its deterministic fallback, and because the
+  last draft's only issue was not a redactable figure code it picked the
+  identity text, in English (only en/zh existed).
+- `read_run_artifact(..., columns=["time", ...])` failed once (the column is
+  `timestamp`); the agent recovered on the next call.
+
+### Fix (no validation weakened)
+
+- Figure scanner: in `N:1` only the unit denominator `1` is exempt notation;
+  `N` stays a measured figure needing evidence. Times (`10:15`) and other
+  ratios (`1:2`) are unchanged.
+- Fallback: the identity text is used only when an identity issue is present
+  or no analysis completed; a completed backtest whose figures failed gets
+  the "figure check" text pointing to the artifacts. Spanish versions added
+  (detected from the user message).
+- Skill: declare `N` for `N:1`; use the artifact's column names.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_aapl.py` (real run via `runner.main`, real `read_run_artifact` and ledger) | 17 passed: the production ratio table grounds with numerators from `byma_preparation.json`; an unsupported numerator (25:1) is still rejected; full report (capital, final value, return, fees, cash ledger, ratios, monthly equity) grounds; settlement 2024-04-04; Spanish figure-check fallback after a completed run; identity fallback kept for identity issues and when no analysis completed; scanner shapes for `20:1`, `10:15`, `1:2` |
+| Mutations: no ratio exemption / old fallback choice | fail 2 / 2 tests |
+| 95 grounding, figure, loop, artifact, backtest, BYMA and market-engine test files | 3103 passed; 34 failures all pre-existing |
+| Full suite (CI ignores) | 61 failed, 21456 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+### Pending
+
+- Fallback texts exist in en/zh/es only; other languages get English.
+- Previously listed calendar items (2025/2026 tables, trading-without-
+  settlement days, US holidays for CEDEARs) remain open.
