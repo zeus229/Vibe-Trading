@@ -515,3 +515,58 @@ quantity (no number), so one share per lot remains an assumption.
    `backtest` call succeeds and the answer reports the `ar_data_basis` labels.
 6. Rollback paths: to the previous trial image (new rollback override) or to
    prod `main` (`rollback_byma_trial.sh`).
+
+
+## First successful UI backtest: report grounding (2026-10-26)
+
+Run `20261026_024335_72_c1e9e1` (session `486a217f01a6`, image
+`byma-trial-f12ddb2a`): YPFD.BA ran first time (-4.6310%), but after three
+rejected drafts the answer was released with six figures redacted.
+
+### Diagnosis
+
+| Figure (as written) | Ref | Cause |
+|---|---|---|
+| `1.000.000,00` ARS capital | `call::backtest.initial_cash` | A |
+| `953.689,78` ARS final equity | `call::metrics.final_value` | A |
+| `-2,2938%`, `-14,6934%`, `-16,2267%` month-end drawdowns | `read_run_artifact call::rows[i][2]` | B |
+| `953.689,78` ARS equity on 30/09 | `read_run_artifact call::rows[81][1]` | A + B |
+
+- **A:** a figure written with a currency code keeps only evidence with that
+  currency (`policies._check_observed`). Backtest outputs were recorded with
+  `currency=None`, so ARS amounts never matched; the gate's own proposed
+  repair ref (`backtest.initial_cash`) then failed the same way.
+- **B:** the agent cited table cells positionally, as the tool returns them
+  (`rows[i][j]`); the ledger indexed them only by column name.
+- Also: `trades.csv` has no fee column, so commissions could not be reported;
+  `read_run_artifact run_card` exceeded the result budget.
+
+### Fix (verification not weakened)
+
+- BYMA engine metrics declare `settlement_currency` (loader-declared,
+  validated) and `ar_total_fees`, `ar_buy_fees`, `ar_sell_fees`,
+  `ar_fill_count`.
+- Grounding: for a backtest whose engine-written, non-model `run_card.json`
+  declares a 3-letter `settlement_currency`, only amount leaves of that run's
+  authenticated outputs (summary scalars and byte-identical engine tables:
+  initial cash, final value, equity, P&L, fees...) are tagged with that
+  currency and `unit="money"`. Runs without the declaration are unchanged.
+  Prices stay excluded.
+- `call::rows[i][j]` resolves to exactly the recorded cell of that
+  read_run_artifact call (shown rows only; date/symbol/price columns never).
+- Skill guidance: write amounts with the currency code and cite the exact
+  fields/cells.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_grounding.py` (real engine run + real `read_run_artifact` + real ledger) | 7 passed: the six production figures, fees, trades and monthly equity ground; invented amount, explicit USD, shifted/unshown cell and timestamp-cell refs still rejected; a run without declared currency stays untagged |
+| Mutations: no currency tagging / no cell refs | each fails 2 tests |
+| Grounding, artifact, backtest and BYMA suites | 2537 passed; 34 failures all in the pre-existing set |
+| Full suite (CI ignores) | 61 failed, 21431 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+Limitations: "US$"/"$" spellings carry no currency code in the figure parser
+(pre-existing), so they are matched without a currency check as before;
+reports should use the ISO code. Trade execution prices remain excluded from
+backtest evidence by existing policy.
