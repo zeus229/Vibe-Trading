@@ -404,7 +404,8 @@ def write_preparation_artifact(run_dir, diagnostics: dict) -> None:
     import json
     from pathlib import Path
 
-    keys = ("ar_data_basis", "ar_metadata_provenance", "ar_calendar_provenance",
+    keys = ("ar_data_basis", "settlement_currency", "ar_total_fees", "ar_buy_fees",
+            "ar_sell_fees", "ar_fill_count", "ar_metadata_provenance", "ar_calendar_provenance",
             "ar_tick_schedule", "ar_fee_basis", "ar_cedear_ratio_adjustments",
             "ar_dropped_non_session_bars", "ar_terminal_equity_basis",
             "ar_unliquidated_positions", "ar_unsettled_sale_receivable_at_end")
@@ -640,8 +641,16 @@ def argentina_diagnostics(state: BaseEngine, rules: "ArgentinaEquityEngine") -> 
         1 for f in state.fill_records
         if f.symbol.upper() in scheduled and _trade_date(f.timestamp) < TICK_SCHEDULE_EFFECTIVE
     )
+    fees = [(f.signed_quantity, float(f.fee)) for f in state.fill_records]
     return {
         "ar_data_basis": _data_basis_summary(rules, scheduled, early_fills),
+        # The run's single cash ledger currency (loader-declared, validated
+        # against instrument metadata), so its amounts can be cited with it.
+        "settlement_currency": rules.currency,
+        "ar_total_fees": round(sum(fee for _, fee in fees), 6),
+        "ar_buy_fees": round(sum(fee for qty, fee in fees if qty > 0), 6),
+        "ar_sell_fees": round(sum(fee for qty, fee in fees if qty < 0), 6),
+        "ar_fill_count": len(fees),
         "ar_price_basis": "source_split_dividend_adjusted_ohlc_raw_volume",
         "ar_metadata_provenance": dict(rules.metadata_provenance),
         "ar_calendar_provenance": dict(rules.calendar_provenance),

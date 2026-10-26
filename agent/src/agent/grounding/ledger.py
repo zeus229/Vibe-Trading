@@ -185,6 +185,11 @@ class GroundingLedger(
         # Backtest call -> its run directory, and each directory's latest call.
         self._backtest_scopes: dict[str, str] = {}
         self._scope_latest: dict[str, str] = {}
+        # Backtest directory -> the settlement currency its engine declared.
+        self._scope_currency: dict[str, str] = {}
+        # (read_run_artifact call, row, column) -> the cell's evidence record,
+        # so a ``call::rows[i][j]`` ref names exactly one shown table cell.
+        self._table_cells: dict[tuple[str, int, int], EvidenceRecord] = {}
         self._identity_required = bool(_ACTIONABLE_MARKET_RE.search(user_message))
         self._buffer_output = self._identity_required
         # Every instrument this run is entitled to write about: the ones the

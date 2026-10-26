@@ -169,6 +169,9 @@ _INTEGER_PRICE_FLOOR = 1000.0
 _CITABLE_FIELDS = ("close", "price", "adj_close")
 
 
+_TABLE_CELL_REF = re.compile(r"rows\[(\d+)\]\[(\d+)\]")
+
+
 @dataclass(frozen=True)
 class ValidationResult:
     """Final-answer grounding decision.
@@ -1534,6 +1537,13 @@ class _PolicyMixin:
             call_id = self._canonical_session_call_id(call_id)
             if not call_id or not field:
                 return [], []
+            # ``call::rows[i][j]`` names one cell of a table that call showed
+            # the model; only cells recorded as evidence resolve (never a date,
+            # symbol or price column, nor a row that was not shown).
+            cell = _TABLE_CELL_REF.fullmatch(field)
+            if cell is not None:
+                record = self._table_cells.get((call_id, int(cell[1]), int(cell[2])))
+                return ([record], []) if record is not None else ([], [])
             records, entries = self._field_sources(field, symbol)
             by_call = [record for record in records if record.call_id == call_id]
             metrics = [float(entry["value"]) for entry in entries if entry.get("call_id") == call_id]

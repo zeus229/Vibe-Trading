@@ -216,6 +216,41 @@ _BACKTEST_SUMMARY_FILES = (
 
 _MANIFEST_EXEMPT = frozenset({"run_card.json", "artifacts/metrics.csv", "artifacts/metrics.json"})
 
+# Amount leaves of a backtest's outputs. They carry the run's currency only
+# when its engine declared one (``settlement_currency`` in run_card metrics);
+# prices stay excluded as before.
+_BACKTEST_MONEY_LEAVES = frozenset(
+    {
+        "initial_cash",
+        "initial_capital",
+        "final_value",
+        "pnl",
+        "notional",
+        "equity",
+        "benchmark_equity",
+        "fee",
+        "fees",
+        "commission",
+        "ar_total_fees",
+        "ar_buy_fees",
+        "ar_sell_fees",
+        "ar_unsettled_sale_receivable_at_end",
+        "estimated_net_proceeds",
+    }
+)
+_ISO_CURRENCY_RE = re.compile(r"[A-Z]{3}\Z")
+
+
+def _declared_settlement_currency(path: Path) -> str | None:
+    """The settlement currency an engine wrote into its run card, if any."""
+    try:
+        card = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return None
+    metrics = card.get("metrics") if isinstance(card, dict) else None
+    value = metrics.get("settlement_currency") if isinstance(metrics, dict) else None
+    return value if isinstance(value, str) and _ISO_CURRENCY_RE.match(value) else None
+
 # Tools whose result names a file the model itself wrote. Such a file is never
 # engine output, whatever its name.
 _WRITE_TOOLS = frozenset({"write_file", "edit_file"})
@@ -1352,6 +1387,16 @@ class _EvidenceMixin:
         """
         root = self.run_dir.resolve()
         manifest = _run_card_manifest(directory)
+        card = directory / "run_card.json"
+        currency = (
+            _declared_settlement_currency(card)
+            if card.is_file() and not self._is_model_written(card)
+            else None
+        )
+        if currency:
+            self._scope_currency[scope] = currency
+        else:
+            self._scope_currency.pop(scope, None)
         room = _MAX_GENERIC_EVIDENCE
         for name in _BACKTEST_SUMMARY_FILES:
             path = directory / name
@@ -1370,6 +1415,7 @@ class _EvidenceMixin:
                     return
                 if _price_field_for_path(field_name) is not None:
                     continue
+                money = bool(currency) and _leaf_name(field_name) in _BACKTEST_MONEY_LEAVES
                 self._evidence.append(
                     EvidenceRecord(
                         call_id=call_id,
@@ -1382,6 +1428,8 @@ class _EvidenceMixin:
                         status="observed",
                         artifact=artifact,
                         scope=scope,
+                        currency=currency if money else None,
+                        unit="money" if money else None,
                     )
                 )
                 room -= 1
@@ -1484,8 +1532,10 @@ class _EvidenceMixin:
             (index for index, name in enumerate(folded) if name in _TABLE_SYMBOL_COLUMNS), None
         )
         artifact = _relative_posix(path, self.run_dir.resolve())
+        currency = self._scope_currency.get(scope)
         room = _MAX_GENERIC_EVIDENCE
-        for row in data_rows:
+        positional = tool_name == "read_run_artifact"
+        for row_index, row in enumerate(data_rows):
             timestamp = (
                 row[date_index].strip()
                 if date_index is not None and date_index < len(row)
@@ -1507,20 +1557,28 @@ class _EvidenceMixin:
                     continue
                 if room <= 0:
                     return
-                self._evidence.append(
-                    EvidenceRecord(
-                        call_id=call_id,
-                        tool=tool_name,
-                        symbol=None,
-                        source="backtest",
-                        timestamp=timestamp,
-                        field=column_symbol or folded[index],
-                        value=value,
-                        status="observed",
-                        artifact=artifact,
-                        scope=scope,
-                    )
+                money = (
+                    bool(currency)
+                    and column_symbol is None
+                    and folded[index] in _BACKTEST_MONEY_LEAVES
                 )
+                record = EvidenceRecord(
+                    call_id=call_id,
+                    tool=tool_name,
+                    symbol=None,
+                    source="backtest",
+                    timestamp=timestamp,
+                    field=column_symbol or folded[index],
+                    value=value,
+                    status="observed",
+                    artifact=artifact,
+                    scope=scope,
+                    currency=currency if money else None,
+                    unit="money" if money else None,
+                )
+                self._evidence.append(record)
+                if positional:
+                    self._table_cells[(call_id, row_index, index)] = record
                 room -= 1
 
     def _record_metrics_file(self, path: Path, call_id: str) -> int:
