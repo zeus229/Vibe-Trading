@@ -570,3 +570,63 @@ Limitations: "US$"/"$" spellings carry no currency code in the figure parser
 (pre-existing), so they are matched without a currency check as before;
 reports should use the ISO code. Trade execution prices remain excluded from
 backtest evidence by existing policy.
+
+
+## Rotation YPFD.BA -> GGAL.BA from the UI: cash reconciliation (2026-10-26)
+
+Session `d7a07a87234e`, run `20261026_032054_89_d4d3f7`, image
+`byma-trial-e6afc908`: +21.37%, final 1,213,734.15 ARS; seven figures cut.
+
+### Diagnosis
+
+- **The seven cut figures were all cash reconciliation** (gain, cash after the
+  first buy, YPFD net proceeds, cash available, GGAL total cost, cash after the
+  rotation, the gap). The engine produced no such table, so the agent read
+  `fills.jsonl` with `read_file` (`read_run_artifact` refuses JSONL; a JSONL
+  read is not evidence) and computed the values with `financial_rigor`, then
+  declared the calculator's `result` as observed. Correctly rejected.
+- Earlier drafts cited `call::summary.metrics.*` and `summary.initial_cash`,
+  the exact paths of the backtest result the agent received; the ledger had
+  recorded the same run-card values as `metrics.*` / `backtest.initial_cash`.
+- August equity was cited as `rows[61]` (2024-09-02) instead of `rows[60]`
+  (2024-08-30): an off-by-one the gate rightly rejected. Locating month-ends
+  in an 82-row table by hand is error-prone.
+- `read_run_artifact run_card` exceeds the result budget (the `summary`
+  already carries it); `artifacts/fills.jsonl` is not served (CSV/JSON only).
+
+### Purchase on 06-03, not 06-04: no look-ahead
+
+The agent set `start_date: 2024-05-31` with `evaluation_start_date:
+2024-06-01`, making 05-31 a warm-up bar. `_align` shifts signals one bar
+(next-bar-open), and the warm-up trim happens after alignment, so the signal
+computed from data up to the 05-31 close executes at the 06-03 open (fill
+price = 2,900 = that open). In the buy-and-hold run without a warm-up bar the
+first signal was 06-03's, executed 06-04. The strategy only uses the next
+session's *date* (calendar), never future prices. Pinned by
+`test_first_buy_uses_the_warmup_bars_signal_at_the_next_open_without_lookahead`.
+
+### Fix (verification not relaxed)
+
+- Engine writes `artifacts/cash_ledger.csv` (per fill: `notional`, `fee`,
+  `total_cost`, `net_proceeds`, `cash_flow`, `cash_after`, `settlement_date`,
+  `buying_power_before`, `unsettled_sale_proceeds_after`), replayed from its
+  own fill ledger and matching its cash, and `artifacts/monthly_equity.csv`
+  (`equity_end`, `month_return`, `cumulative_return`); plus `ar_net_pnl`.
+  Both CSVs are in the run-card manifest, readable through
+  `read_run_artifact`, hashed as engine tables, and their amount columns carry
+  the declared settlement currency.
+- `<backtest call>::summary.initial_cash` / `summary.metrics.X` /
+  `summary.structured_metrics.X` resolve to the same run-card values (exact
+  alias of `backtest_summary`), only for backtest calls.
+- Skill: cite these tables and summary paths; a calculator result is not an
+  observation.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_rotation.py` (agent's own config and signal_engine.py through `runner.main`, real summary builder, real `read_run_artifact`, real ledger) | 7 passed: trades, T+1 matched funding (both settle 2024-08-02, cost <= buying power > settled cash alone), ledger closes on final value and fee totals, no look-ahead; 7 cut figures plus capital, final value, P&L, return, fees and monthly path ground; off-by-one month, borrowed/invented/USD reconciliation values, calculator results and summary.* on non-backtest calls still rejected |
+| `test_argentina_report_grounding.py` (YPFD buy-and-hold) | 8 passed incl. cash ledger, monthly path and summary refs |
+| Mutations: no summary alias / no money tags for new columns / no engine tables | fail 1 / 1 / 7 (errors) tests |
+| Grounding, artifact, backtest, BYMA and market-engine suites | 3031 passed; 34 failures all pre-existing |
+| Full suite (CI ignores) | 61 failed, 21439 passed, 172 skipped; the 61 are identical to the pre-existing set |
