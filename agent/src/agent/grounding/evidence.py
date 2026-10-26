@@ -235,6 +235,8 @@ _BACKTEST_MONEY_LEAVES = frozenset(
         "initial_capital",
         "final_value",
         "pnl",
+        "total_pnl",
+        "avg_pnl",
         "notional",
         "equity",
         "benchmark_equity",

@@ -271,3 +271,45 @@ def test_summary_alias_only_names_run_card_values(rotation):
     # summary.* of a call that is not a backtest resolves nothing.
     assert not ledger.validate_final_answer(_answer(
         (f"{_ars(m['final_value'])} ARS", "x", "cl::summary.metrics.final_value"))).valid
+
+
+# ── per-symbol and per-exit-reason P&L (production 2026-10-26, run 20261026_155814_36_c86ce4) ──
+# The agent quoted GGAL's gross gain "ARS 318.920,00" from
+# `bt::structured_metrics.by_symbol.GGAL.BA.total_pnl`. The value was in that call, but
+# only the run card's headline amounts carried the run's ARS tag, so the currency
+# filter dropped the untagged per-symbol amount and the figure was cut as
+# "not_in_referenced_call".
+
+def _structured(run_dir):
+    return json.loads((run_dir / "run_card.json").read_text())["structured_metrics"]
+
+
+def test_per_symbol_and_exit_reason_pnl_ground_in_the_runs_currency(rotation):
+    ledger, _, _, run_dir = rotation
+    structured = _structured(run_dir)
+    items = []
+    for symbol in ("YPFD.BA", "GGAL.BA"):
+        stats = structured["by_symbol"][symbol]
+        items.append((f"{_ars(stats['total_pnl'])} ARS", f"resultado bruto {symbol}",
+                      f"bt::structured_metrics.by_symbol.{symbol}.total_pnl"))
+        items.append((f"{_ars(stats['avg_pnl'])} ARS", f"resultado medio {symbol}",
+                      f"bt::structured_metrics.by_symbol.{symbol}.avg_pnl"))
+    for reason, stats in structured["by_exit_reason"].items():
+        items.append((f"{_ars(stats['total_pnl'])} ARS", f"resultado por {reason}",
+                      f"bt::structured_metrics.by_exit_reason.{reason}.total_pnl"))
+    result = ledger.validate_final_answer(_answer(*items))
+    assert result.valid, _reasons(result)
+
+
+def test_pnl_figures_stay_closed_to_other_currencies_symbols_and_invented_values(rotation):
+    ledger, _, _, run_dir = rotation
+    structured = _structured(run_dir)
+    ggal = structured["by_symbol"]["GGAL.BA"]["total_pnl"]
+    ypfd = structured["by_symbol"]["YPFD.BA"]["total_pnl"]
+    assert ggal != ypfd
+    ref = "bt::structured_metrics.by_symbol.GGAL.BA.total_pnl"
+    assert ledger.validate_final_answer(_answer((f"{_ars(ggal)} ARS", "x", ref))).valid
+    assert not ledger.validate_final_answer(_answer((f"{_ars(ggal)} USD", "x", ref))).valid
+    assert not ledger.validate_final_answer(_answer((f"{_ars(ggal + 1)} ARS", "x", ref))).valid
+    # The other instrument's amount cannot be borrowed through GGAL's path.
+    assert not ledger.validate_final_answer(_answer((f"{_ars(ypfd)} ARS", "x", ref))).valid
