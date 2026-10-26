@@ -212,6 +212,7 @@ _BACKTEST_SUMMARY_FILES = (
     "artifacts/risk_xray.json",
     "artifacts/validation.json",
     "artifacts/rebalance_notes.json",
+    "artifacts/byma_preparation.json",
 )
 
 _MANIFEST_EXEMPT = frozenset({"run_card.json", "artifacts/metrics.csv", "artifacts/metrics.json"})
@@ -1477,6 +1478,79 @@ class _EvidenceMixin:
             return str(path.resolve()) in self._model_written
         except OSError:
             return True
+
+    def _ingest_engine_json(
+        self, arguments: Mapping[str, Any], payload: dict[str, Any], call_id: str
+    ) -> None:
+        """Record the scalars of an engine summary JSON that read_run_artifact showed.
+
+        Only a summary file a completed backtest wrote counts, only while it
+        is byte for byte the run card's manifest entry, and only when what the
+        model was shown is that file's content. Fields keep the reader's
+        ``json.`` path so ``call::json.a.b`` names exactly what was shown;
+        lists are descended only when they hold objects, never numeric series.
+        """
+        shown = payload.get("json")
+        if not isinstance(shown, dict):
+            return
+        run_dir, artifact = payload.get("run_dir") or arguments.get("run_dir"), payload.get("artifact")
+        if not isinstance(run_dir, str) or not isinstance(artifact, str):
+            return
+        if artifact not in _BACKTEST_SUMMARY_FILES or not artifact.endswith(".json"):
+            return
+        try:
+            directory = Path(run_dir).resolve()
+            path = (directory / artifact).resolve()
+        except OSError:
+            return
+        scope = self._backtest_scope_for(directory)
+        if (
+            scope is None
+            or not path.is_relative_to(directory)
+            or self._is_model_written(path)
+            or _run_card_manifest(directory).get(artifact) != _file_sha256(path)
+        ):
+            return
+        try:
+            if json.loads(path.read_text(encoding="utf-8")) != shown:
+                return
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            return
+        currency = self._scope_currency.get(scope)
+        relative = _relative_posix(path, self.run_dir.resolve())
+        room = _MAX_GENERIC_EVIDENCE
+
+        def visit(item: Any, field: str) -> None:
+            nonlocal room
+            if room <= 0:
+                return
+            if isinstance(item, dict):
+                for key, value in item.items():
+                    visit(value, f"{field}.{key}")
+            elif isinstance(item, list):
+                if all(isinstance(entry, dict) for entry in item):
+                    for index, entry in enumerate(item):
+                        visit(entry, f"{field}[{index}]")
+            elif _is_number(item):
+                money = bool(currency) and _leaf_name(field) in _BACKTEST_MONEY_LEAVES
+                self._evidence.append(
+                    EvidenceRecord(
+                        call_id=call_id, tool="read_run_artifact", symbol=None,
+                        source="backtest", timestamp=None, field=field, value=item,
+                        status="observed", artifact=relative, scope=scope,
+                        currency=currency if money else None,
+                        unit="money" if money else None,
+                    )
+                )
+                room -= 1
+
+        visit(shown, "json")
+
+    def _backtest_scope_for(self, directory: Path) -> str | None:
+        """The recorded backtest scope whose run directory is *directory*."""
+        root = self.run_dir.resolve()
+        scope = _relative_posix(directory, root)
+        return scope if scope in self._scope_latest else None
 
     def _ingest_engine_table(
         self, payload: dict[str, Any], call_id: str, *, tool_name: str = "read_file"

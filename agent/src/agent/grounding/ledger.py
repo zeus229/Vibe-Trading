@@ -412,6 +412,7 @@ class GroundingLedger(
             self._ingest_engine_table(payload, call_id)
         elif tool_name == "read_run_artifact" and payload is not None:
             self._ingest_engine_table(payload, call_id, tool_name=tool_name)
+            self._ingest_engine_json(arguments, payload, call_id)
         elif payload is not None and tool_name != "backtest":
             # A backtest has an explicit evidence contract above (metrics files).
             # Its envelope is bookkeeping (exit_code, elapsed_seconds, stdout);

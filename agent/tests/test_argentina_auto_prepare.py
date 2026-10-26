@@ -108,7 +108,7 @@ def test_minimal_ypfd_config_runs_first_time(tmp_path, monkeypatch, yahoo_says_s
     # The one-line basis is a scalar, so it reaches the agent's tool result.
     basis = printed["ar_data_basis"]
     for label in ("kind=share[third_party]", "currency=ARS[derived]", "lot_size=1[assumption]",
-                  "tick_size=CIR3569 bands[official]", "[derived; settlement tail weekdays assumed]",
+                  "tick_size=CIR3569 bands[official]", "[derived; tail: official business days]",
                   "brokerage 0.1000% from commission"):
         assert label in basis
     metrics = json.loads((run_dir / "artifacts" / "byma_preparation.json").read_text())
@@ -185,8 +185,11 @@ def test_observed_sessions_exclude_placeholders_and_add_a_labelled_tail():
     sessions, provenance = observed_sessions([_ypfd()])
     assert not HOLIDAYS & set(sessions)
     assert sessions[-11] == date(2024, 9, 30)
-    assert sessions[-10:] == tuple(d.date() for d in pd.bdate_range("2024-10-01", periods=10))
-    assert provenance["kind"] == "derived" and "holidays unknown" in provenance["tail_assumption"]
+    # 2024 is officially documented: the tail skips the 2024-10-11 bridge holiday.
+    expected = [d.date() for d in pd.bdate_range("2024-10-01", periods=11)
+                if d.date() != date(2024, 10, 11)]
+    assert sessions[-10:] == tuple(expected)
+    assert provenance["kind"] == "derived" and provenance["unverified_tail"] == []
 
 
 def test_holiday_placeholders_are_dropped_not_traded(yahoo_says_share):

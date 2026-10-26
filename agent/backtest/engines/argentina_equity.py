@@ -384,8 +384,10 @@ def _data_basis_summary(rules: "ArgentinaEquityEngine", scheduled: list, early_f
             label("lot_size", info["lot_size"]), label("tick_size", tick))))
     cal = rules.calendar_provenance or {}
     if cal.get("kind") == "derived":
+        tail = ("official business days" if not cal.get("unverified_tail")
+                else "unverified weekdays, settlement dates there not reported")
         parts.append(f"calendar=traded days {cal['first']}..{cal['last']} "
-                     f"({cal['observed_count']}) [derived; settlement tail weekdays assumed]")
+                     f"({cal['observed_count']}) [derived; tail: {tail}]")
     elif cal:
         parts.append(f"calendar={cal.get('count')} sessions [declared]")
     fee = rules.fee_basis
@@ -422,6 +424,15 @@ def byma_cash_ledger(state: BaseEngine, rules: "ArgentinaEquityEngine") -> list[
             settles = settlement_date(day, sessions) if sessions else None
         except (TypeError, ValueError):
             settles = None
+        unverified = {date.fromisoformat(d) for d in rules.calendar_provenance.get("unverified_tail", ())}
+        if settles is None:
+            status = "unknown"
+        elif any(day < d <= settles for d in unverified):
+            # Counting T+N crossed a day the loaded data and the official
+            # table cannot confirm as a session: the date is not reportable.
+            status = "unknown_beyond_loaded_data"
+        else:
+            status = rules.calendar_provenance.get("kind", "declared")
         buying_power = None
         if qty > 0 and settles is not None:
             try:
@@ -450,7 +461,8 @@ def byma_cash_ledger(state: BaseEngine, rules: "ArgentinaEquityEngine") -> list[
             "net_proceeds": round(notional - fee, 6) if qty < 0 else "",
             "cash_flow": round(flow, 6),
             "cash_after": round(cash, 6),
-            "settlement_date": "" if settles is None else str(settles),
+            "settlement_date": "" if status.startswith("unknown") else str(settles),
+            "settlement_date_status": status,
             "buying_power_before": "" if buying_power is None else round(buying_power, 6),
             "unsettled_sale_proceeds_after": round(unsettled, 6),
         })
@@ -489,7 +501,8 @@ def write_byma_tables(run_dir, state: BaseEngine, rules: "ArgentinaEquityEngine"
         ("cash_ledger.csv", byma_cash_ledger(state, rules),
          ["timestamp", "code", "side", "qty", "notional", "fee", "total_cost", "net_proceeds",
           "cash_flow", "cash_after",
-          "settlement_date", "buying_power_before", "unsettled_sale_proceeds_after"]),
+          "settlement_date", "settlement_date_status", "buying_power_before",
+          "unsettled_sale_proceeds_after"]),
         ("monthly_equity.csv", byma_monthly_equity(state),
          ["date", "month", "equity_end", "month_return", "cumulative_return"]),
     ):

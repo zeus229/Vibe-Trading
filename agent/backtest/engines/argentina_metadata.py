@@ -102,10 +102,15 @@ def observed_sessions(
 
     Conservative: a day the market was open but no loaded instrument traded
     is treated as closed, which can only delay settlement. Zero-volume
-    placeholder bars (holidays) never count. The tail of weekdays after the
-    last traded day only dates the settlement of the final trades; it does
-    not know future holidays and is reported as an assumption.
+    placeholder bars (holidays) never count, and a traded bar on an
+    officially documented closure fails closed. After the last traded bar
+    the tail uses official business days where the year is documented
+    (``argentina_calendar``); elsewhere it is a weekday assumption whose
+    dates are listed as ``unverified_tail`` and never reported as settlement
+    dates.
     """
+    from backtest.engines.argentina_calendar import official_closure, tail_sessions
+
     traded = set()
     for frame in frames:
         volume = pd.to_numeric(frame["volume"], errors="coerce")
@@ -116,27 +121,34 @@ def observed_sessions(
             f"traded BYMA bars on weekend dates ({', '.join(weekend[:5])}) cannot derive a "
             "session calendar; declare ar_settlement_sessions"
         )
+    closed = sorted(f"{d} ({official_closure(d)})" for d in traded if official_closure(d))
+    if closed:
+        raise ValueError(
+            f"traded BYMA bars on officially closed dates: {', '.join(closed[:5])}; "
+            "the data and the official calendar disagree"
+        )
     if not traded:
         raise ValueError(
             "no traded BYMA bars to derive sessions from; declare "
             "ar_settlement_sessions"
         )
     observed = sorted(traded)
-    tail = []
-    day = observed[-1]
-    while len(tail) < tail_weekdays:
-        day += timedelta(days=1)
-        if day.weekday() < 5:
-            tail.append(day)
+    tail, unverified = tail_sessions(observed[-1], tail_weekdays)
     provenance = {
         "kind": "derived",
         "method": "dates with traded volume in the loaded bars",
         "first": str(observed[0]),
         "last": str(observed[-1]),
         "observed_count": len(observed),
-        "tail_assumption": f"{tail_weekdays} weekdays after {observed[-1]} (holidays unknown)",
+        "tail": (
+            "official business days after the last traded bar"
+            if not unverified
+            else f"weekdays from {unverified[0]} are unverified (no official calendar loaded); "
+                 "settlement dates there are not reported"
+        ),
+        "unverified_tail": [str(d) for d in unverified],
     }
-    return tuple(observed + tail), provenance
+    return tuple(observed) + tail, provenance
 
 
 def weekday_sessions(sessions: Tuple[date, ...]) -> Tuple[date, ...]:
