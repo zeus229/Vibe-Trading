@@ -110,6 +110,12 @@ def observed_sessions(
     for frame in frames:
         volume = pd.to_numeric(frame["volume"], errors="coerce")
         traded.update(ts.date() for ts, v in volume.items() if v > 0)
+    weekend = sorted(str(d) for d in traded if d.weekday() >= 5)
+    if weekend:
+        raise ValueError(
+            f"traded BYMA bars on weekend dates ({', '.join(weekend[:5])}) cannot derive a "
+            "session calendar; declare ar_settlement_sessions"
+        )
     if not traded:
         raise ValueError(
             "no traded BYMA bars to derive sessions from; declare "
@@ -131,6 +137,23 @@ def observed_sessions(
         "tail_assumption": f"{tail_weekdays} weekdays after {observed[-1]} (holidays unknown)",
     }
     return tuple(observed + tail), provenance
+
+
+def weekday_sessions(sessions: Tuple[date, ...]) -> Tuple[date, ...]:
+    """Every weekday across *sessions*' span: unknown days treated as open.
+
+    Used where the conservative direction is the EARLIEST settlement (the
+    CEDEAR credit window): a derived calendar that lacks an open session would
+    otherwise date a sale later and let it through before the credit.
+    """
+    first, last = sessions[0], sessions[-1]
+    days = []
+    day = first
+    while day <= last:
+        if day.weekday() < 5:
+            days.append(day)
+        day += timedelta(days=1)
+    return tuple(days)
 
 
 def resolve_instrument(

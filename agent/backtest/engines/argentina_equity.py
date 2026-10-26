@@ -25,6 +25,7 @@ from backtest.engines.argentina_metadata import (
     equity_tick,
     observed_sessions,
     resolve_instrument,
+    weekday_sessions,
 )
 from backtest.engines.argentina_data import (
     DEFAULT_MAX_UNEXPLAINED_CEDEAR_MOVE,
@@ -98,6 +99,8 @@ class ArgentinaEquityEngine(BaseEngine):
                 raise ValueError("ar_settlement_sessions must be strictly increasing")
             self.settlement_sessions = tuple(calendar)
             self.calendar_provenance = {"kind": "declared", "count": len(calendar)}
+        # Calendar for the CEDEAR credit-window rule; differs only when derived.
+        self.credit_check_sessions = self.settlement_sessions
         self.slippage_rate = self._nonnegative(config.get("ar_slippage", 0.0), "ar_slippage")
         # The generic `commission` rate every engine accepts is the brokerage
         # rate unless a BYMA-specific one is declared; never silently zero.
@@ -113,7 +116,8 @@ class ArgentinaEquityEngine(BaseEngine):
         self.exchange_fee_rate = self._nonnegative(config.get("ar_exchange_fee_rate", 0.0), "ar_exchange_fee_rate")
         self.fixed_fee = self._nonnegative(config.get("ar_fixed_fee", 0.0), "ar_fixed_fee")
         self.fee_basis = {
-            "kind": "declared" if brokerage_source != "none_configured" else "assumption",
+            # Configured or not, costs are simulation inputs, never official tariffs.
+            "kind": "assumption",
             "brokerage_rate": self.brokerage_rate, "brokerage_source": brokerage_source,
             "exchange_fee_rate": self.exchange_fee_rate, "fixed_fee": self.fixed_fee,
             "slippage": self.slippage_rate,
@@ -230,6 +234,12 @@ class ArgentinaEquityEngine(BaseEngine):
                 validate_frame_contract(frame, symbol, self._instrument(symbol)["currency"])
             self.settlement_sessions, self.calendar_provenance = observed_sessions(
                 data_map.values())
+            # Missing sessions only delay settlement, which is conservative for
+            # cash and securities but NOT for the credit window, where a later
+            # settlement looks deliverable sooner. Count unknown weekdays as open.
+            self.credit_check_sessions = weekday_sessions(self.settlement_sessions)
+            self.calendar_provenance["credit_window_rule"] = (
+                "unknown weekdays counted as sessions (earliest settlement)")
         prepared = {}
         self.ratio_adjustments = []
         self.dropped_non_session_bars = {}
@@ -563,7 +573,8 @@ def argentina_ratio_credit_ok(
             continue
         credit = date.fromisoformat(event["credit_date"])
         try:
-            if settlement_date(today, rules.settlement_sessions) < credit:
+            sessions = getattr(rules, "credit_check_sessions", None) or rules.settlement_sessions
+            if settlement_date(today, sessions) < credit:
                 return False
         except (TypeError, ValueError):
             return False

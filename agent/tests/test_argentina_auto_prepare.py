@@ -244,3 +244,53 @@ def test_unknown_descriptor_fails_closed_with_the_key_to_set(monkeypatch):
                         staticmethod(lambda s: "STATE ST SPDR S&P 500 ETF TR CE"))
     with pytest.raises(ValueError, match=r"declare ar_instruments\.SPY\.BA\.kind"):
         ArgentinaEquityEngine({}).prepare_market_data({"SPY.BA": _ypfd()})
+
+
+# ── derived calendar must never make a sale look deliverable earlier ──
+
+def test_derived_calendar_gap_cannot_open_the_credit_window(tmp_path, monkeypatch):
+    """Synthetic T+1-era CEDEAR change (not an official event): ex Wed
+    2025-03-19, credit Fri 03-21. Thursday 03-20 has no bars, so a derived
+    calendar lacks it; an ex-date sale would then 'settle' Fri (= credit) and
+    pass. The credit rule must count unknown weekdays as sessions."""
+    days = ["2025-03-17", "2025-03-18", "2025-03-19", "2025-03-21", "2025-03-24", "2025-03-25"]
+    prices = [25000.0, 25000.0, 12500.0, 12500.0, 12500.0, 12500.0]
+    frame = pd.DataFrame({"open": prices, "high": prices, "low": prices, "close": prices,
+                          "volume": [1000.0] * len(days)}, index=pd.DatetimeIndex(days))
+    frame.attrs["quote_currency"] = "ARS"
+    instrument = {"kind": "cedear", "currency": "ARS", "lot_size": 1, "tick_size": "0.5",
+                  "underlying": "SYN", "ratio_history": [
+                      {"effective_date": "2020-01-02", "ratio": "10"},
+                      {"effective_date": "2025-03-19", "ratio": "20", "credit_date": "2025-03-21"}]}
+
+    class Loader:
+        def fetch(self, *a, **k):
+            out = frame.copy()
+            out.attrs = dict(frame.attrs)
+            return {"SYN.BA": out}
+
+    class Signal:  # buy 03-18, exit requested from the ex-date 03-19
+        def generate(self, data_map):
+            return {"SYN.BA": pd.Series([1.0, 0, 0, 0, 0, 0], index=data_map["SYN.BA"].index)}
+
+    engine = ArgentinaEquityEngine({"ar_instruments": {"SYN.BA": instrument}})
+    with redirect_stdout(io.StringIO()):
+        engine.run_backtest({"codes": ["SYN.BA"], "start_date": days[0], "end_date": days[-1],
+                             "initial_cash": 100_000, "source": "local"},
+                            Loader(), Signal(), tmp_path)
+    closes = [f.timestamp.date() for f in engine.fill_records if f.action == "close"]
+    # 03-19 would really settle 03-20 < credit: refused. 03-21 settles 03-24.
+    assert closes and closes[0] == date(2025, 3, 21)
+
+
+def test_weekend_traded_bar_fails_closed_for_a_derived_calendar():
+    frame = pd.DataFrame({"open": [1.0, 1.0], "high": [1.0, 1.0], "low": [1.0, 1.0],
+                          "close": [1.0, 1.0], "volume": [5.0, 5.0]},
+                         index=pd.DatetimeIndex(["2024-06-07", "2024-06-08"]))  # Fri, Sat
+    with pytest.raises(ValueError, match="weekend"):
+        observed_sessions([frame])
+
+
+def test_configured_fees_are_reported_as_assumptions():
+    basis = ArgentinaEquityEngine({"commission": 0.001, "ar_fixed_fee": 5}).fee_basis
+    assert basis["kind"] == "assumption" and basis["brokerage_source"] == "commission"
