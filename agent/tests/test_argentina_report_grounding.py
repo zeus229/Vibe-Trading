@@ -208,3 +208,35 @@ def test_run_without_declared_currency_keeps_currencyless_evidence(tmp_path):
     money = [r for r in ledger._evidence if r.field.endswith("final_value")]
     assert money and all(r.currency is None for r in money)
     assert not ledger._scope_currency
+
+
+def test_buy_and_hold_cash_ledger_monthly_path_and_summary_refs(session):
+    """YPFD buy-and-hold: the new engine tables and the summary.* paths ground."""
+    ledger, metrics, _, engine, run_dir = session
+    reads = {}
+    for call, artifact in (("call_cl|fc", "artifacts/cash_ledger.csv"),
+                           ("call_me|fc", "artifacts/monthly_equity.csv")):
+        text = read_run_artifact(str(run_dir), artifact)
+        reads[call] = json.loads(text)
+        ledger.ingest_tool_result(tool_name="read_run_artifact",
+                                  arguments={"run_dir": str(run_dir), "artifact": artifact},
+                                  result=text, call_id=call, success=True)
+    cl = reads["call_cl|fc"]
+    col = cl["columns"].index
+    buy, sell = cl["rows"]
+    assert buy[col("total_cost")] == pytest.approx(buy[col("notional")] + buy[col("fee")])
+    assert sell[col("cash_after")] == pytest.approx(metrics["final_value"])
+    items = [
+        (f"{_ars(1_000_000)} ARS", "capital", f"{BT}::summary.initial_cash"),
+        (f"{_ars(metrics['final_value'])} ARS", "patrimonio final", f"{BT}::summary.metrics.final_value"),
+        (f"{_ars(metrics['ar_net_pnl'])} ARS", "resultado neto", f"{BT}::summary.metrics.ar_net_pnl"),
+        (f"{_ars(buy[col('total_cost')])} ARS", "costo de compra", f"call_cl|fc::rows[0][{col('total_cost')}]"),
+        (f"{_ars(buy[col('cash_after')])} ARS", "efectivo tras comprar", f"call_cl|fc::rows[0][{col('cash_after')}]"),
+        (f"{_ars(sell[col('net_proceeds')])} ARS", "venta neta", f"call_cl|fc::rows[1][{col('net_proceeds')}]"),
+    ]
+    me = reads["call_me|fc"]
+    for row, values in enumerate(me["rows"]):
+        items.append((f"{_ars(values[me['columns'].index('equity_end')])} ARS", f"fin de {values[1]}",
+                      f"call_me|fc::rows[{row}][{me['columns'].index('equity_end')}]"))
+    result = ledger.validate_final_answer(_answer(*items))
+    assert result.valid, _reasons(result)

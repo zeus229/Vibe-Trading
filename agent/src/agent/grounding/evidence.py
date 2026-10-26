@@ -235,7 +235,15 @@ _BACKTEST_MONEY_LEAVES = frozenset(
         "ar_buy_fees",
         "ar_sell_fees",
         "ar_unsettled_sale_receivable_at_end",
+        "ar_net_pnl",
         "estimated_net_proceeds",
+        "total_cost",
+        "net_proceeds",
+        "cash_flow",
+        "cash_after",
+        "buying_power_before",
+        "unsettled_sale_proceeds_after",
+        "equity_end",
     }
 )
 _ISO_CURRENCY_RE = re.compile(r"[A-Z]{3}\Z")

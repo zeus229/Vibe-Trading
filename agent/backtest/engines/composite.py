@@ -226,9 +226,11 @@ class CompositeEngine(BaseEngine):
         if self._ar_rules is not None:
             from backtest.engines.argentina_equity import (
                 argentina_diagnostics,
+                write_byma_tables,
                 write_preparation_artifact,
             )
 
+            write_byma_tables(run_dir, self, self._ar_rules)
             write_preparation_artifact(run_dir, argentina_diagnostics(self, self._ar_rules))
 
     def prepare_market_data(self, data_map):

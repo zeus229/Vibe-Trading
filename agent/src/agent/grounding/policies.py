@@ -172,6 +172,16 @@ _CITABLE_FIELDS = ("close", "price", "adj_close")
 _TABLE_CELL_REF = re.compile(r"rows\[(\d+)\]\[(\d+)\]")
 
 
+def _backtest_summary_alias(field: str) -> str | None:
+    """Map a ``summary.*`` path of the backtest result to its run-card path."""
+    if field == "summary.initial_cash":
+        return "backtest.initial_cash"
+    for prefix in ("metrics.", "structured_metrics."):
+        if field.startswith("summary." + prefix):
+            return field[len("summary."):]
+    return None
+
+
 @dataclass(frozen=True)
 class ValidationResult:
     """Final-answer grounding decision.
@@ -1544,6 +1554,11 @@ class _PolicyMixin:
             if cell is not None:
                 record = self._table_cells.get((call_id, int(cell[1]), int(cell[2])))
                 return ([record], []) if record is not None else ([], [])
+            # The backtest tool returns its run card as ``summary``
+            # (backtest_summary.build_backtest_summary), so the same values
+            # are recorded under the run card's own paths.
+            if call_id in self._backtest_scopes:
+                field = _backtest_summary_alias(field) or field
             records, entries = self._field_sources(field, symbol)
             by_call = [record for record in records if record.call_id == call_id]
             metrics = [float(entry["value"]) for entry in entries if entry.get("call_id") == call_id]

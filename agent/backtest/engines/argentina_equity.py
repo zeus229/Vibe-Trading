@@ -306,6 +306,7 @@ class ArgentinaEquityEngine(BaseEngine):
 
     def _write_artifacts(self, run_dir, *args, **kwargs) -> None:
         super()._write_artifacts(run_dir, *args, **kwargs)
+        write_byma_tables(run_dir, self, self)
         write_preparation_artifact(run_dir, argentina_diagnostics(self, self))
 
     def unit_scale(self, symbol: str, timestamp) -> Decimal:
@@ -399,12 +400,108 @@ def _data_basis_summary(rules: "ArgentinaEquityEngine", scheduled: list, early_f
     return "; ".join(parts)
 
 
+def byma_cash_ledger(state: BaseEngine, rules: "ArgentinaEquityEngine") -> list[dict]:
+    """Per-fill cash reconciliation from the engine's own fill ledger.
+
+    BYMA runs have no cash movements besides fills, so replaying them from
+    the initial capital reproduces the engine's cash exactly. Each purchase
+    records the buying power the engine allowed for its settlement date
+    (settled cash plus sales settling on/before it), which is what shows a
+    same-day sale funding it without using the money twice.
+    """
+    sessions = rules.settlement_sessions
+    cash = float(state.initial_capital)
+    rows: list[dict] = []
+    seen: list = []
+    for fill in state.fill_records:
+        day = _trade_date(fill.timestamp)
+        qty = float(fill.signed_quantity)
+        notional = abs(qty) * float(fill.execution_price)
+        fee = float(fill.fee)
+        try:
+            settles = settlement_date(day, sessions) if sessions else None
+        except (TypeError, ValueError):
+            settles = None
+        buying_power = None
+        if qty > 0 and settles is not None:
+            try:
+                buying_power = available_for_settlement(cash, seen, day, settles, sessions)
+            except (TypeError, ValueError):
+                buying_power = None
+        flow = -(notional + fee) if qty > 0 else notional - fee
+        cash += flow
+        seen.append(fill)
+        unsettled = 0.0
+        for prior in seen:
+            if float(prior.signed_quantity) < 0:
+                try:
+                    if settlement_date(_trade_date(prior.timestamp), sessions) > day:
+                        unsettled += abs(float(prior.signed_quantity)) * float(prior.execution_price) - float(prior.fee)
+                except (TypeError, ValueError):
+                    pass
+        rows.append({
+            "timestamp": str(day),
+            "code": fill.symbol,
+            "side": "buy" if qty > 0 else "sell",
+            "qty": abs(qty),
+            "notional": round(notional, 6),
+            "fee": round(fee, 6),
+            "total_cost": round(notional + fee, 6) if qty > 0 else "",
+            "net_proceeds": round(notional - fee, 6) if qty < 0 else "",
+            "cash_flow": round(flow, 6),
+            "cash_after": round(cash, 6),
+            "settlement_date": "" if settles is None else str(settles),
+            "buying_power_before": "" if buying_power is None else round(buying_power, 6),
+            "unsettled_sale_proceeds_after": round(unsettled, 6),
+        })
+    return rows
+
+
+def byma_monthly_equity(state: BaseEngine) -> list[dict]:
+    """Month-end equity and returns from the engine's equity snapshots."""
+    rows: list[dict] = []
+    previous = float(state.initial_capital)
+    snapshots = state.equity_snapshots
+    for index, snap in enumerate(snapshots):
+        month = pd.Timestamp(snap.timestamp).strftime("%Y-%m")
+        nxt = snapshots[index + 1] if index + 1 < len(snapshots) else None
+        if nxt is not None and pd.Timestamp(nxt.timestamp).strftime("%Y-%m") == month:
+            continue
+        equity = float(snap.equity)
+        rows.append({
+            "date": pd.Timestamp(snap.timestamp).strftime("%Y-%m-%d"),
+            "month": month,
+            "equity_end": round(equity, 6),
+            "month_return": round(equity / previous - 1, 10) if previous else "",
+            "cumulative_return": round(equity / float(state.initial_capital) - 1, 10),
+        })
+        previous = equity
+    return rows
+
+
+def write_byma_tables(run_dir, state: BaseEngine, rules: "ArgentinaEquityEngine") -> None:
+    """Write cash_ledger.csv and monthly_equity.csv as engine artifacts."""
+    from pathlib import Path
+
+    out = Path(run_dir) / "artifacts"
+    out.mkdir(parents=True, exist_ok=True)
+    for name, rows, columns in (
+        ("cash_ledger.csv", byma_cash_ledger(state, rules),
+         ["timestamp", "code", "side", "qty", "notional", "fee", "total_cost", "net_proceeds",
+          "cash_flow", "cash_after",
+          "settlement_date", "buying_power_before", "unsettled_sale_proceeds_after"]),
+        ("monthly_equity.csv", byma_monthly_equity(state),
+         ["date", "month", "equity_end", "month_return", "cumulative_return"]),
+    ):
+        pd.DataFrame(rows, columns=columns).to_csv(out / name, index=False)
+
+
 def write_preparation_artifact(run_dir, diagnostics: dict) -> None:
     """Persist the full BYMA provenance next to the run's other artifacts."""
     import json
     from pathlib import Path
 
-    keys = ("ar_data_basis", "settlement_currency", "ar_total_fees", "ar_buy_fees",
+    keys = ("ar_data_basis", "settlement_currency", "ar_net_pnl", "ar_total_fees", "ar_buy_fees",
             "ar_sell_fees", "ar_fill_count", "ar_metadata_provenance", "ar_calendar_provenance",
             "ar_tick_schedule", "ar_fee_basis", "ar_cedear_ratio_adjustments",
             "ar_dropped_non_session_bars", "ar_terminal_equity_basis",
@@ -642,7 +739,9 @@ def argentina_diagnostics(state: BaseEngine, rules: "ArgentinaEquityEngine") -> 
         if f.symbol.upper() in scheduled and _trade_date(f.timestamp) < TICK_SCHEDULE_EFFECTIVE
     )
     fees = [(f.signed_quantity, float(f.fee)) for f in state.fill_records]
+    final_equity = state.equity_snapshots[-1].equity
     return {
+        "ar_net_pnl": round(final_equity - state.initial_capital, 6),
         "ar_data_basis": _data_basis_summary(rules, scheduled, early_fills),
         # The run's single cash ledger currency (loader-declared, validated
         # against instrument metadata), so its amounts can be cited with it.
