@@ -38,9 +38,15 @@ def test_contract_reaches_runner_pricing(symbol, product, multiplier, commission
     engine._active_symbol = symbol
     assert engine.calc_commission(2, 100, 1, True) == 2 * commission
     assumptions = engine._engine_diagnostics().get("pricing_assumptions", [])
-    assert assumptions == (
-        [{"product": product, "field": "commission", "value": 2.5}] if product in {"OJ", "ZR"} else []
+    expected = (
+        []
+        if product not in {"OJ", "ZR"}
+        else [{"product": product, "field": "commission", "value": 2.5}]
     )
+    assert assumptions == [
+        {"product": "*", "field": "leverage", "value": 10.0},
+        *expected,
+    ]
 
 
 @pytest.mark.parametrize("symbol", ["M6E=F", "M6EZ4", "M6EZ2026.CME"])
@@ -50,7 +56,8 @@ def test_unlisted_digit_product_is_reported_without_invented_pricing(symbol):
     assert _extract_product(symbol) == "M6E"
     engine.get_contract_multiplier(symbol)
     assert engine._engine_diagnostics()["pricing_assumptions"] == [
-        {"product": "M6E", "field": "contract_multiplier", "value": 50}
+        {"product": "*", "field": "leverage", "value": 10.0},
+        {"product": "M6E", "field": "contract_multiplier", "value": 50},
     ]
 
 

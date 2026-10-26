@@ -84,7 +84,7 @@ _MARGIN_PER_CONTRACT: dict[str, float] = {
 _PRICE_LIMIT: dict[str, float] = {
     # Equity index: 7% (Level 1), simplified to single level
     "ES": 0.07, "NQ": 0.07, "YM": 0.07, "RTY": 0.07,
-    "MES": 0.07, "MNQ": 0.07,
+    "MES": 0.07, "MNQ": 0.07, "MYM": 0.07, "M2K": 0.07,
     # Energy: varies, typically ~$10-15 for CL
     # Not easily expressed as %, skip for most commodities
 }
@@ -199,7 +199,9 @@ class GlobalFuturesEngine(FuturesBaseEngine):
     A product absent from the multiplier or commission table is not an error:
     it is silently priced on a generic constant (50, ES's own multiplier, and
     $2.50). The run reports every such fallback under ``pricing_assumptions``
-    so a default cannot pass for data (#1393's failure class).
+    so a default cannot pass for data (#1393's failure class). Sizing is the
+    same kind of assumption with no product table to look it up in, so the
+    fixed leverage default is recorded there too, under product ``"*"``.
     """
 
     def __init__(self, config: dict):
@@ -211,7 +213,12 @@ class GlobalFuturesEngine(FuturesBaseEngine):
         # default, so the run has to say which numbers were assumed rather
         # than looked up. Recording only: this recorder changes no value.
         self._pricing_defaults: dict[tuple[str, str], Any] = {}
-        leverage = config.get("leverage", 10.0)
+        if "leverage" in config:
+            leverage = config["leverage"]
+        else:
+            # Sizing has no product table: 10.0 is assumed, not looked up.
+            leverage = 10.0
+            self._pricing_defaults[("*", "leverage")] = leverage
         config = {**config, "leverage": leverage}
         super().__init__(config)
         # Futures bands come off the previous settlement, not the previous close.

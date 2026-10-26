@@ -19,7 +19,8 @@ fill the tables, because filling them leaves the *next* added product silently
 defaulting. Numbers are unchanged here; the run states which of them were
 assumed. ``_PRICE_LIMIT`` is deliberately not reported: a product absent from
 it is not "priced" on a fallback, it is simply not subject to a limit modelled
-for equity index contracts.
+for equity index contracts. Leverage is reported for the opposite reason: it
+has no product table to miss, so the fixed default is always an assumption.
 """
 
 from __future__ import annotations
@@ -46,6 +47,11 @@ def _engine(*codes: str, **config) -> GlobalFuturesEngine:
 def _assumptions(engine: GlobalFuturesEngine) -> dict[tuple[str, str], object]:
     reported = engine._engine_diagnostics().get("pricing_assumptions", [])
     return {(row["product"], row["field"]): row["value"] for row in reported}
+
+
+# Sizing has no product table, so every run that does not configure leverage
+# is priced on this assumption.
+_LEVERAGE_ASSUMED = {("*", "leverage"): 10.0}
 
 
 class TestPricingAssumptionsAreReported:
@@ -86,13 +92,23 @@ class TestPricingAssumptionsAreReported:
         assert engine.get_contract_multiplier("ESZ4") == float(_DEFAULT_MULTIPLIER)
         engine.calc_commission_for_symbol("ESZ4", 1, 6400.0, True)
 
-        assert _assumptions(engine) == {}
+        assert _assumptions(engine) == _LEVERAGE_ASSUMED
 
-    def test_a_fully_covered_run_declares_nothing(self) -> None:
+    def test_a_fully_covered_run_declares_only_the_leverage_assumption(self) -> None:
         engine = _engine("ESZ4")
         engine.get_contract_multiplier("ESZ4")
         engine.calc_commission_for_symbol("ESZ4", 1, 6400.0, True)
 
+        assert engine._engine_diagnostics() == {
+            "pricing_assumptions": [
+                {"product": "*", "field": "leverage", "value": 10.0}
+            ]
+        }
+
+    def test_configured_leverage_is_not_reported_as_assumed(self) -> None:
+        engine = _engine("ESZ4", leverage=4.0)
+
+        assert engine.default_leverage == 4.0
         assert engine._engine_diagnostics() == {}
 
     def test_a_commission_override_is_not_a_table_default(self) -> None:
@@ -100,7 +116,7 @@ class TestPricingAssumptionsAreReported:
         engine = _engine("ZZZF25", commission_per_contract=0.99)
         assert engine.calc_commission(2.0, 400.0, 1, True) == 1.98
 
-        assert _assumptions(engine) == {}
+        assert _assumptions(engine) == _LEVERAGE_ASSUMED
 
     def test_the_warning_fires_once_per_field_not_once_per_bar(
         self, caplog: pytest.LogCaptureFixture
@@ -172,3 +188,6 @@ class TestDiagnosticsSeam:
         }
         assert ("ZZZ", "contract_multiplier") in reported
         assert ("ZZZ", "commission") in reported
+        # Sizing is assumed on every unconfigured run, so it must reach the
+        # same artifact the table fallbacks do.
+        assert ("*", "leverage") in reported
