@@ -292,6 +292,27 @@ def _strip_release_markers(content: str) -> str:
     )
 
 
+
+#: Issue codes/reasons that mean the instrument identity itself is unresolved;
+#: only these justify the "confirm symbol and venue" fallback.
+_IDENTITY_CODES = frozenset(
+    {
+        "identity_conflict",
+        "identity_gate_blocked",
+        "identity_mismatch",
+        "identity_not_locked",
+        "identity_required",
+        "listed_identity_relabelled_private",
+        "portfolio_identity_conflict",
+    }
+)
+
+#: Common Spanish function words used to pick the fallback language.
+_SPANISH_MARKERS = frozenset(
+    {"el", "la", "los", "las", "de", "del", "que", "con", "para", "una", "por", "desde",
+     "hasta", "mostrame", "ejecutá", "ejecuta", "rendimiento", "comisión", "patrimonio"}
+)
+
 class _ReleaseMixin:
     """Release behaviour of :class:`GroundingLedger`."""
 
@@ -561,6 +582,7 @@ class _ReleaseMixin:
     def safe_fallback(self) -> str:
         """Return a deterministic fail-closed answer after repeated rejection."""
         is_zh = self._user_writes_chinese()
+        is_es = not is_zh and self._user_writes_spanish()
         joined = self._observed_range_summary(is_zh)
         if joined is not None:
             if is_zh:
@@ -582,6 +604,13 @@ class _ReleaseMixin:
         redactable = [issue for issue in last_issues if issue.get("code") in _REDACTABLE_CODES]
         if redactable and not self._analysis_completed:
             is_price = any(issue.get("market_price") is True for issue in redactable)
+            if is_es:
+                return (
+                    "Mi respuesta anterior fue rechazada por la verificación: citaba "
+                    f"{'precios' if is_price else 'cifras'} que esta sesión nunca obtuvo con una "
+                    "herramienta, así que no pudieron verificarse. Reintentá dejando que el agente "
+                    "obtenga primero los datos, o pedí la respuesta sin esas cifras."
+                )
             if is_zh:
                 return (
                     f"我的回答被安全门槛拒绝:草稿引用了本会话未通过工具获取的{'价格数字' if is_price else '数值'},无法核验。"
@@ -594,10 +623,24 @@ class _ReleaseMixin:
                 "and let the agent fetch the relevant data first, or ask it to answer without "
                 "the unverified figures."
             )
-        if redactable:
+        identity_issue = any(
+            str(issue.get("code") or "") in _IDENTITY_CODES
+            or str(issue.get("reason") or "") in _IDENTITY_CODES
+            for issue in last_issues
+        )
+        if redactable or (self._analysis_completed and not identity_issue):
             # A completed analysis whose report failed the check: the draft's
-            # figures, not prices, are what failed, and the run's output is
+            # figures (or a correction that dropped required figures), not the
+            # instrument identity, are what failed, and the run's output is
             # not lost with it.
+            if is_es:
+                return (
+                    "Mi respuesta no pasó la verificación de cifras: algunas no pudieron "
+                    "vincularse con lo que devolvieron las herramientas de esta sesión, así que "
+                    "no se publicó. El análisis sí se completó; sus archivos de resultados están "
+                    "en el directorio artifacts de esta ejecución. Podés reintentar o pedirme "
+                    "que liste sólo las cifras que devolvieron las herramientas."
+                )
             if is_zh:
                 return (
                     "我的回答没有通过数字核验：草稿里有数字无法与本会话工具返回的结果对上，"
@@ -611,6 +654,12 @@ class _ReleaseMixin:
                 "artifacts directory. Retry, or ask me to list only the figures the tools "
                 "returned."
             )
+        if is_es:
+            return (
+                "No pude confirmar con seguridad la identidad del instrumento ni la evidencia "
+                "de precios, por lo que no generé una conclusión. Confirmá el símbolo y el "
+                "mercado para continuar."
+            )
         if is_zh:
             return (
                 "当前无法安全确认标的身份或价格证据，因此没有生成交易结论。"
@@ -620,6 +669,14 @@ class _ReleaseMixin:
             "I could not safely lock the instrument identity or price evidence, so I did not "
             "produce a trading conclusion. Please confirm the candidate symbol and venue."
         )
+
+    def _user_writes_spanish(self) -> bool:
+        """Return whether user-facing fallback text should be Spanish."""
+        message = self.user_message.casefold()
+        if re.search(r"[ñ¿¡]", message):
+            return True
+        words = set(re.findall(r"[a-záéíóúü]+", message))
+        return len(words & _SPANISH_MARKERS) >= 3
 
     def _user_writes_chinese(self) -> bool:
         """Return whether user-facing gate text should be Chinese."""

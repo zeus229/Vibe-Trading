@@ -229,3 +229,102 @@ def test_a_modified_preparation_file_is_not_evidence(tmp_path, monkeypatch):
                               result=text, call_id="bp", success=True)
     assert not ledger.validate_final_answer(
         _answer(("0,0500%", "corretaje", "bp::json.ar_fee_basis.brokerage_rate"))).valid
+
+
+# ── 2026-10-26 second UI run (session b7289a95f7ea, run 20261026_123840_32_466741) ──
+# The draft's ratio table "| Ratio anterior | 10:1 |" made the scanner read the
+# ":1" as a measured figure "1"; the agent mis-declared it, then removed the
+# ratios, and the gate fell back to an English "could not lock the instrument
+# identity" text although the backtest had completed and identity was fine.
+
+def test_unit_ratio_notation_reads_as_one_figure(aapl):
+    ledger, _, reads, _ = aapl
+    adj = reads["bp"]["json"]["ar_cedear_ratio_adjustments"][0]
+    draft = (
+        "| Campo | Valor |\n|---|---:|\n"
+        f"| Ratio anterior | {adj['old_ratio']:.0f}:1 |\n"
+        f"| Ratio nuevo | {adj['new_ratio']:.0f}:1 |\n\n"
+        "```figures\n"
+        f"{adj['old_ratio']:.0f} | observed | ratio anterior | bp::json.ar_cedear_ratio_adjustments[0].old_ratio\n"
+        f"{adj['new_ratio']:.0f} | observed | ratio nuevo | bp::json.ar_cedear_ratio_adjustments[0].new_ratio\n"
+        "```"
+    )
+    result = ledger.validate_final_answer(draft)
+    assert result.valid, _reasons(result)
+
+
+def test_unit_ratio_numerator_still_needs_evidence(aapl):
+    ledger, _, _, _ = aapl
+    draft = ("| Campo | Valor |\n|---|---:|\n| Ratio nuevo | 25:1 |\n\n```figures\n"
+             "25 | observed | ratio | bp::json.ar_cedear_ratio_adjustments[0].new_ratio\n```")
+    assert not ledger.validate_final_answer(draft).valid
+
+
+def test_full_report_of_the_second_run_grounds(aapl):
+    ledger, summary, reads, _ = aapl
+    m = summary["metrics"]
+    cl = reads["cl"]
+    col = cl["columns"].index
+    adj = reads["bp"]["json"]["ar_cedear_ratio_adjustments"][0]
+    items = [
+        (f"{_ars(1_000_000)} ARS", "capital", "bt::summary.initial_cash"),
+        (f"{_ars(m['final_value'])} ARS", "patrimonio final", "bt::summary.metrics.final_value"),
+        (_pct(m["total_return"], 4), "rendimiento", "bt::summary.metrics.total_return"),
+        (f"{_ars(m['ar_total_fees'])} ARS", "comisiones", "bt::summary.metrics.ar_total_fees"),
+        (f"{_ars(cl['rows'][0][col('total_cost')])} ARS", "costo compra", f"cl::rows[0][{col('total_cost')}]"),
+        (f"{_ars(cl['rows'][1][col('net_proceeds')])} ARS", "venta neta", f"cl::rows[1][{col('net_proceeds')}]"),
+        (f"{adj['old_ratio']:.0f}", "ratio anterior", "bp::json.ar_cedear_ratio_adjustments[0].old_ratio"),
+        (f"{adj['new_ratio']:.0f}", "ratio nuevo", "bp::json.ar_cedear_ratio_adjustments[0].new_ratio"),
+    ]
+    me = reads["me"]
+    for row, values in enumerate(me["rows"]):
+        c = me["columns"].index("equity_end")
+        items.append((f"{_ars(values[c])} ARS", f"fin {values[1]}", f"me::rows[{row}][{c}]"))
+    body = _answer(*items).replace(
+        "```figures", f"| Ratio | {adj['old_ratio']:.0f}:1 → {adj['new_ratio']:.0f}:1 |\n|---|---|\n\n```figures", 1)
+    result = ledger.validate_final_answer(body)
+    assert result.valid, _reasons(result)
+    assert cl["rows"][1][col("settlement_date")] == "2024-04-04"
+
+
+def _fallback_ledger(tmp_path, message, issues, *, completed=True):
+    ledger = GroundingLedger(run_dir=tmp_path, user_message=message)
+    if completed:
+        ledger._analysis_completed.append({"call_id": "bt", "tool": "backtest", "recorded_at": "x"})
+    ledger._validations.append({"issues": issues})
+    return ledger
+
+
+def test_fallback_after_a_completed_backtest_names_the_figure_check_in_spanish(tmp_path):
+    prompt = ("Ejecutá un backtest histórico buy-and-hold de AAPL.BA desde el 02/01/2024 hasta "
+              "el 27/03/2024. Mostrame rendimiento neto, patrimonio final y comisiones.")
+    issues = [{"code": "correction_contract_violation", "reason": "required_figure_removed"}]
+    text = _fallback_ledger(tmp_path, prompt, issues).safe_fallback()
+    assert text.startswith("Mi respuesta no pasó la verificación de cifras")
+    assert "identidad" not in text
+
+
+def test_identity_fallback_is_kept_for_identity_issues_and_other_languages(tmp_path):
+    prompt_es = "Ejecutá un backtest de AAPL.BA y mostrame el patrimonio con las comisiones"
+    identity = [{"code": "identity_mismatch", "reason": "identity_mismatch"}]
+    assert "identidad del instrumento" in _fallback_ledger(tmp_path, prompt_es, identity).safe_fallback()
+    issues = [{"code": "correction_contract_violation", "reason": "required_figure_removed"}]
+    english = _fallback_ledger(tmp_path, "Run a buy-and-hold backtest of AAPL", issues).safe_fallback()
+    assert english.startswith("My answer did not pass the figure check")
+    no_run = _fallback_ledger(tmp_path, "Run a buy-and-hold backtest of AAPL", issues, completed=False)
+    assert no_run.safe_fallback().startswith("I could not safely lock the instrument identity")
+
+
+@pytest.mark.parametrize("text,expected", [
+    ("| Ratio | Valor |\n|---|---|\n| nuevo | 20:1 |", [("20", "measured"), ("1", "exempt")]),
+    ("el ratio pasó de 10:1 a 20:1", [("10", "bare"), ("1", "exempt"), ("20", "bare"), ("1", "exempt")]),
+    ("reunión a las 10:15", [("10", "exempt"), ("15", "exempt")]),
+    ("ratio 1:2", [("1", "bare"), ("2", "bare")]),
+    ("| Ratio | Valor |\n|---|---|\n| x | 1:2 |", [("1", "measured"), ("2", "measured")]),
+])
+def test_scanner_exempts_only_the_unit_denominator_of_a_ratio(text, expected):
+    from src.agent.grounding.figures import parse_figures_block, scan_figures
+
+    parsed = parse_figures_block(text)
+    block = parsed[1] if isinstance(parsed, tuple) else parsed
+    assert [(f.text, f.shape) for f in scan_figures(text, block)] == expected

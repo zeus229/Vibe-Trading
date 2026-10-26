@@ -70,6 +70,11 @@ _DMY_DATE_RE = re.compile(
     r"(?<![\d.])(?:0[1-9]|[12]\d|3[01])[-/](?:0[1-9]|1[0-2])[-/](?:19|20)\d{2}(?!\d)"
 )
 
+# SHAPE 2b — the unit denominator of a ratio written "N:1" (a CEDEAR's "20:1").
+# The "1" is notation ("per one"), not a measurement; the numerator stays a
+# measured figure. "10:15" (a time) and "1:2" keep their digits.
+_UNIT_RATIO_DENOMINATOR_RE = re.compile(r"(?<![\d.:])\d{1,4}(?:[.,]\d+)?:(1)(?![\d.:,])")
+
 # SHAPE 3 — a line-leading list marker or numbered heading. The punctuation is
 # required, so a line opening with a figure ("1.171 元是收盘价") is untouched.
 _ORDINAL_RE = re.compile(r"(?m)^[^\S\n]*(?:#{1,6}[^\S\n]*)?\d{1,3}[.)、][^\S\n]+")
@@ -1241,6 +1246,10 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
             (view.start(match.start()), view.end(match.end()))
             for match in pattern.finditer(text)
         )
+    hard.extend(
+        (view.start(match.start(1)), view.end(match.end(1)))
+        for match in _UNIT_RATIO_DENOMINATOR_RE.finditer(text)
+    )
     rows = table_rows(content)
     cells = [
         (start, end, row, position)
