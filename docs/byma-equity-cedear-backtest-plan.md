@@ -630,3 +630,76 @@ session's *date* (calendar), never future prices. Pinned by
 | Mutations: no summary alias / no money tags for new columns / no engine tables | fail 1 / 1 / 7 (errors) tests |
 | Grounding, artifact, backtest, BYMA and market-engine suites | 3031 passed; 34 failures all pre-existing |
 | Full suite (CI ignores) | 61 failed, 21439 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+
+## AAPL.BA 2024-01-02..03-27 from the UI: settlement tail and report (2026-10-26)
+
+Session `fc6833de0626`, run `20261026_113342_44_5e17c3`, image
+`byma-trial-8c1e945b`.
+
+### Diagnosis
+
+1. **Settlement 03-29 was wrong.** Inside a run the calendar is the traded
+   days; after the last bar it was a weekday tail ("holidays unknown"). The
+   2024-03-27 sale (T+2, before the 2024-05-27 switch) therefore counted
+   03-28 and 03-29, both closed; the real settlement is 2024-04-04 (03-28,
+   03-29, 04-01 and 04-02 closed). Only the final settlements are affected;
+   fills, cash and equity are not.
+2. **Six figures cut**:
+   - brokerage/exchange fee rates and ratio fields (`old_ratio`, `new_ratio`,
+     `observed_move`) cited as `read_run_artifact call::json.*` from
+     `byma_preparation.json`, which was not evidence;
+   - the 03-27 month-end `1.018.760,095` was never declared in the figures
+     block (agent omission; its other occurrence passed);
+   - two execution prices: excluded by policy, and for a CEDEAR they are
+     adjusted units (half the real price before the ratio change).
+
+### Official evidence for 2024 closures
+
+- Weekday closures: national holidays (Ley 27.399) and 2024 tourism bridges
+  (Decreto 106/2023): 01-01, 02-12, 02-13, 03-28, 03-29, 04-01, 04-02, 05-01,
+  06-17, 06-20, 06-21, 07-09, 10-11, 11-18, 12-25. The argentina.gob.ar pages
+  returned HTTP 403 to automated retrieval; every date is corroborated by the
+  audited Yahoo data, where these are exactly the 2024 weekdays without any
+  GGAL/YPFD/PAMP trade.
+- 2024-12-31: BYMA Comunicado 18674 (fetched; sha256 `e45199f6...ab162a1`):
+  no trading or settlement. The same notice says 2024-12-24 had trading but
+  **no settlement** (not modelled; see pending).
+
+### Fix
+
+- `argentina_calendar.py`: the documented 2024 closures with sources.
+  `observed_sessions` keeps traded days inside the run (unchanged) and builds
+  the tail from official business days for documented years; elsewhere the
+  tail is an unverified weekday assumption. A traded bar on an official
+  closure fails closed.
+- `cash_ledger.csv` adds `settlement_date_status`; a settlement whose T+N
+  count crosses any unverified tail day is reported blank as
+  `unknown_beyond_loaded_data` (never a guessed date).
+- Grounding: `artifacts/byma_preparation.json` is an engine summary file
+  (manifest-checked), and a `read_run_artifact` of it records what was shown
+  under the reader's call as `json.<path>` (only if byte-identical to the
+  manifest entry and equal to the shown content; lists descended only when
+  they hold objects).
+- Skill: declare every figure, do not quote fill prices, cite fee/ratio/
+  calendar facts from `byma_preparation.json`, report unknown settlements
+  as not determinable.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_aapl.py` (agent's config through `runner.main`, real `read_run_artifact` and ledger) | 7 passed: buy settles 01-05, sale 04-04; 2023 run reports the tail settlement as unknown (count crosses unverified 2023-12-29); traded bar on 2024-03-28 fails closed; fee/ratio/monthly figures ground; fill prices, wrong json paths and a tampered preparation file still rejected |
+| Mutations: empty official table / no JSON indexing / preparation not a summary file | fail 2 / 1 / 1 tests |
+| Rotation YPFD/GGAL and buy-and-hold report tests | pass (rotation still settles both legs 2024-08-02) |
+| Grounding, artifact, backtest, BYMA and market-engine suites | 3038 passed; 34 failures all pre-existing |
+| Full suite (CI ignores) | 61 failed, 21446 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+### Pending
+
+- Official closure tables for other years (2025, 2026...) from BYMA/official
+  sources; until then their tails are unverified and reported as unknown.
+- Trading-but-no-settlement days (2024-12-24 per BYMA COM 18674): needs
+  separate trading and settlement calendars in the engine.
+- The BYMA "Calendario Bursátil" also lists US holidays and derivative
+  expiries; their effect on CEDEAR settlement is not modelled.
