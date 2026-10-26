@@ -1,0 +1,818 @@
+# BYMA equity and CEDEAR backtesting — implementation contract
+
+> **Superseded in part (2026-10-26).** The engine was simplified to the upstream
+> patterns (Brazil, India, Vietnam) and integrated on upstream `3cbb167e`; see the
+> last section. Sections below describe the earlier validated implementation
+> (`04c6d8b4`): the official 2024 calendar, `argentina_calendar.py`,
+> `ar_settlement_sessions`, `monthly_equity.csv` and the split modules
+> (`argentina_data/cash/metadata/reconciliation/settlement.py`) **no longer exist**
+> in the integrated engine. Keep them only as history and as the rollback reference.
+
+Status (2026-10-24): settlement/netting, data-audit and ratio-window gates verified locally; `.BA` routing in `runner.py`/`composite.py` is **enabled for the fork branch only**, still fail-closed without declared metadata, calendar and credit dates (see the last section). Earlier sections that say routing is disabled are historical. The unconditional `ar_equity` guard was replaced on 2026-10-24 by the engine's own fail-closed checks after the gates below passed; keep upstream routing off until the upstream PR criteria are met. No bonds, ONs, bills or fixed-income engine in scope.
+
+## Goal
+Add a reusable, upstream-friendly `ArgentinaEquityEngine` for BYMA-listed common shares and CEDEARs, without depending on PPI or Asistente Casa. Preserve existing `.BA` symbol detection and Yahoo → yfinance → local provider routing. Avoid changing other markets' execution semantics.
+
+## Existing precedents
+- `agent/backtest/engines/brazil_equity.py`: dedicated B3 rule engine and config-driven fees.
+- `agent/backtest/engines/india_equity.py`: delivery constraints and execution checks.
+- `agent/backtest/runner.py`, `agent/backtest/engines/composite.py`: explicit Argentina fail-closed guards.
+- `agent/backtest/engines/_market_hooks.py`: market and currency contracts.
+- `agent/tests/test_brazil_market_routing.py`: regression precedent.
+
+## Non-negotiable correctness requirements
+1. Scope only common shares and CEDEARs, with explicit instrument classification; reject unsupported `.BA` products and unknown security classes.
+2. Resolve **actual trading currency per security** (ARS vs USD counter) from trustworthy point-in-time metadata; never infer ARS from the `.BA` suffix. Reject mixed-currency portfolios unless the framework supports explicit FX conversion and multi-currency cash.
+3. Distinguish exchange trading calendar from settlement calendar. Version settlement conventions by effective date; validate historical rules against BYMA official notices (including the 2024 switch from T+2 to T+1 for contado normal).
+4. Require documented lot and tick sizes, trading session/venue, and fee schedules; configurable broker commissions with no invented universal defaults. Disable shorting/margin initially.
+5. Price adjustment and execution units must follow an **explicit, consistent convention**: Vibe's existing Yahoo/yfinance path uses split/dividend-adjusted OHLCV. Do not mix adjusted prices with unadjusted share counts, point-in-time lot/tick schedules or nominal fees without validating the outcome. Require declared quote currency, adjustment provenance and timestamp. Reject missing/stale/inconsistent bars and look-ahead.
+6. CEDEAR metadata must identify underlying and **effective-dated conversion ratio history**. Validate representative ratio/split transitions and price/quantity consistency without assuming Yahoo's adjusted OHLCV covers every CEDEAR event. If unsupported changes occur in the requested interval, fail closed with a clear explanation. A full dividend cashflow ledger (payment dates, taxes, FX, withholding) is **out of scope for v1**; do not label an adjusted-price simulation as broker-realized cashflows.
+7. Never assume Yahoo's current CEDEAR ratio was valid historically. Official issuer/depositary and CNV disclosures are primary references; Yahoo is a price provider, not the authoritative corporate-action register.
+8. No broker trading path or external side effects. Keep `PPI_TRADING_DISABLED` unaffected.
+
+## Proposed implementation surface
+- `agent/backtest/engines/argentina_equity.py` — `ArgentinaEquityEngine` inheriting `BaseEngine`.
+- Explicit market-rule version table with source references and effective dates; two calendars.
+- Instrument metadata and adjusted-price provenance validation; reuse existing Yahoo/yfinance/local loader registry rather than adding a proprietary dependency. No full corporate-action cashflow engine in v1.
+- `runner.py` and `composite.py` route `ar_equity` only once the engine's correctness gates pass; composite must not use an empty sub-engine's positions for settlement decisions.
+- Regression tests for YPFD.BA, GGAL.BA, AAPL.BA, ARS/USD counters, mixed currency, holidays, insufficient cash, fees, adjusted-vs-unadjusted price consistency, and known CEDEAR ratio/split changes. Dividends are tested as adjusted-series behavior, not cash distributions.
+- End-to-end smoke using fixture bars; optional live Yahoo smoke is non-deterministic and must not replace fixture tests.
+
+## Sources to verify and cite in final PR
+- BYMA regulatory circulars and operating notices (calendar, settlement, lot/tick and sessions), with dated archived copies or stable links.
+- Caja de Valores / CEDEAR program depositary disclosures (ratios and changes).
+- CNV applicable regulation and issuer filings (corporate actions).
+- Broker fee schedule only as an example configuration, not as market law.
+
+## Exit criteria for one upstream PR
+- All new and existing tests pass; reproducible example configurations for shares and CEDEARs.
+- Deterministic outputs and clear unsupported-case errors.
+- No dependency on private APIs, credentials, PPI or Asistente Casa.
+- No bond support and no unverified historical total-return claims.
+
+
+## Settlement-matched YPFD → GGAL rotation milestone (2026-10-24)
+
+- BaseEngine now exposes default-compatible `available_cash(timestamp)` and
+  `projected_reduction_buying_power(reductions, timestamp)` hooks. Non-BYMA
+  engines retain the old immediate-capital behavior by default.
+- BYMA evaluates buying power by **purchase settlement date**, not only
+  withdrawable settled cash: an ARS T+1 sale can fund an ARS T+1 purchase
+  on the same trading day. No assumption that such proceeds may be withdrawn.
+- Isolated tests: `agent/tests/test_argentina_reconciliation.py` and
+  `agent/tests/test_argentina_equity_primitives.py`.
+- Actual `BaseEngine._execute_bars` integration fixture:
+  `agent/tests/test_argentina_rotation_integration.py` (hold and rebalance,
+  order independence, double-spend bounds, commission accounting).
+- Terminal forced liquidation now consults the market's sell rule through
+  `BaseEngine.can_liquidate_at_end(symbol, timestamp)` (default `True`, so
+  every other market is unchanged). BYMA refuses the end-of-backtest sale of
+  a position whose newest opening fill has not settled: the position stays
+  open, no `end_of_backtest` trade/fill is invented, the final snapshot keeps
+  `positions > 0`, and equity values it at what the close would net
+  (last close, slippage/tick, exit commission). `_engine_diagnostics()`
+  declares `ar_unliquidated_position_count`, `ar_unliquidated_positions`,
+  `ar_terminal_equity_basis` and `ar_unsettled_sale_receivable_at_end`
+  (terminal equity includes proceeds that settle after the last bar).
+
+### Local verification evidence (2026-10-24)
+
+Environment: dedicated worktree of `feat/byma-equity-cedear-backtest`
+(base `8d4b0a4b`), Python 3.12.3 venv with `pip install -e ".[dev]"`
+(CI uses 3.11/3.14 and extra `openbb,stats,anthropic,matrix`). No PPI,
+Asistente Casa, broker or private service involved; fixtures are synthetic.
+
+Defects found and fixed:
+
+1. `ArgentinaEquityEngine.__init__` bound a local `date` while validating
+   CEDEAR ratio history, shadowing `datetime.date`; every engine constructed
+   with `ar_settlement_sessions` raised `NameError`. This made 9 of the 11
+   initial failures (all settlement/rotation tests had never run). Locals
+   renamed (also in `ratio_at`).
+2. `test_rotation_includes_all_trade_fees_in_final_equity` called
+   `_engine(fee=5)`, which the helper did not accept. Helper now maps `fee`
+   to `ar_fixed_fee` (plus optional rates, slippage, tick, calendar).
+3. Terminal liquidation bypassed BYMA sale eligibility (reproduced: buy on
+   the last bar and the same-day `end_of_backtest` sale with a fake round
+   trip). Fixed as described above.
+
+Results:
+
+| Check | Result |
+|---|---|
+| `test_argentina_*.py` before fixes | 11 failed, 34 passed |
+| `test_argentina_*.py` after fixes | 58 passed |
+| Engine/market regressions: `test_base_engine`, India, Korea, Vietnam, Brazil routing, `test_composite_*`, market hooks, China A/futures, crypto, forex, global equity/futures, robustness, metrics JSON, rebalance, UK, `test_backtest_*`, Argentina | 1017 passed, 1 skipped |
+| `ruff check` on changed/Argentina files | clean |
+| `tools/ci_grep_gates.sh` | gates a–f ok; **gate g fails** (see pending) |
+| `tools/test_ci_*_gate.py` | 39 passed |
+| CI syntax step (compileall/py_compile incl. `backtest/runner.py`) | ok |
+| Full suite (CI ignores) on this branch | 61 failed, 21337 passed, 173 skipped |
+| Full suite on unmodified `8d4b0a4b` | 72 failed, 21313 passed, 173 skipped |
+| Difference | the 11 Argentina failures fixed here; the other 61 are **identical** on both trees |
+| 9 MCP-registry failures among the 61 | pass in isolation (36/36): order-dependent registry pollution, pre-existing |
+
+New integration coverage in `test_argentina_rotation_integration.py`
+(each in `hold` and `rebalance`): T+2 position not rotatable the next day
+and no funds used twice; rotation across the 2024-05-27 T+2→T+1 cutover;
+terminal liquidation blocked for unsettled positions, with exit-cost-netted
+equity; settled positions still liquidated and receivable declared; ledger
+identity (initial cash ± every fill's notional and fee, with proportional and
+fixed fees, slippage and tick rounding) equals final capital and equity; full
+`run_backtest` pipeline reports the retained position. Mutation checks:
+making `can_liquidate_at_end` always true fails 5 tests; making same-bar
+reductions provide no buying power fails 5 tests.
+
+Maturity compatibility: under the normal-cash rule table, a later trade can
+never settle before an earlier sale (lag only drops 2→1 at the cutover, and
+5/24 T+2 and 5/27 T+1 both settle 5/28), so the "sale settles after the
+purchase" guard in `available_for_settlement` is defense in depth, tested at
+unit level (`test_t2_sale_cannot_fund_an_earlier_settling_buy`,
+`test_t1_sale_cannot_fund_same_day_cash_settlement`). Mixed ARS/USD is still
+rejected at construction.
+
+### Real pending items
+
+- `tools/ci_grep_gates.sh` gate g rejects tracked internal documents on this
+  branch: `AGENTS.md`, `docs/ASISTENTE_CASA_EQUITY_RISK_GROUNDING_HANDOFF.md`,
+  this plan, and two `docs/sessions/` notes. Must be resolved (untrack or
+  move to `wiki/docs/`) before any upstream PR; the branch also carries
+  ~895 fork commits ahead of `origin/main` that need to be isolated.
+- The 61 pre-existing full-suite failures (grounding preservation/formula/
+  repair, README engine counts, OU missing-lag pairs, order-dependent MCP
+  registry tests) are not from this milestone but block a green CI on this
+  branch.
+- Not yet run: CI's Python 3.11/3.14 legs and optional extras.
+- The settlement calendar must cover the settlement date of the last bar;
+  otherwise the run fails closed (`settlement calendar does not cover`).
+- Retained terminal positions are valued, not sold; no trade-level stats
+  (win rate, holding time) include them. Readers must check
+  `ar_unliquidated_position_count`.
+- Same-day buy-and-sell (intraday netting) of one instrument is blocked
+  conservatively; scale-ins block partial sells until the newest lot settles.
+- Point-in-time CEDEAR ratio effects on positions and price/quantity consistency
+  are not yet validated; multi-currency netting is prohibited. A complete
+  corporate-action/dividend cash ledger is deferred beyond v1.
+- Broker-specific pre-funding, netting permissions and trading-line variants
+  are explicit limitations; do not claim identical buying power at every broker.
+- `.BA` routing in `runner.py`/`composite.py` stays disabled until the above
+  data/event contracts exist.
+
+
+## V1 scope simplification: adjusted-price backtesting (2026-10-24)
+
+Review of upstream market engines found no per-market dividend/split cash ledger
+in the Brazil, Vietnam, India or Korea rule engines. The shared Yahoo client
+uses a split-adjusted quote series and an adjclose/close factor for dividend
+adjustment, while yfinance downloads with `auto_adjust=True`. BYMA v1 should
+**reuse these existing price loaders**, not introduce an independent event-ledger
+framework that would diverge from upstream.
+
+Before enabling .BA routing, complete these narrower gates:
+
+1. Audit exactly what Yahoo and yfinance deliver for representative .BA shares
+   and CEDEARs, including whether adjustment, currency and volume units agree.
+2. Show synthetic price/quantity/fee tests for a split and a CEDEAR ratio change;
+   the execution must not create artificial gain/loss from unit rescaling.
+3. Explicitly reject a ratio transition when historical metadata or price
+   conventions cannot prove consistent quantities and values; no look-ahead.
+4. Describe performance as **adjusted-price backtest**, not realized cash
+   dividend accounting. No inferred payment dates, withholding, dividend FX
+   conversions or tax entries. Preserve the existing BYMA fail-closed route
+   until the consistency tests and affected-market regressions pass.
+
+Deferred: general event feed, dividend payment/withholding ledger and broker-
+faithful taxable total-return reconstruction. Those may become reusable upstream
+features later, but are not prerequisites for a transparent V1 comparable to
+existing market engines.
+
+
+## Yahoo/yfinance data audit and price-basis gates (2026-10-24)
+
+Live audit of Yahoo v8 chart payloads (`events=div,splits`, 2010-2026) and the
+repo's `yahoo` and `yfinance` loaders for YPFD.BA, GGAL.BA, PAMP.BA, the
+CEDEARs AAPL, MSFT, KO, GOOGL, AMZN, NVDA, MELI, SPY, TSLA (.BA), the USD
+lines AAPLD/GGALD/YPFDD.BA, and the US underlyings/ADRs. Scripts and raw
+payloads stayed in a local scratch directory; nothing private was used.
+
+### Findings
+
+| Area | Finding |
+|---|---|
+| Currency | Yahoo declares `ARS` for every base `.BA` line and `USD` for the `D` lines. The loaders' ARS-pool contract rejects USD lines (fail closed, consistent with the single-ledger engine). |
+| yfinance loader | **Bug:** `_declared_currency` required `dict`, but yfinance 1.7.0 (locked) returns a `HistoryMetadata` `Mapping`, so every LSE/BYMA/TSX symbol read as "no currency" and the whole yfinance path rejected them. Existing tests stubbed the probe. Fixed (accept `Mapping`) with a regression test. |
+| Loader agreement | After the fix, `yahoo` and `yfinance` match bar for bar on the audited window (max relative close diff 4e-7, identical volume, midnight index, `quote_currency=ARS`). |
+| Adjustment | OHLC is split- and dividend-adjusted (adjclose/close factor, e.g. YPFD 0.847 at the start); volume stays raw. Same caliber as other markets. |
+| Share splits | Yahoo records and adjusts share splits (YPFD.BA / YPFDD.BA 10:1 on 2026-08-03): the series is continuous. |
+| CEDEAR "splits" | Yahoo's CEDEAR split events are the underlying's splits (AAPL 2020 4:1, TSLA, GOOGL/AMZN 2022, NVDA 2024) and are adjusted. |
+| CEDEAR ratio changes | **Not adjusted.** The implied ratio `underlying x CCL / CEDEAR` (CCL from GGAL.BA x 10 / GGAL) shows level shifts that match raw price drops: AAPL 10->20 on 2024-01-24 (AAPL.BA 25100 -> 12697.5; Yahoo only records a 2:1 "split" on AAPLD.BA), MSFT 5->10->30 (2020-10-22, 2022-11-17), GOOGL 29->58, AMZN 72->144, NVDA 3->6 (2020-10-22) and x4 on 2021-07-20. MELI.BA shows raw drops on 2020-10-22 (x0.034) and 2024-01-24 (x0.51), not verified with the implied-ratio method. KO (5), TSLA (15) and YPFD vs YPF were stable. A naive backtest books each as a 50-75% loss. |
+| Placeholder bars | Many flat OHLC bars with zero volume (MSFT.BA 1640, KO.BA 1290 since 2010), including holidays (YPFD.BA 2018-01-01). They are stale, not executable prices. USD lines have hundreds of null rows (dropped by the loader). |
+| Real moves | GGAL.BA/PAMP.BA fell ~47% on 2019-08-12 (PASO): genuine, must not be "corrected". |
+| Minor | A few bars with high/low inconsistent with open/close (<=7 per series); not used for fills, left as is. |
+
+The ratio values above are **inferred from prices** for the audit; official
+ratios and dates must come from BYMA/Caja de Valores/CNV disclosures.
+
+### Implemented (minimal, reusable)
+
+- `BaseEngine.prepare_market_data(data_map)`: new hook run after loading and
+  before signal generation; default returns the frames unchanged (all other
+  markets unaffected). Signals and fills therefore share one price basis.
+- `agent/backtest/engines/argentina_data.py` + `ArgentinaEquityEngine.prepare_market_data`:
+  - require OHLCV columns, a unique ascending index and a loader-declared
+    `quote_currency` equal to the instrument metadata (the `local` loader
+    declares none, so it is rejected for BYMA v1);
+  - drop zero-volume placeholder bars on dates outside the settlement
+    calendar; a traded bar on a non-session fails closed;
+  - for each declared CEDEAR ratio change inside the window, compare the
+    close move between the last traded bar before and the first on/after the
+    effective date with the unadjusted factor `old/new` and with ~1
+    (tolerance `ar_ratio_jump_tolerance`, default 20%). Exactly one match is
+    required (optional `price_series: adjusted|unadjusted` must agree);
+    unadjusted evidence rescales earlier OHLC by `old/new` and volume by the
+    inverse, like a split adjustment. Ambiguous (e.g. 10->11), contradicted
+    or unverifiable changes fail closed;
+  - reject undeclared one-bar moves beyond 40% for CEDEARs
+    (`ar_max_unexplained_cedear_move`) and beyond 75% for shares
+    (`ar_max_unexplained_share_move`, catches unadjusted >=4:1 splits while
+    allowing the 2019 PASO move).
+- Zero/missing-volume bars are not executable (`argentina_can_execute`).
+- Diagnostics: `ar_price_basis = source_split_dividend_adjusted_ohlc_raw_volume`,
+  `ar_cedear_ratio_adjustments`, `ar_dropped_non_session_bars`.
+
+Performance is an **adjusted-price backtest**: dividends live in the source's
+adjusted prices; no cashflow, payment date, withholding or FX entry is
+created.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_*.py` | 75 passed (17 new in `test_argentina_price_basis.py`) |
+| `test_yfinance_declared_currency.py` | 8 passed; with the old `dict` check 4 fail |
+| Engines, loaders and backtest regressions (BaseEngine, India, Korea, Vietnam, Brazil, Composite, China, crypto, forex, global, UK, rebalance, `test_backtest_*`, `test_yfinance*`, `test_yahoo*`, `test_*loader*`, Argentina) | 1984 passed, 9 skipped |
+| Full suite (CI ignores) | 61 failed, 21362 passed, 173 skipped; the 61 are **identical** to the pre-existing set (passes +25 = new tests) |
+| ruff on changed files, CI syntax step, gates a-f | ok; gate g still fails (pre-existing, unchanged) |
+| Live smoke (not a test): real Yahoo 2019-2026 frames through `prepare_market_data` | YPFD/GGAL/PAMP unchanged; every inferred ratio change for AAPL, MSFT, GOOGL, AMZN, NVDA detected as unadjusted and rescaled; KO/TSLA clean; MSFT without declared history fails closed naming 2020-10-22 and 2022-11-17 |
+
+Key deterministic case: inlined public Yahoo AAPL.BA quotes (2024-01-15..02-02)
+held through the 10->20 change return +10.5% (9 units, 10835 -> 12002.5
+adjusted) instead of -45% unadjusted; without the declared change the run
+aborts.
+
+### Pending after this gate
+
+- Official ratio histories (dates and ratios) per CEDEAR from Caja de
+  Valores/BYMA; the engine trusts the declared dates and only checks prices.
+- USD (`D`) lines: loaders reject them by the ARS pool contract; a separate
+  USD pool/FX design is required before supporting them.
+- `local` source for BYMA needs a way to declare `quote_currency`.
+- Adjusted levels: like any split adjustment, pre-change price *levels* are
+  restated with later information; returns are not. Lot size, tick grid and
+  fixed fees apply to adjusted units (finer than real pre-change lots).
+- Unadjusted share splits below 4:1 are not caught by the 75% band.
+- MELI/SPY and other CEDEARs not covered by the smoke need their own ratio
+  histories before use; stale-print-heavy CEDEARs (MSFT/KO.BA pre-2020) trade
+  rarely in backtests because placeholder bars are not executable.
+- Unchanged from earlier milestones: gate g, the 61 pre-existing suite
+  failures, CI 3.11/3.14 legs, `.BA` routing disabled.
+
+
+## Official ratio-event evidence and runner readiness (2026-10-24)
+
+Official BYMA publication (2020-10-19):
+https://www.byma.com.ar/newsroom/novedades-cedears
+establishes **2020-10-22 ex-price**, **2020-10-23 record date** and
+**2020-10-26 credit of additional certificates** for 39 changed programs.
+For 2024-01-24 AAPL 10:1 -> 20:1, the CNV-authorized conversion and 2024-01-26
+credit are discussed by the broker's explanatory article:
+https://help.brubank.com/es/articles/8862355-cambio-de-ratios-de-cedears
+This secondary description is **not a substitute** for dated issuer/depositary
+instrument-level primary documentation; locate and preserve that source for
+final upstream acceptance.
+
+**Newly identified execution correctness risk:**
+`argentina_data.reconcile_ratio_changes` back-adjusts OHLCV before the
+ex-date and deliberately *does not change live position quantities*. That
+can be a valid synthetic adjusted-unit strategy model, but it is not a
+faithful ledger of deliverable CEDEAR quantities across the ex/record/credit
+window. BYMA's 2020 announcement explicitly distinguishes ex-price and
+credit dates. Do not allow a backtest to sell synthetic additional units on
+2020-10-22 if the certificates would only be credited on 2020-10-26, absent
+explicitly verified broker/clearing support.
+
+Runner's `ar_equity` route and `CompositeEngine` remain fail-closed.
+Before removing either guard:
+1. Add deterministic, non-lookahead fixtures straddling each ex/record/credit
+   transition (2020 and 2024), including hold-through, same-day sale, sale
+   before additional credit, and acquisition after ex-date.
+2. Establish and test what **adjusted price units** mean for lot size,
+   tick rounding, fixed commissions, fills, position valuation and available
+   certificates. Restrict crossings or report an explicit synthetic-only
+   mode when trade deliverability is unproven.
+3. Validate source-specific ratios and effective dates from primary
+   documentation. Do not infer authoritative metadata solely from price
+   discontinuities or today's ratio list.
+4. Prove standalone runner and composite routing use the *same* date/cash/
+   rules state and invoke the data preparation hook before signals.
+5. Keep unsupported currency mixes, missing quote metadata, unverifiable
+   ratio histories and insufficient calendar coverage fail-closed.
+6. Run BYMA and existing-market regressions; publish an upstream-clean PR
+   from an isolated change set, not the fork's unrelated history.
+
+This gate review is a design audit, **not test execution** or release approval.
+
+
+## Primary ratio sources, ex->credit window and `.BA` routing (2026-10-24)
+
+### Official ratio evidence (issuer: Banco Comafi, issuer of these CEDEAR programs)
+
+| Event | Document | Ex-date | Record | Credit | Ratios (old -> new) |
+|---|---|---|---|---|---|
+| 2020, 39 programs, RESFC-2020-20830-APN-DIR#CNV (2020-10-15) | Comafi to BCBA and holders, 2020-10-16, hosted by BYMA: `data-widgets.byma.com.ar/wp-content/uploads/2020/10/Banco-Comafi-Cambio-ratio-39-Cedears.pdf` (sha256 `99ef5d32...a4095`) | Thu 2020-10-22 | Fri 10-23 | Mon 10-26 | MSFT 5:1->10:1, GOOGL 29:1->58:1, AMZN 72:1->144:1, NVDA 12:1->24:1, MELI 2:1->60:1 (table is an image; read from the rendered page). AAPL and KO not in the list. |
+| 2022, 33 programs, RESFC-2022-21967-APN-DIR#CNV (2022-10-05) | Comafi "Anuncio Fecha Efectiva", 2022-11-03: `comafi.com.ar/custodiaglobal/Multimedios/pdfs/9552.pdf` (sha256 `60547853...ec55f9`); application notice 2022-10-11 `.../9391.pdf` | Thu 2022-11-17 | Fri 11-18 | Tue 11-22 (11-21 holiday) | MSFT 10:1->30:1 |
+| 2024, 30 programs, RESFC-2023-22529-APN-DIR#CNV (2023-11-29) | Comafi to BCBA, 2024-01-08: `comafi.com.ar/custodiaglobal/Multimedios/pdfs/11879.pdf` (sha256 `d14dd012...26ede12`) | Wed 2024-01-24 | Thu 01-25 | Fri 01-26 | AAPL 10:1->20:1, MELI 60:1->120:1 (and 28 others) |
+
+The 2022 and 2024 notices call the credit date "preliminary, to be confirmed";
+the ex-dates match the observed Yahoo price steps (MSFT.BA 2022-11-17,
+AAPL.BA and MELI.BA 2024-01-24). The BYMA newsroom post
+(`byma.com.ar/newsroom/novedades-cedears`, 2020-10-19) repeats the 2020 dates.
+The broker article cited earlier is superseded by these issuer documents.
+The NVDA.BA x4 step on 2021-07-20 is the US 4:1 *underlying* split, not a
+ratio change; no CEDEAR notice was located, so it stays fail-closed unless a
+user declares it.
+
+Inferred-vs-official check: every inferred 2020/2022/2024 ratio matched the
+issuer tables; NVDA's inferred 3->6 is 12->24 expressed in Yahoo's
+split-adjusted underlying units.
+
+### Ex-date -> credit window (implemented)
+
+- `ratio_history` entries take `credit_date`; an in-window change without it
+  fails closed. Positions opened before the ex-date may only be sold by a
+  trade whose normal settlement falls on/after the credit date
+  (`argentina_ratio_credit_ok`); the same rule binds the terminal close.
+  BaseEngine passes no order size, so the whole position is held back, not
+  only the additional certificates (conservative).
+- Finding: all three official events set credit = ex + 2 sessions, and all
+  happened under T+2, so an **ex-date sale settles exactly on the credit date
+  and is deliverable**. The rule only binds under T+1 (from 2024-05-27) or if
+  the calendar is wrong: tests show a 2022 calendar that omits the 11-21
+  holiday refuses the ex-date sale, and a synthetic T+1 event (clearly marked,
+  not official) defers the sale to the session that settles on the credit.
+- Purchases on/after the ex-date follow normal settlement only.
+
+### Units: adjusted prices vs real certificates (implemented)
+
+Before an in-window change, one real certificate is `new/old` adjusted units.
+`ArgentinaEquityEngine.unit_scale` drives `round_size` (whole real lots: e.g.
+AAPL buys an even number of units before 2024-01-24) and `apply_slippage`
+(real tick / scale: 0.5 ARS -> 0.25 on restated AAPL prices). Commissions are
+invariant (same notional; one fixed fee per order). Valuation is continuous.
+Trade artifacts report post-change units and prices (AAPL 2023-06-02:
+2108 units at 4503.5 = 1054 certificates at 9007).
+`BaseEngine` now records `_bar_ts` next to `_bar_idx` for these rules.
+
+### Routing (implemented)
+
+- `runner._create_market_engine`: `ar_equity` -> `ArgentinaEquityEngine`.
+  Missing `ar_instruments`, calendar, credit dates, quote currency, or an
+  ARS/USD mix still fail closed; `ar_settlement_sessions` accepts strict
+  ISO strings (JSON config).
+- `CompositeEngine`: builds the BYMA rule book and evaluates buying power,
+  same-bar netting, sell/credit eligibility, terminal liquidation, data
+  preparation and diagnostics against the **composite's** ledger
+  (state/rules helpers shared with the standalone engine, like HOSE/India).
+  `.BA` codes cannot share a composite with any other market (raises at
+  construction), on top of the existing mixed-currency guard.
+- Tests prove standalone and composite runs produce identical fills, equity
+  and returns, in hold and rebalance modes, and that `prepare_market_data`
+  runs before signals.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| BYMA tests (`test_argentina_*.py`, incl. new `test_argentina_ratio_events.py`, `test_argentina_runner_composite.py`) + yfinance currency, with `--disable-socket` | 112 passed |
+| Mutations: credit rule off -> 4 failures; unit scale off -> 5 failures | caught |
+| Engines/loaders/runner regressions (BaseEngine, India, Korea, Vietnam, Brazil, Composite, China, crypto, forex, global, UK, rebalance, `test_backtest_*`, loaders, runner, registry, UI services) | 2128 passed, 9 skipped |
+| ruff on changed files; CI syntax step; gates a-f | ok (7 ruff findings exist only in untouched files); gate g still fails (pre-existing) |
+| Full suite (CI ignores) | 61 failed, 21391 passed, 173 skipped; the 61 are identical to the pre-existing set |
+
+Real-data runs through `python -m backtest.runner` (Yahoo, 2023-06-01..2025-06-30,
+10M ARS, 0.5% + 0.08% fees, 0.1% slippage; calendar = GGAL.BA traded days,
+an **audit approximation**, not an official BYMA calendar):
+
+| Run | Total return | Max DD | Trades | Notes |
+|---|---|---|---|---|
+| YPFD/GGAL monthly 60-day momentum rotation, hold | +175.9% | -35.7% | 7 | equal-weight benchmark +830% |
+| same, rebalance | +166.9% | -35.8% | 147 | |
+| AAPL.BA buy and hold, declared 2024 change | +166.7% | -33.3% | 1 | equity +1.16% on 2024-01-24 (no unit loss); benchmark +181% |
+| AAPL.BA without the declared change | aborted | | | `unexplained CEDEAR price discontinuities on 2024-01-24` |
+
+### Limitations / pending
+
+- No official BYMA session calendar ships with the engine; users must
+  supply one (the smoke used traded days). A verified calendar source is
+  needed before claiming historical fidelity.
+- Credit dates for 2022/2024 are the issuer's "preliminary" dates; the
+  confirmation notices were not located.
+- Whole-position hold during the credit window (no size-aware partial sale).
+- Underlying splits that Yahoo adjusts (e.g. AAPL 2020 4:1) are not mapped to
+  real lots/ticks; NVDA 2021 undeclared fails closed.
+- USD (`D`) lines and composites mixing `.BA` with other markets remain
+  unsupported; `local` source lacks a declared quote currency.
+- Gate g, the 61 pre-existing suite failures, CI 3.11/3.14 legs and an
+  upstream-clean change set remain before any upstream PR.
+
+
+## First conversational attempt in production and automatic preparation (2026-10-24)
+
+### Diagnosis (session `0eb5d346faaa`, run `20261024_051528_10_57d0a5`, trial image `byma-trial-742c489a`)
+
+The agent recognised YPFD.BA and called `backtest` **six** times; logs show four
+distinct causes, not only missing metadata:
+
+| # | Exact error | Cause |
+|---|---|---|
+| 1 | `unsupported engine 'argentina_equity'` (schema) | The user named the engine; no skill said engines are selected from codes, and the schema message did not say so. |
+| 2 | `ar_instruments must declare BYMA instrument metadata` | Message gave no shape. |
+| 3-4 | `explicit share/cedear classification required` | Agent invented `classification`, copied PPI fields (`instrument_type`, `market`) from an Asistente Casa tool; the message never named `kind`. |
+| 5 | `positive integer lot_size required` | The engine reported one field per failure: a guessing loop. |
+| 6 | `positive tick_size required` | Next would have been `ar_settlement_sessions`; the agent then searched the web. |
+
+Silent issue: the generic `commission: 0.001` was ignored by the BYMA engine,
+so costs would have been zero. The fixed `tick_size` model was also wrong:
+BYMA ticks are price bands.
+
+### Official source for ticks and lots
+
+BYMA Circular N° 3569, Anexo "Reglas de Negocio en el Segmento PPT Operaciones
+de Contado", version 04-07-2024
+(`data-widgets.byma.com.ar/wp-content/uploads/2024/07/BYMA-CIR3569-Anexo-v20240704.pdf`,
+sha256 `811dec4c...3c19ad`): "Alteración mínima de las órdenes, Renta Variable"
+bands (0.001 up to 1 ARS ... 25 for 10,000-50,000, 50 above), explicitly
+including CEDEARs; standard term "Contado con Liquidación en 24 hs". The
+minimum order quantity is defined only as the listing authorization's
+quantity (no number), so one share per lot remains an assumption.
+
+### Implemented
+
+- `argentina_metadata.py`: CIR 3569 tick bands; Yahoo-descriptor
+  classification (existing `yahoo_client.get_quote_summary`): "CEDEAR" text =>
+  CEDEAR; untruncated name without it => share; truncated/ambiguous => unknown;
+  observed-session calendar (dates with traded volume, conservative) plus a
+  labelled weekday tail for final settlements.
+- `ArgentinaEquityEngine`: `ar_instruments` and `ar_settlement_sessions` are
+  optional. Declared values always win; missing ones are resolved per loaded
+  symbol and labelled `official` / `derived` / `third_party` / `assumption`.
+  Shares are completed automatically; CEDEARs are **not** (no automatic
+  official ratio/credit source) and fail closed. All configuration problems
+  are reported at once with exact keys and an example. Omitted `tick_size`
+  uses CIR 3569 bands on the real certificate price. Generic `commission` is
+  the brokerage rate unless `ar_brokerage_rate` is set; no fees is reported as
+  `none_configured`.
+- Reporting: scalar `ar_data_basis` (fits the tool's 2,000-char stdout tail in
+  the measured run) and `artifacts/byma_preparation.json` with full provenance
+  (standalone and composite).
+- Runner schema message for `engine` now says market engines come from codes.
+- `strategy-generate` skill documents `.BA` configs, provenance labels, and
+  forbids filling metadata via web or broker tools.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| BYMA tests incl. new `test_argentina_auto_prepare.py` (`--disable-socket`) | 133 passed |
+| Replay: minimal config of the failed request through `runner.main` | runs first time; exact failed final config also runs |
+| Engine/loader/runner/skill regressions | 3054 passed, 9 skipped (+15 `test_runtime_runner.py` only fail under `--disable-socket`; 32/32 pass normally) |
+| Full suite (CI ignores) | 61 failed, 21420 passed, 173 skipped; the 61 are identical to the pre-existing set |
+| Live (real Yahoo + descriptor) via `python -m backtest.runner`, YPFD.BA 2024-06-01..09-30, 1M ARS, 95%, commission 0.1% | first attempt OK: total return -4.63%, max DD -20.16%, 1 trade; 82 traded days; stdout 1,952 chars incl. `ar_data_basis` |
+| Live AAPL.BA with the same minimal config | fails closed once, naming CEDEAR evidence and every key to declare |
+
+### Limitations
+
+- Yahoo's descriptor is third-party evidence, not an official BYMA
+  classification; truncated names fail closed.
+- Derived calendar can only delay settlement (missing sessions); the tail
+  after the last bar does not know holidays (affects only final settlement
+  dating). A declared calendar overrides it.
+- CIR 3569 v2024-07-04 is applied to earlier dates as an assumption (count
+  reported). Lots of one share are an assumption.
+- `ar_data_basis` sits mid-output; very long stdout (e.g. 20 dropped hold
+  adjustments) could push it out of the 2,000-char tail; the artifact remains.
+- True conversational verification needs the image deployed; see the plan.
+
+### Controlled deployment plan (not executed)
+
+1. Commit/push the branch; build `vibe-trading:byma-trial-<sha12>-<ts>` from a
+   clean `git archive` (as for the trial), compare against the running trial
+   image (same packages; only the expected files differ) and run BYMA tests
+   inside the image.
+2. Backup `vibe-home` with `backup_vibe_home.py --execute` and verify hashes
+   and `integrity_check`; keep the current trial image and add tag
+   `rollback-pre-byma-autoprep-<date>`; prod `main` image
+   (`rollback-pre-byma-trial-20261024`) stays protected.
+3. Preflight a new trial override and the rollback override (current trial
+   image) through `vibe_compose.sh ... config` (PPI_TRADING_DISABLED, project,
+   image, volumes, port).
+4. Run the same gated deploy script with automatic rollback (image, health,
+   restarts, mounts, approved smoke, probe vs baseline, startup fingerprint).
+5. In the UI ask: "Backtest buy-and-hold de YPFD.BA del 2024-06-01 al
+   2024-09-30, 1.000.000 ARS, 95%, comisión 0,1%". Accept only if the first
+   `backtest` call succeeds and the answer reports the `ar_data_basis` labels.
+6. Rollback paths: to the previous trial image (new rollback override) or to
+   prod `main` (`rollback_byma_trial.sh`).
+
+
+## First successful UI backtest: report grounding (2026-10-26)
+
+Run `20261026_024335_72_c1e9e1` (session `486a217f01a6`, image
+`byma-trial-f12ddb2a`): YPFD.BA ran first time (-4.6310%), but after three
+rejected drafts the answer was released with six figures redacted.
+
+### Diagnosis
+
+| Figure (as written) | Ref | Cause |
+|---|---|---|
+| `1.000.000,00` ARS capital | `call::backtest.initial_cash` | A |
+| `953.689,78` ARS final equity | `call::metrics.final_value` | A |
+| `-2,2938%`, `-14,6934%`, `-16,2267%` month-end drawdowns | `read_run_artifact call::rows[i][2]` | B |
+| `953.689,78` ARS equity on 30/09 | `read_run_artifact call::rows[81][1]` | A + B |
+
+- **A:** a figure written with a currency code keeps only evidence with that
+  currency (`policies._check_observed`). Backtest outputs were recorded with
+  `currency=None`, so ARS amounts never matched; the gate's own proposed
+  repair ref (`backtest.initial_cash`) then failed the same way.
+- **B:** the agent cited table cells positionally, as the tool returns them
+  (`rows[i][j]`); the ledger indexed them only by column name.
+- Also: `trades.csv` has no fee column, so commissions could not be reported;
+  `read_run_artifact run_card` exceeded the result budget.
+
+### Fix (verification not weakened)
+
+- BYMA engine metrics declare `settlement_currency` (loader-declared,
+  validated) and `ar_total_fees`, `ar_buy_fees`, `ar_sell_fees`,
+  `ar_fill_count`.
+- Grounding: for a backtest whose engine-written, non-model `run_card.json`
+  declares a 3-letter `settlement_currency`, only amount leaves of that run's
+  authenticated outputs (summary scalars and byte-identical engine tables:
+  initial cash, final value, equity, P&L, fees...) are tagged with that
+  currency and `unit="money"`. Runs without the declaration are unchanged.
+  Prices stay excluded.
+- `call::rows[i][j]` resolves to exactly the recorded cell of that
+  read_run_artifact call (shown rows only; date/symbol/price columns never).
+- Skill guidance: write amounts with the currency code and cite the exact
+  fields/cells.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_grounding.py` (real engine run + real `read_run_artifact` + real ledger) | 7 passed: the six production figures, fees, trades and monthly equity ground; invented amount, explicit USD, shifted/unshown cell and timestamp-cell refs still rejected; a run without declared currency stays untagged |
+| Mutations: no currency tagging / no cell refs | each fails 2 tests |
+| Grounding, artifact, backtest and BYMA suites | 2537 passed; 34 failures all in the pre-existing set |
+| Full suite (CI ignores) | 61 failed, 21431 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+Limitations: "US$"/"$" spellings carry no currency code in the figure parser
+(pre-existing), so they are matched without a currency check as before;
+reports should use the ISO code. Trade execution prices remain excluded from
+backtest evidence by existing policy.
+
+
+## Rotation YPFD.BA -> GGAL.BA from the UI: cash reconciliation (2026-10-26)
+
+Session `d7a07a87234e`, run `20261026_032054_89_d4d3f7`, image
+`byma-trial-e6afc908`: +21.37%, final 1,213,734.15 ARS; seven figures cut.
+
+### Diagnosis
+
+- **The seven cut figures were all cash reconciliation** (gain, cash after the
+  first buy, YPFD net proceeds, cash available, GGAL total cost, cash after the
+  rotation, the gap). The engine produced no such table, so the agent read
+  `fills.jsonl` with `read_file` (`read_run_artifact` refuses JSONL; a JSONL
+  read is not evidence) and computed the values with `financial_rigor`, then
+  declared the calculator's `result` as observed. Correctly rejected.
+- Earlier drafts cited `call::summary.metrics.*` and `summary.initial_cash`,
+  the exact paths of the backtest result the agent received; the ledger had
+  recorded the same run-card values as `metrics.*` / `backtest.initial_cash`.
+- August equity was cited as `rows[61]` (2024-09-02) instead of `rows[60]`
+  (2024-08-30): an off-by-one the gate rightly rejected. Locating month-ends
+  in an 82-row table by hand is error-prone.
+- `read_run_artifact run_card` exceeds the result budget (the `summary`
+  already carries it); `artifacts/fills.jsonl` is not served (CSV/JSON only).
+
+### Purchase on 06-03, not 06-04: no look-ahead
+
+The agent set `start_date: 2024-05-31` with `evaluation_start_date:
+2024-06-01`, making 05-31 a warm-up bar. `_align` shifts signals one bar
+(next-bar-open), and the warm-up trim happens after alignment, so the signal
+computed from data up to the 05-31 close executes at the 06-03 open (fill
+price = 2,900 = that open). In the buy-and-hold run without a warm-up bar the
+first signal was 06-03's, executed 06-04. The strategy only uses the next
+session's *date* (calendar), never future prices. Pinned by
+`test_first_buy_uses_the_warmup_bars_signal_at_the_next_open_without_lookahead`.
+
+### Fix (verification not relaxed)
+
+- Engine writes `artifacts/cash_ledger.csv` (per fill: `notional`, `fee`,
+  `total_cost`, `net_proceeds`, `cash_flow`, `cash_after`, `settlement_date`,
+  `buying_power_before`, `unsettled_sale_proceeds_after`), replayed from its
+  own fill ledger and matching its cash, and `artifacts/monthly_equity.csv`
+  (`equity_end`, `month_return`, `cumulative_return`); plus `ar_net_pnl`.
+  Both CSVs are in the run-card manifest, readable through
+  `read_run_artifact`, hashed as engine tables, and their amount columns carry
+  the declared settlement currency.
+- `<backtest call>::summary.initial_cash` / `summary.metrics.X` /
+  `summary.structured_metrics.X` resolve to the same run-card values (exact
+  alias of `backtest_summary`), only for backtest calls.
+- Skill: cite these tables and summary paths; a calculator result is not an
+  observation.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_rotation.py` (agent's own config and signal_engine.py through `runner.main`, real summary builder, real `read_run_artifact`, real ledger) | 7 passed: trades, T+1 matched funding (both settle 2024-08-02, cost <= buying power > settled cash alone), ledger closes on final value and fee totals, no look-ahead; 7 cut figures plus capital, final value, P&L, return, fees and monthly path ground; off-by-one month, borrowed/invented/USD reconciliation values, calculator results and summary.* on non-backtest calls still rejected |
+| `test_argentina_report_grounding.py` (YPFD buy-and-hold) | 8 passed incl. cash ledger, monthly path and summary refs |
+| Mutations: no summary alias / no money tags for new columns / no engine tables | fail 1 / 1 / 7 (errors) tests |
+| Grounding, artifact, backtest, BYMA and market-engine suites | 3031 passed; 34 failures all pre-existing |
+| Full suite (CI ignores) | 61 failed, 21439 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+
+## AAPL.BA 2024-01-02..03-27 from the UI: settlement tail and report (2026-10-26)
+
+Session `fc6833de0626`, run `20261026_113342_44_5e17c3`, image
+`byma-trial-8c1e945b`.
+
+### Diagnosis
+
+1. **Settlement 03-29 was wrong.** Inside a run the calendar is the traded
+   days; after the last bar it was a weekday tail ("holidays unknown"). The
+   2024-03-27 sale (T+2, before the 2024-05-27 switch) therefore counted
+   03-28 and 03-29, both closed; the real settlement is 2024-04-04 (03-28,
+   03-29, 04-01 and 04-02 closed). Only the final settlements are affected;
+   fills, cash and equity are not.
+2. **Six figures cut**:
+   - brokerage/exchange fee rates and ratio fields (`old_ratio`, `new_ratio`,
+     `observed_move`) cited as `read_run_artifact call::json.*` from
+     `byma_preparation.json`, which was not evidence;
+   - the 03-27 month-end `1.018.760,095` was never declared in the figures
+     block (agent omission; its other occurrence passed);
+   - two execution prices: excluded by policy, and for a CEDEAR they are
+     adjusted units (half the real price before the ratio change).
+
+### Official evidence for 2024 closures
+
+- Weekday closures: national holidays (Ley 27.399) and 2024 tourism bridges
+  (Decreto 106/2023): 01-01, 02-12, 02-13, 03-28, 03-29, 04-01, 04-02, 05-01,
+  06-17, 06-20, 06-21, 07-09, 10-11, 11-18, 12-25. The argentina.gob.ar pages
+  returned HTTP 403 to automated retrieval; every date is corroborated by the
+  audited Yahoo data, where these are exactly the 2024 weekdays without any
+  GGAL/YPFD/PAMP trade.
+- 2024-12-31: BYMA Comunicado 18674 (fetched; sha256 `e45199f6...ab162a1`):
+  no trading or settlement. The same notice says 2024-12-24 had trading but
+  **no settlement** (not modelled; see pending).
+
+### Fix
+
+- `argentina_calendar.py`: the documented 2024 closures with sources.
+  `observed_sessions` keeps traded days inside the run (unchanged) and builds
+  the tail from official business days for documented years; elsewhere the
+  tail is an unverified weekday assumption. A traded bar on an official
+  closure fails closed.
+- `cash_ledger.csv` adds `settlement_date_status`; a settlement whose T+N
+  count crosses any unverified tail day is reported blank as
+  `unknown_beyond_loaded_data` (never a guessed date).
+- Grounding: `artifacts/byma_preparation.json` is an engine summary file
+  (manifest-checked), and a `read_run_artifact` of it records what was shown
+  under the reader's call as `json.<path>` (only if byte-identical to the
+  manifest entry and equal to the shown content; lists descended only when
+  they hold objects).
+- Skill: declare every figure, do not quote fill prices, cite fee/ratio/
+  calendar facts from `byma_preparation.json`, report unknown settlements
+  as not determinable.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_aapl.py` (agent's config through `runner.main`, real `read_run_artifact` and ledger) | 7 passed: buy settles 01-05, sale 04-04; 2023 run reports the tail settlement as unknown (count crosses unverified 2023-12-29); traded bar on 2024-03-28 fails closed; fee/ratio/monthly figures ground; fill prices, wrong json paths and a tampered preparation file still rejected |
+| Mutations: empty official table / no JSON indexing / preparation not a summary file | fail 2 / 1 / 1 tests |
+| Rotation YPFD/GGAL and buy-and-hold report tests | pass (rotation still settles both legs 2024-08-02) |
+| Grounding, artifact, backtest, BYMA and market-engine suites | 3038 passed; 34 failures all pre-existing |
+| Full suite (CI ignores) | 61 failed, 21446 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+### Pending
+
+- Official closure tables for other years (2025, 2026...) from BYMA/official
+  sources; until then their tails are unverified and reported as unknown.
+- Trading-but-no-settlement days (2024-12-24 per BYMA COM 18674): needs
+  separate trading and settlement calendars in the engine.
+- The BYMA "Calendario Bursátil" also lists US holidays and derivative
+  expiries; their effect on CEDEAR settlement is not modelled.
+
+
+## AAPL.BA second UI run: unit-ratio notation and misleading fallback (2026-10-26)
+
+Session `b7289a95f7ea`, run `20261026_123840_32_466741`, image
+`byma-trial-5bf7b11f`. The backtest completed (+1.88%); the answer was an
+English "could not safely lock the instrument identity or price evidence".
+
+### Diagnosis
+
+- Settlement is correct in the run: buy 2024-01-03 -> 01-05, sell 2024-03-27
+  -> **2024-04-04** (`cash_ledger.csv`, status `derived`).
+- The refusal was not about identity. The draft had a table
+  `| Ratio anterior | 10:1 |` / `| Ratio nuevo | 20:1 |`; the figure scanner
+  read each `:1` as a measured figure "1". The agent declared one "1" from
+  `json.ar_data_basis` (a text field: `not_in_referenced_call`) and left the
+  other undeclared; its correction then removed the ratios 10 and 20
+  (`correction_contract_violation: required_figure_removed`). After three
+  rejected drafts the gate used its deterministic fallback, and because the
+  last draft's only issue was not a redactable figure code it picked the
+  identity text, in English (only en/zh existed).
+- `read_run_artifact(..., columns=["time", ...])` failed once (the column is
+  `timestamp`); the agent recovered on the next call.
+
+### Fix (no validation weakened)
+
+- Figure scanner: in `N:1` only the unit denominator `1` is exempt notation;
+  `N` stays a measured figure needing evidence. Times (`10:15`) and other
+  ratios (`1:2`) are unchanged.
+- Fallback: the identity text is used only when an identity issue is present
+  or no analysis completed; a completed backtest whose figures failed gets
+  the "figure check" text pointing to the artifacts. Spanish versions added
+  (detected from the user message).
+- Skill: declare `N` for `N:1`; use the artifact's column names.
+
+### Verification
+
+| Check | Result |
+|---|---|
+| `test_argentina_report_aapl.py` (real run via `runner.main`, real `read_run_artifact` and ledger) | 17 passed: the production ratio table grounds with numerators from `byma_preparation.json`; an unsupported numerator (25:1) is still rejected; full report (capital, final value, return, fees, cash ledger, ratios, monthly equity) grounds; settlement 2024-04-04; Spanish figure-check fallback after a completed run; identity fallback kept for identity issues and when no analysis completed; scanner shapes for `20:1`, `10:15`, `1:2` |
+| Mutations: no ratio exemption / old fallback choice | fail 2 / 2 tests |
+| 95 grounding, figure, loop, artifact, backtest, BYMA and market-engine test files | 3103 passed; 34 failures all pre-existing |
+| Full suite (CI ignores) | 61 failed, 21456 passed, 172 skipped; the 61 are identical to the pre-existing set |
+
+### Pending
+
+- Fallback texts exist in en/zh/es only; other languages get English.
+- Previously listed calendar items (2025/2026 tables, trading-without-
+  settlement days, US holidays for CEDEARs) remain open.
+
+## Simplified engine and upstream integration (2026-10-26)
+
+Branch `integ/upstream-3cbb167e-byma` = fork `main` (2754cfc8) + upstream HKUDS
+`main` 3cbb167e + the simplified engine (commit `e6b79112` of the clean branch
+`feat/byma-equity-upstream`) + the grounding port. Rollback reference stays
+`04c6d8b4` (validated, deployed as `byma-trial-04c6d8b4`).
+
+### What the engine does now
+- One module, `agent/backtest/engines/argentina_equity.py` (helpers inside, like
+  one-module-per-engine upstream). Long-only, ARS, leverage 1.
+- Settlement counted in **observed run bars**: T+2 before 2024-05-27, T+1 from
+  then (Vietnam's bar-counted pattern). Sessions are the dates on which any loaded
+  instrument traded; zero-volume placeholder bars are dropped and listed in
+  `ar_dropped_no_trade_dates`.
+- A settlement that falls after the last loaded bar is `beyond_loaded_data` with
+  **no date**. No weekday guess and no official calendar are used, and estimated
+  dates are never presented as official.
+- Kept: same-session sale netting (buying power = capital − net proceeds of sales
+  that settle after the purchase's due bar), whole-position sell wait for the newest
+  lot, CEDEAR ratio reconciliation with fail-closed discontinuity guards, ex→credit
+  window, `unit_scale` for lots and ticks, BYMA Circular 3569 ticks, fees as declared
+  assumptions, `cash_ledger.csv` and `byma_preparation.json`.
+
+### Expected differences versus 04c6d8b4
+| Item | 04c6d8b4 | Integrated |
+|---|---|---|
+| Calendar | official 2024 table + `ar_settlement_sessions` | observed sessions only |
+| Final sale settlement | dated (2024-10-01 YPFD, 2024-04-04 AAPL) | blank, `beyond_loaded_data` |
+| Cash ledger status column | `settlement_date_status` | `settlement_basis` (`observed_sessions` / `beyond_loaded_data`) |
+| `monthly_equity.csv` | written | removed (`equity.csv` is the path) |
+| `ar_fill_count`, `ar_price_basis`, `ar_calendar_provenance` | present | removed (`trade_count` / `ar_data_basis`) |
+| Traded bar on an official closure | fails closed | not detected (no calendar) |
+| USD counter lines | fail closed | rejected explicitly (ARS only) |
+| Terminal basis string | `all_positions_liquidated_at_last_close` | `all positions liquidated at the last close` |
+
+### Replay with identical bars (YPFD, YPFD/GGAL rotation, AAPL.BA 20:1)
+Recorded OHLCV replayed through `runner.main` on both trees: every fill (symbol,
+date, quantity, price, fee), every `equity.csv` row, `final_value`,
+`total_return`, `ar_total_fees` and all other numeric metrics are identical. Only
+diagnostics keys differ (list above plus `ar_cedear_ratio_adjustments` layout).
+A live Yahoo re-fetch is not byte-stable (GGAL differs by up to 3.5e-7 relative
+between two fetches), which moves `max_drawdown`/`sharpe` in the 7th decimal; use
+the replay for exact comparisons.
+
+### Grounding changes kept in the fork (candidates for a second, independent PR)
+1. `N:1` ratio denominators exempt from the figure scan (`figures.py`).
+2. `call::rows[i][j]` cell refs resolve to the one recorded cell (`policies.py`,
+   `evidence.py`).
+3. Backtest `summary.*` refs alias the run card (`policies.py`).
+4. Amount fields of a run carry the engine's `settlement_currency` (`evidence.py`).
+5. `read_run_artifact` JSON summaries are evidence while they match the run card
+   manifest (`evidence.py`, `ledger.py`).
+6. Fail-closed fallback names the figure check and answers in Spanish (`release.py`).
+Items 1, 2 and 6 are engine-independent; 3–5 need a market that declares
+`settlement_currency` or writes JSON summaries (only BYMA does today).
