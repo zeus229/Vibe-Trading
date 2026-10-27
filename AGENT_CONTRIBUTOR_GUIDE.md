@@ -21,6 +21,19 @@ Do not copy local `.env` files, token caches, broker exports, run artifacts,
 private notebooks, generated reports, or local agent memory into this repository
 unless they are explicitly sanitized fixtures.
 
+### Asistente Casa fork routing
+
+For non-trivial work in the `zeus229/Asistente-Casa` fork, consult the
+canonical project instructions and current operational documents in that
+repository before planning changes. Asistente Casa owns cross-project
+architecture, integration, deployment/validation procedures and operational
+records; the VM owns deployed runtime state and private configuration. Keep
+Vibe code and tests here, do not create a second operational wiki, and never
+infer deployed state from a GitHub branch. Any local `AGENTS.md` routing note
+must remain untracked under this repository's private-document policy. Keep
+`PPI_TRADING_DISABLED=True` must remain set; never enable real trading.
+Preserve the read-only boundary.
+
 ## Safe Local Checks
 
 These commands are normally safe for local validation:
