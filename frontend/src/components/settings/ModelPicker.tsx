@@ -69,7 +69,7 @@ export function ModelPicker({
   };
 
   return (
-    <div ref={rootRef} className="relative min-w-0 flex-1">
+    <div ref={rootRef} className="relative min-w-0 basis-full flex-1 sm:basis-auto">
       <div className="relative">
         <input
           value={value}
