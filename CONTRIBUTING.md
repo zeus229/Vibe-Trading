@@ -103,6 +103,12 @@ be committed. Local agent instructions and memory files (`AGENTS.md`,
 `CODEX_MEMORY.md`, and `NOTES.md`) must also remain untracked at any depth.
 Publish project documentation in `wiki/docs/` or the relevant source directory.
 
+For the `zeus229/Asistente-Casa` fork, keep the local `AGENTS.md` routing note
+untracked and use that repository's canonical documentation for cross-project
+architecture, integration and operational procedures. Do not maintain a second
+operational wiki here; keep Vibe-specific contribution rules in this guide and
+public Vibe documentation in `wiki/docs/` or the relevant source directory.
+
 Before committing, run:
 
 ```bash
