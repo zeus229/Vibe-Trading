@@ -12,12 +12,13 @@ from src.api import settings_routes
 from src.providers import openai_codex
 
 
+REAL_ASYNC_CLIENT = httpx.AsyncClient
 PROVIDER = settings_routes.LLM_PROVIDER_BY_NAME["openai-codex"]
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, handler, *, token=None):
     """Run discovery against a mock HTTP transport with a fake OAuth session."""
-    real_client = httpx.AsyncClient
+    real_client = REAL_ASYNC_CLIENT
     calls = []
 
     def get_token(**kwargs):
@@ -99,7 +100,7 @@ def test_refreshes_once_after_401_with_rejected_token(monkeypatch):
             "models": [{"slug": "gpt-6-sol", "visibility": "list", "supported_in_api": True}]
         })
 
-    real_client = httpx.AsyncClient
+    real_client = REAL_ASYNC_CLIENT
     calls = []
     def get_token(**kwargs):
         calls.append(kwargs)
