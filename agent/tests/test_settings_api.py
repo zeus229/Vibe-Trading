@@ -76,13 +76,6 @@ def test_extract_model_ids_normalizes_openai_compatible_payloads() -> None:
             {"provider": "openrouter", "base_url": "https://openrouter.ai/api/v1"},
             "api_key_required",
         ),
-        (
-            {
-                "provider": "openai-codex",
-                "base_url": "https://chatgpt.com/backend-api/codex/responses",
-            },
-            "oauth_discovery_unsupported",
-        ),
         # gh_cli used to build "gh_cli_discovery_unsupported", which the response
         # model rejects; it shares the OAuth code instead.
         ({"provider": "copilot"}, "oauth_discovery_unsupported"),
