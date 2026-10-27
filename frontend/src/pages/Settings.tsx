@@ -455,7 +455,7 @@ export function Settings() {
 
             <label className="grid gap-2">
               <span className={labelClass}>{t("settings.model")}</span>
-              <div className="flex gap-2">
+              <div className="flex flex-wrap gap-2">
                 <ModelPicker
                   value={form.model_name}
                   options={modelOptions}
