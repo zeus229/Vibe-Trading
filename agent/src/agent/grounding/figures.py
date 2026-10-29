@@ -94,11 +94,10 @@ _SEC_FORM_RE = re.compile(
 _INDEX_CELL_RE = re.compile(r"\d{1,3}[.)]?")
 _CELL_WORD_RE = re.compile(r"[^\W\d_]{2,}")
 
-# Compact year-horizon labels such as "1Y" or "10y" are table labels, not
-# measured figures. Keep this deliberately narrow: one-letter M is ambiguous
-# with the existing magnitude suffix ("5M"), while multi-letter labels such as
-# "12mo" / "1yr" are already classified as worded cells by _CELL_WORD_RE.
-_YEAR_HORIZON_CELL_RE = re.compile(r"\s*\d{1,3}[Yy]\s*")
+# A compact year-horizon label ("1Y", "10y") in a table cell names a column or row, not
+# a measurement. Deliberately narrow: a one-letter "M" stays a magnitude suffix ("5M"),
+# and multi-letter labels ("12mo", "1yr") already read as worded cells.
+_YEAR_HORIZON_CELL_RE = re.compile(r"\d{1,3}[Yy]")
 
 # SHAPE 4 — a CommonMark fence line: at most three spaces of indent, a run of
 # backticks or tildes, and the info string.
@@ -119,7 +118,7 @@ _CURRENCY_CODES = frozenset(
 _PERCENT_CHARS = "%％"
 
 # Glued percentage-point and basis-point marks, and the percent each one is.
-_POINT_MARKS = (("bps", 0.01), ("pp", 1.0), ("bp", 0.01))
+_POINT_MARKS = (("个百分点", 1.0), ("bps", 0.01), ("pp", 1.0), ("bp", 0.01))
 
 # Magnitude marks glued to a figure ("24.6M", "2.4万"): a symbol set like the
 # currency marks. They scale the comparison with evidence and never decide shape.
@@ -453,9 +452,11 @@ _DOTTED_DECIMAL_RE = re.compile(
     r"(?<![\d.,])[+-]?[1-9]\d{0,2}(?:\.\d{3})+,\d+(?!\d|\.\d)"
 )
 
-# A dot-only grouped integer ("5.165", "502.408", "1.234.567") is ambiguous on its
-# own because the same spelling can be a decimal. It is grouping only after the
-# surrounding document has independently established decimal-comma notation.
+# A dot-only grouped integer with a single group ("5.165", "502.408") is ambiguous on
+# its own because the same spelling can be a decimal. It is grouping only after the
+# surrounding document has independently established decimal-comma notation. Two or
+# more groups ("1.234.567") cannot be a decimal in any notation, so they are grouping
+# regardless of the document.
 _DOTTED_GROUPING_RE = re.compile(
     r"(?<![\d.,])[+-]?[1-9]\d{0,2}(?:\.\d{3})+(?![\d.,])"
 )
@@ -503,7 +504,8 @@ def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
             True,
         )
         for match in _DOTTED_GROUPING_RE.finditer(text)
-    ] if comma_decimals else []
+        if comma_decimals or match.group(0).count(".") >= 2
+    ]
     protected = dotted + dotted_grouped
     tokens: list[_Token] = []
     cursor = 0
@@ -631,9 +633,12 @@ def _percent_mark(text: str, end: int) -> tuple[float, int]:
     if spaced[:1] and spaced[0] in _PERCENT_CHARS:
         return 1.0, end + len(rest) - len(spaced) + 1
     for mark, unit in _POINT_MARKS:
-        after = spaced[len(mark) : len(mark) + 1]
-        if spaced[: len(mark)].casefold() == mark and not (after.isascii() and after.isalnum()):
-            return unit, end + len(rest) - len(spaced) + len(mark)
+        # The CJK mark must be glued, as upstream reads it: "3.6 个百分点" is
+        # a bare number in running prose, not a unit-bearing figure.
+        tail = rest if mark == "个百分点" else spaced
+        after = tail[len(mark) : len(mark) + 1]
+        if tail[: len(mark)].casefold() == mark and not (after.isascii() and after.isalnum()):
+            return unit, end + len(rest) - len(tail) + len(mark)
     return 0.0, end
 
 
@@ -1280,7 +1285,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
             and position not in row.columns
             and (
                 _CELL_WORD_RE.search(row.cells[position][0]) is not None
-                or _YEAR_HORIZON_CELL_RE.fullmatch(row.cells[position][0]) is not None
+                or _YEAR_HORIZON_CELL_RE.fullmatch(row.cells[position][0].strip()) is not None
             )
         )
         if _within((start, digits_end), hard) or (cell is not None and cell[:2] in index_cells):

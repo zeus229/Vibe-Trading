@@ -50,7 +50,7 @@ def test_catalog_parses_visible_supported_models_and_efforts(monkeypatch):
                 ],
             },
             {"slug": "gpt-reserve", "visibility": "hide", "supported_in_api": True},
-            {"slug": "unsupported", "visibility": "list", "supported_in_api": False},
+            {"slug": "oauth-only", "visibility": "list", "supported_in_api": False},
             {"slug": "gpt-6-sol", "visibility": "list", "supported_in_api": True},
             {"slug": "bad/name", "visibility": "list", "supported_in_api": True},
         ],
@@ -70,7 +70,7 @@ def test_catalog_parses_visible_supported_models_and_efforts(monkeypatch):
     assert calls == [{}]
     assert result.source == "provider"
     assert result.warning_code is None
-    assert result.models == ["openai-codex/gpt-6-sol"]
+    assert result.models == ["openai-codex/gpt-6-sol", "openai-codex/oauth-only"]
     assert result.model_labels == {"openai-codex/gpt-6-sol": "GPT-6 Sol"}
     assert result.default_effort_levels == {"openai-codex/gpt-6-sol": "medium"}
     assert result.effort_levels == {
@@ -139,5 +139,19 @@ def test_transport_failure_and_redirect_never_leave_codex_host(monkeypatch):
 
 def test_codex_provider_accepts_announced_extended_efforts():
     assert settings_routes.LLM_PROVIDER_BY_NAME["openai-codex"].reasoning_efforts == [
-        "low", "medium", "high", "xhigh", "max", "ultra"
+        "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra", "persistent"
     ]
+
+
+def test_bad_effort_entry_does_not_discard_other_catalog_models(monkeypatch):
+    payload = {"models": [{
+        "slug": "valid", "visibility": "list",
+        "supported_reasoning_levels": [
+            {"effort": ["malformed"]}, {"effort": "high"},
+        ],
+        "default_reasoning_level": "ultra",
+    }]}
+    result, _ = _run(monkeypatch, lambda _: httpx.Response(200, json=payload))
+    assert result.models == ["openai-codex/valid"]
+    assert result.effort_levels == {"openai-codex/valid": ["high"]}
+    assert result.default_effort_levels == {}

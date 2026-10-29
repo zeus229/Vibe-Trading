@@ -1,6 +1,43 @@
 # Fork divergences from HKUDS/Vibe-Trading
 
-Last upstream sync: 2026-10-20 (upstream `fb1851ae`, merged onto fork `9160b7c7`).
+Last upstream sync: 2026-10-29 (upstream `de359932`, merged onto fork `d5add45e`).
+
+## Sync 2026-10-29 (upstream `de359932`)
+
+Merge base `3cbb167e`; 20 conflicted files. Our upstream contributions #2071 (BYMA engine), #2072 (grounding
+units), #2074 (`list_backtest_runs`) and #2080 (Codex OAuth discovery) and issue #1909 (research artifacts, built
+by #2079) are all merged upstream, in reviewed form.
+
+Taken from upstream (fork copy retired, it was byte-identical to the original PR head or weaker):
+
+- **BYMA engine, tests and `runner.py` routing comment (#2071).** Upstream adds declared tick versions
+  (`ar_tick_table`: `2024-07-04`, `2025-09-08-leader`, `2025-09-08-general`) and fixes resale eligibility. The
+  engine no longer defaults to Circular 3569 ticks: a config must declare `ar_tick_table` (or per-instrument
+  `tick_table`/`tick_size`). The fork's `test_argentina_report_*` fixtures now declare `ar_tick_table`.
+- **BYMA skill guidance.** `strategy-generate/SKILL.md` tells the agent to pick and declare `ar_tick_table` from the
+  window (rules by date, panel asked in plain words, split at 2025-09-08), never to omit it or invent a table, and to state
+  it as a rule assumption. Pinned by `test_argentina_skill_tick_guidance.py`. No silent default exists in the engine.
+- **Codex OAuth discovery (#2080).** `supported_in_api` is no longer a filter (it is an API-key catalog flag, not a
+  ChatGPT entitlement); effort levels come from `llm_providers.json` (`none` … `persistent`). Replaces fork PR #88's
+  filter and its `unsupported` test.
+- **Year-horizon cell regex, dot-grouped integers, `scale` on `_result_matches`, `_artifact_ref`** (#2072, #2074).
+
+Kept from the fork, adapted around upstream:
+
+- **Grounding evidence currency.** The fork lets a nested money leaf inherit the ISO currency its surrounding object
+  declares (`test_generic_structured_money_uses_currency_context_for_observed_claims`): real Asistente Casa payloads
+  declare `currency` once above `totals`/`positions`, so upstream's sibling-only rule would reject valid ARS claims.
+  Upstream's `test_currency_does_not_cross_into_nested_objects` is therefore `xfail(strict)`. The ARS/USD protections that
+  make inheritance safe are pinned in `test_grounding_nested_currency_scope.py` (inner declaration wins, siblings do not
+  borrow, counts are not stamped, a claim in the other currency is rejected). Added from upstream: a
+  dimensionless leaf (count, ratio) is not tagged with the object's currency.
+- **Derived percent over exact refs.** `percent_points` also holds for any tool's percent-named leaves
+  (upstream #1820), not only Asistente Casa `ratio` fields; `referenced=` is passed to `_operands_read_as_points`.
+  `normalized_x100`, `strict_adapter_scope` and `_result_matches(note=...)` stay.
+- **Spaced point marks.** `3.6 pp` stays a unit-bearing figure; the new `个百分点` mark must be glued
+  (`3.6 个百分点` is a bare number, as upstream reads it).
+- **Portfolio.tsx** keeps native-currency rows and gains upstream's `price_as_of` / `price_error` lines.
+- README tool count is 121 (measured).
 
 ## Sync 2026-10-20 (upstream `fb1851ae`)
 

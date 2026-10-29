@@ -411,6 +411,7 @@ class GroundingLedger(
         elif tool_name == "read_file" and payload is not None:
             self._ingest_engine_table(payload, call_id)
         elif tool_name == "read_run_artifact" and payload is not None:
+            self._adopt_prior_backtest(arguments.get("run_dir") or payload.get("run_dir"), call_id)
             self._ingest_engine_table(payload, call_id, tool_name=tool_name)
             self._ingest_engine_json(arguments, payload, call_id)
         elif tool_name == "read_document" and payload is not None:

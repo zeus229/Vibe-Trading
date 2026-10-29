@@ -1821,7 +1821,8 @@ def _select_market_engine(source: str, config: dict, codes: List[str]):
         return BrazilEquityEngine(config)
     # Argentina (BYMA) routing — same reason as India. The engine itself
     # fails closed without declared instrument metadata (share/CEDEAR, quote
-    # currency, lot, tick, dated CEDEAR ratios) and a settlement calendar,
+    # currency, lot, tick and dated CEDEAR ratios), reporting observed-session
+    # settlement as an approximation rather than an official calendar,
     # rather than applying US/crypto lot, settlement or shorting defaults.
     if "ar_equity" in markets:
         from backtest.engines.argentina_equity import ArgentinaEquityEngine

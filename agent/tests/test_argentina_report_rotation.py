@@ -40,6 +40,7 @@ CONFIG = {  # as written by the agent in production
     "start_date": "2024-05-31", "end_date": "2024-09-30",
     "evaluation_start_date": "2024-06-01", "interval": "1D",
     "initial_cash": 1000000, "commission": 0.001, "engine": "daily",
+    "ar_tick_table": "2024-07-04",
     "position_adjustment": "rebalance", "rebalance_mask": ["2024-06-01", "2024-08-01"],
     "rebalance_tolerance": 0.0,
     "strategy_params": {"initial_symbol": "YPFD.BA", "rotation_symbol": "GGAL.BA",

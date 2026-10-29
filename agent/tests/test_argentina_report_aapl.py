@@ -32,7 +32,7 @@ from src.tools.run_artifact_tool import read_run_artifact
 CONFIG = {  # as written by the agent in production
     "source": "yahoo", "codes": ["AAPL.BA"], "start_date": "2024-01-02", "end_date": "2024-03-27",
     "warmup_bars": 0, "interval": "1D", "initial_cash": 1000000, "commission": 0.001,
-    "engine": "daily", "position_adjustment": "hold",
+    "engine": "daily", "position_adjustment": "hold", "ar_tick_table": "2024-07-04",
     "ar_instruments": {"AAPL.BA": {
         "kind": "cedear", "underlying": "AAPL.US",
         "ratio_history": [

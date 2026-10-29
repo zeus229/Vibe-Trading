@@ -6,6 +6,7 @@ keyed on tool field names, never on natural language.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import hashlib
 import json
@@ -192,7 +193,8 @@ _METADATA_COUNT_TAILS = frozenset(
 )
 
 # Money-denominated fields a currency-marked figure may quote besides a price:
-# a market-data row's amount, and the backtest engine's equity and P&L leaves.
+# a market-data row's amount, the backtest engine's equity and P&L leaves, and the
+# opening and closing valuation of a reported period.
 _AMOUNT_FIELDS = frozenset(
     {
         "amount",
@@ -205,6 +207,8 @@ _AMOUNT_FIELDS = frozenset(
         "total_pnl",
         "avg_pnl",
         "notional",
+        "value_start",
+        "value_end",
     }
 )
 
@@ -290,6 +294,19 @@ def _relative_posix(path: Path, root: Path) -> str:
     except (OSError, ValueError):
         return Path(path).as_posix()
     return "" if relative == "." else relative
+
+
+def _artifact_ref(path: Path, root: Path) -> str:
+    """``path`` as a ref names it: below the active run, else below its parent.
+
+    A backtest an earlier turn left is a sibling of the active run, so
+    ``<run id>/<backtest>/artifacts/metrics.csv`` names it exactly.
+    """
+    relative = _relative_posix(path, root)
+    if Path(relative).is_absolute():
+        with contextlib.suppress(OSError, ValueError):
+            return Path(path).resolve().relative_to(root.parent).as_posix()
+    return relative
 
 
 def _file_sha256(path: Path) -> str | None:
@@ -1406,7 +1423,9 @@ class _EvidenceMixin:
                 self._record_backtest_outputs(root, call_id, scope)
         return recorded
 
-    def _record_backtest_outputs(self, directory: Path, call_id: str, scope: str) -> None:
+    def _record_backtest_outputs(
+        self, directory: Path, call_id: str, scope: str, *, verify_tables: bool = False
+    ) -> None:
         """Record every scalar of a backtest's summary outputs, and hash its tables.
 
         The run's Sortino, turnover, final equity, Monte Carlo p-values and
@@ -1419,6 +1438,8 @@ class _EvidenceMixin:
             directory: A backtest run directory, or the active run holding its copy.
             call_id: The backtest call that produced the outputs.
             scope: That backtest's run directory relative to the ledger's.
+            verify_tables: Register a table only if the run card lists it with
+                its current hash (for a run this ledger did not watch finish).
         """
         root = self.run_dir.resolve()
         manifest = _run_card_manifest(directory)
@@ -1441,9 +1462,9 @@ class _EvidenceMixin:
                 or self._is_model_written(path)
             ):
                 continue
-            if name not in _MANIFEST_EXEMPT and manifest.get(name) != _file_sha256(path):
+            if (name not in _MANIFEST_EXEMPT or (verify_tables and name != "run_card.json")) and manifest.get(name) != _file_sha256(path):
                 continue
-            artifact = _relative_posix(path, root)
+            artifact = _artifact_ref(path, root)
             self._evidence = [record for record in self._evidence if record.artifact != artifact]
             for field_name, value in _summary_scalars(path):
                 if room <= 0:
@@ -1478,8 +1499,48 @@ class _EvidenceMixin:
                 ):
                     continue
                 digest = _file_sha256(path)
-                if digest is not None:
+                if digest is not None and (
+                    not verify_tables or manifest.get(f"artifacts/{path.name}") == digest
+                ):
                     self._engine_tables[str(path.resolve())] = (digest, scope)
+
+    def _adopt_prior_backtest(self, raw_dir: Any, call_id: str) -> None:
+        """Ground figures read from a backtest an earlier turn finished.
+
+        The ledger only watches backtests launched under the active run. A run
+        reused through ``list_backtest_runs`` + ``read_run_artifact`` is adopted
+        only if it sits in an allowed run root, its run card and ``metrics.csv``
+        agree, no file is a symlink or one the model wrote, and each table it
+        registers is listed in the run card manifest with the same hash. It is
+        named in a figure ref as ``<run id>/<backtest>`` (or ``backtest::<run id>/<backtest>``).
+        """
+        if not raw_dir:
+            return
+        from src.tools.path_utils import safe_run_dir
+
+        try:
+            directory = safe_run_dir(str(raw_dir))
+        except ValueError:
+            return
+        card, metrics = directory / "run_card.json", directory / "artifacts" / "metrics.csv"
+        if directory.is_relative_to(self.run_dir.resolve()) or any(
+            path.is_symlink() or self._is_model_written(path) for path in (card, metrics)
+        ):
+            return
+        if _run_card_manifest(directory).get("artifacts/metrics.csv") != _file_sha256(metrics):
+            return
+        recorded = dict(_summary_scalars(card))
+        shared = [(name, value) for name, value in _summary_scalars(metrics) if f"metrics.{name}" in recorded]
+        if not shared or any(
+            not math.isclose(value, recorded[f"metrics.{name}"], rel_tol=1e-9, abs_tol=1e-12)
+            for name, value in shared
+        ):
+            return
+        scope = _artifact_ref(directory, self.run_dir.resolve())
+        self._record_metrics_file(metrics, call_id)
+        self._backtest_scopes[call_id] = scope
+        self._scope_latest[scope] = call_id
+        self._record_backtest_outputs(directory, call_id, scope, verify_tables=True)
 
     def _note_model_write(
         self, tool_name: str, arguments: Mapping[str, Any], payload: dict[str, Any] | None
@@ -1639,7 +1700,7 @@ class _EvidenceMixin:
         symbol_index = next(
             (index for index, name in enumerate(folded) if name in _TABLE_SYMBOL_COLUMNS), None
         )
-        artifact = _relative_posix(path, self.run_dir.resolve())
+        artifact = _artifact_ref(path, self.run_dir.resolve())
         currency = self._scope_currency.get(scope)
         room = _MAX_GENERIC_EVIDENCE
         positional = tool_name == "read_run_artifact"
@@ -1881,6 +1942,10 @@ class _EvidenceMixin:
                 unit = _declared_unit(unit_hint) or _leaf_dimension(path)
                 if unit is None and (currency or payload_scope):
                     unit = "money"
+                if currency and unit_hint is None and _leaf_dimension(path) and not _currency_from_path(path):
+                    # A dimensionless leaf (a count, a ratio) is not denominated in the
+                    # currency its surrounding object declares.
+                    evidence_currency = _infer_currency(context.symbol or "") or None
                 self._evidence.append(
                     EvidenceRecord(
                         call_id=call_id,
@@ -2240,4 +2305,3 @@ class _EvidenceMixin:
                 )
             )
             room -= 1
-
