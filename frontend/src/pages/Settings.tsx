@@ -198,12 +198,13 @@ export function Settings() {
 
   // The CLI reports which models the login can run and the levels each accepts,
   // so fetch that as soon as the provider is shown rather than on a button press.
-  const isClaudeCli = selectedProvider?.auth_type === "claude_cli";
+  const hasAutomaticModelList = selectedProvider?.auth_type === "claude_cli"
+    || selectedProvider?.name === "openai-codex";
   useEffect(() => {
-    if (isClaudeCli) void refreshModels({ refresh: false });
+    if (hasAutomaticModelList) void refreshModels({ refresh: false });
     // refreshModels reads the form at call time; re-run only when the provider changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isClaudeCli]);
+  }, [hasAutomaticModelList, selectedProvider?.name]);
 
   // A model's own levels when the provider reports them, else the provider's.
   const visibleEffortLevels =

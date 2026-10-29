@@ -68,11 +68,12 @@ def session(tmp_path: Path, monkeypatch):
     monkeypatch.setattr(ArgentinaEquityEngine, "describe_instrument",
                         staticmethod(lambda s: "YPF SOCIEDAD ANONIMA"))
     run_dir = tmp_path / "run"
-    engine = ArgentinaEquityEngine({"commission": 0.001})
+    engine = ArgentinaEquityEngine({"commission": 0.001, "ar_tick_table": "2024-07-04"})
     with redirect_stdout(io.StringIO()):
         metrics = engine.run_backtest(
             {"codes": ["YPFD.BA"], "start_date": "2024-06-01", "end_date": "2024-09-30",
-             "initial_cash": 1_000_000, "commission": 0.001, "source": "yahoo"},
+             "initial_cash": 1_000_000, "commission": 0.001, "source": "yahoo",
+             "ar_tick_table": "2024-07-04"},
             _Loader(), _Hold(), run_dir)
     ledger = GroundingLedger(run_dir=tmp_path, user_message=PROMPT)
     ledger.ingest_tool_result(

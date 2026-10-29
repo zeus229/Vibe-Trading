@@ -15,9 +15,9 @@ Market rules modelled:
   - A sale funds a purchase settling on the same or a later session (a same-bar
     sale always does: BaseEngine's default netting); proceeds that settle
     later are not available, so money is never used twice.
-  - Shares bought are not sold before their settlement session (the whole
-    position waits for its newest lot, as for HOSE); the end-of-backtest close
-    obeys the same rule and keeps an unsettled position open, valued.
+  - Normal settlement is not a holding-period restriction: acquired shares
+    may be resold before settlement. CEDEAR credit-date restrictions still
+    bind both signal exits and terminal liquidation.
   - CEDEAR ratio changes are not adjusted by Yahoo (AAPL.BA halves on
     2024-01-24, ratio 10:1 -> 20:1, while the holder's position doubles). Each
     declared change inside the window is checked against the observed price
@@ -27,7 +27,9 @@ Market rules modelled:
     units, which sets the lot and the tick. A position held through the
     ex-date is sold only by a trade whose earliest possible settlement (counted
     on weekdays) reaches the declared ``credit_date`` of the extra certificates.
-  - Ticks: BYMA Circular 3569 price bands (rounded against the trader). Lots:
+  - Ticks: a declared Circular 3569 table version/panel, or a fixed tick
+    (rounded against the trader). No panel membership or effective date is
+    inferred. Lots:
     one share unless declared (an assumption; the circular sets no number).
 
 Costs are simulation inputs, never official tariffs: ``ar_brokerage_rate``
@@ -42,7 +44,10 @@ Config ``ar_instruments`` (optional) declares metadata per symbol::
                                    {"effective_date": "2024-01-24", "ratio": "20",
                                     "credit_date": "2024-01-26"}]}}
 
-Local shares need no entry (their kind comes from Yahoo's descriptor);
+Declare ``ar_tick_table`` as ``2024-07-04``, ``2025-09-08-leader`` or
+``2025-09-08-general`` (or an instrument-specific ``tick_table`` / ``tick_size``).
+Select the table and panel applicable to the simulated window; split a window
+when its rule changes. Local shares need no kind entry (Yahoo descriptor);
 CEDEARs must be declared. Every resolved value is labelled in the
 ``ar_data_basis`` metric and ``artifacts/byma_preparation.json``.
 """
@@ -91,6 +96,48 @@ _TICK_BANDS: Tuple[Tuple[Decimal, Decimal], ...] = (
     (Decimal("50000"), Decimal("25.00")),
 )
 _TICK_ABOVE = Decimal("50.00")
+_TICK_TABLES = {
+    "2024-07-04": (_TICK_BANDS, _TICK_ABOVE),
+    "2025-09-08-leader": (
+        tuple(
+            (Decimal(p), Decimal(t))
+            for p, t in (
+                ("1", ".001"),
+                ("5", ".005"),
+                ("50", ".01"),
+                ("100", ".10"),
+                ("500", ".25"),
+                ("1000", ".50"),
+                ("2500", "1"),
+                ("5000", "2.5"),
+                ("10000", "5"),
+                ("25000", "10"),
+                ("50000", "20"),
+            )
+        ),
+        Decimal("25"),
+    ),
+    "2025-09-08-general": (
+        tuple(
+            (Decimal(p), Decimal(t))
+            for p, t in (
+                ("1", ".001"),
+                ("5", ".005"),
+                ("10", ".01"),
+                ("25", ".05"),
+                ("50", ".10"),
+                ("100", ".20"),
+                ("400", ".50"),
+                ("800", "1"),
+                ("1000", "2.5"),
+                ("5000", "5"),
+                ("10000", "10"),
+                ("25000", "25"),
+            )
+        ),
+        Decimal("50"),
+    ),
+}
 
 # Yahoo truncates shortName at 31 characters, which can cut a "CEDEAR" marker.
 _SHORT_NAME_LIMIT = 31
@@ -98,12 +145,13 @@ _CEDEAR_MARKER = re.compile(r"\bCEDEARS?\b", re.I)
 _TRUNCATED_MARKER = re.compile(r"\bC(E(D(E(A(R)?)?)?)?)?$", re.I)
 
 
-def equity_tick(price: Decimal) -> Decimal:
-    """Minimum price change of a BYMA equity quoted at *price*."""
-    for upper, tick in _TICK_BANDS:
+def equity_tick(price: Decimal, table: str = "2024-07-04") -> Decimal:
+    """Minimum price change at *price* under an explicitly selected table."""
+    bands, above = _TICK_TABLES[table]
+    for upper, tick in bands:
         if price <= upper:
             return tick
-    return _TICK_ABOVE
+    return above
 
 
 def classify_short_name(short_name: Optional[str]) -> Tuple[Optional[str], str]:
@@ -156,12 +204,23 @@ def resolve_instrument(
                 "credit_date for changes inside the backtest}]"
             )
         else:
-            problems.append(f"{symbol}: {evidence}; declare ar_instruments.{symbol}.kind "
-                            "as 'share' or 'cedear'")
+            problems.append(
+                f"{symbol}: {evidence}; declare ar_instruments.{symbol}.kind "
+                "as 'share' or 'cedear'"
+            )
     info.setdefault("lot_size", 1)
     provenance.setdefault("lot_size", "assumption (one share per order)")
-    provenance.setdefault("tick_size", TICK_SOURCE if info.get("tick_size") is None else "declared")
-    provenance["currency"] = "ARS (.BA pool, checked against the loader's declared currency)"
+    provenance.setdefault(
+        "tick_size",
+        (
+            f"declared table {info.get('tick_table')}"
+            if info.get("tick_size") is None
+            else "declared"
+        ),
+    )
+    provenance["currency"] = (
+        "ARS (.BA pool, checked against the loader's declared currency)"
+    )
     return info, provenance, problems
 
 
@@ -229,10 +288,14 @@ def reconcile_ratio_changes(
         before = traded[traded.index.date < effective]
         after = traded[traded.index.date >= effective]
         if before.empty or after.empty:
-            raise ValueError(f"{symbol}: ratio change on {effective} cannot be verified; "
-                             "no traded bar on both sides of it")
+            raise ValueError(
+                f"{symbol}: ratio change on {effective} cannot be verified; "
+                "no traded bar on both sides of it"
+            )
         observed = float(after["close"].iloc[0]) / float(before["close"].iloc[-1])
-        unadjusted, already = _near(observed, factor, tolerance), _near(observed, 1.0, tolerance)
+        unadjusted, already = _near(observed, factor, tolerance), _near(
+            observed, 1.0, tolerance
+        )
         declared = entry.get("price_series")
         if declared == "unadjusted":
             ok = unadjusted and not already
@@ -251,12 +314,19 @@ def reconcile_ratio_changes(
             for column in PRICE_COLUMNS:
                 adjusted.loc[earlier, column] = adjusted.loc[earlier, column] * factor
             adjusted.loc[earlier, "volume"] = adjusted.loc[earlier, "volume"] / factor
-        events.append({
-            "symbol": symbol, "effective_date": str(effective),
-            "credit_date": str(entry["credit_date"]) if entry.get("credit_date") else None,
-            "old_ratio": old, "new_ratio": new, "observed_move": round(observed, 6),
-            "rescaled_prior_bars": unadjusted,
-        })
+        events.append(
+            {
+                "symbol": symbol,
+                "effective_date": str(effective),
+                "credit_date": (
+                    str(entry["credit_date"]) if entry.get("credit_date") else None
+                ),
+                "old_ratio": old,
+                "new_ratio": new,
+                "observed_move": round(observed, 6),
+                "rescaled_prior_bars": unadjusted,
+            }
+        )
     return adjusted, events
 
 
@@ -267,7 +337,11 @@ def discontinuities(frame: pd.DataFrame, max_move: float) -> List[str]:
         return []
     moves = closes / closes.shift(1)
     limit = math.log(1.0 / (1.0 - max_move))
-    return [str(ts.date()) for ts, move in moves.iloc[1:].items() if abs(math.log(move)) > limit]
+    return [
+        str(ts.date())
+        for ts, move in moves.iloc[1:].items()
+        if abs(math.log(move)) > limit
+    ]
 
 
 # ── settlement ──
@@ -304,17 +378,23 @@ def _settlement_bar(fill: Any) -> int:
 
 
 def _net_proceeds(fill: Any) -> float:
-    return abs(float(fill.signed_quantity)) * float(fill.execution_price) - float(fill.fee)
+    return abs(float(fill.signed_quantity)) * float(fill.execution_price) - float(
+        fill.fee
+    )
 
 
 class ArgentinaEquityEngine(BaseEngine):
     """BYMA cash-equity engine (shares and CEDEARs); see the module docstring."""
 
     def __init__(self, config: dict):
+        if config.get("leverage", 1.0) != 1.0:
+            raise ValueError("ArgentinaEquityEngine is cash-only; leverage must be 1")
         config = {**config, "leverage": 1.0}  # cash equity: no leverage
         super().__init__(config)
         if config.get("allow_short"):
-            raise ValueError("ArgentinaEquityEngine is long-only; remove 'allow_short'.")
+            raise ValueError(
+                "ArgentinaEquityEngine is long-only; remove 'allow_short'."
+            )
         declared = config.get("ar_instruments") or {}
         if not isinstance(declared, dict):
             raise ValueError("ar_instruments must be an object keyed by .BA symbol")
@@ -330,25 +410,48 @@ class ArgentinaEquityEngine(BaseEngine):
             raise ValueError(_config_error(problems))
         self.instruments: Dict[str, dict] = {}
         self.provenance: Dict[str, dict] = {}
+        self.tick_table = config.get("ar_tick_table")
+        if self.tick_table is not None and self.tick_table not in _TICK_TABLES:
+            raise ValueError(f"ar_tick_table must be one of {tuple(_TICK_TABLES)}")
         self.ratio_adjustments: List[dict] = []
         self.dropped_no_trade_dates: List[str] = []
         self.slippage_rate = _rate(config.get("ar_slippage", 0.0), "ar_slippage")
         if "ar_brokerage_rate" in config:
-            self.brokerage_rate, source = _rate(config["ar_brokerage_rate"], "ar_brokerage_rate"), "ar_brokerage_rate"
+            self.brokerage_rate, source = (
+                _rate(config["ar_brokerage_rate"], "ar_brokerage_rate"),
+                "ar_brokerage_rate",
+            )
         elif config.get("commission") is not None:
-            self.brokerage_rate, source = _rate(config["commission"], "commission"), "commission"
+            self.brokerage_rate, source = (
+                _rate(config["commission"], "commission"),
+                "commission",
+            )
         else:
             self.brokerage_rate, source = 0.0, "none configured"
-        self.exchange_fee_rate = _rate(config.get("ar_exchange_fee_rate", 0.0), "ar_exchange_fee_rate")
+        self.exchange_fee_rate = _rate(
+            config.get("ar_exchange_fee_rate", 0.0), "ar_exchange_fee_rate"
+        )
         self.fixed_fee = _rate(config.get("ar_fixed_fee", 0.0), "ar_fixed_fee")
         self.fee_basis = {
-            "brokerage_rate": self.brokerage_rate, "brokerage_source": source,
-            "exchange_fee_rate": self.exchange_fee_rate, "fixed_fee": self.fixed_fee,
+            "brokerage_rate": self.brokerage_rate,
+            "brokerage_source": source,
+            "exchange_fee_rate": self.exchange_fee_rate,
+            "fixed_fee": self.fixed_fee,
             "slippage": self.slippage_rate,
             "note": "simulation inputs, not an official BYMA or broker tariff",
         }
-        self.max_cedear_move = float(config.get("ar_max_cedear_move", DEFAULT_MAX_CEDEAR_MOVE))
-        self.max_share_move = float(config.get("ar_max_share_move", DEFAULT_MAX_SHARE_MOVE))
+        self.max_cedear_move = float(
+            config.get("ar_max_cedear_move", DEFAULT_MAX_CEDEAR_MOVE)
+        )
+        self.max_share_move = float(
+            config.get("ar_max_share_move", DEFAULT_MAX_SHARE_MOVE)
+        )
+        for name, value in (
+            ("ar_max_cedear_move", self.max_cedear_move),
+            ("ar_max_share_move", self.max_share_move),
+        ):
+            if not math.isfinite(value) or not 0 < value < 1:
+                raise ValueError(f"{name} must be finite and between 0 and 1")
 
     # ── metadata and data ──
 
@@ -363,7 +466,9 @@ class ArgentinaEquityEngine(BaseEngine):
         except KeyError:
             raise ValueError(f"{symbol}: unregistered BYMA instrument") from None
 
-    def prepare_market_data(self, data_map: Dict[str, pd.DataFrame]) -> Dict[str, pd.DataFrame]:
+    def prepare_market_data(
+        self, data_map: Dict[str, pd.DataFrame]
+    ) -> Dict[str, pd.DataFrame]:
         """Resolve metadata, keep traded sessions, put CEDEAR prices on one unit basis."""
         problems: List[str] = []
         for symbol in data_map:
@@ -371,12 +476,21 @@ class ArgentinaEquityEngine(BaseEngine):
                 problems.append(f"{symbol}: expected a .BA listing")
                 continue
             info, provenance, gaps = resolve_instrument(
-                symbol, self._declared.get(symbol.upper()), self.describe_instrument)
+                symbol,
+                {
+                    **({"tick_table": self.tick_table} if self.tick_table else {}),
+                    **self._declared.get(symbol.upper(), {}),
+                },
+                self.describe_instrument,
+            )
             gaps = gaps or _field_problems(symbol, info, require=True)
             problems.extend(gaps)
             if not gaps:
                 tick = info.get("tick_size")
-                self.instruments[symbol.upper()] = {**info, "tick_size": None if tick is None else Decimal(str(tick))}
+                self.instruments[symbol.upper()] = {
+                    **info,
+                    "tick_size": None if tick is None else Decimal(str(tick)),
+                }
                 self.provenance[symbol.upper()] = provenance
         if problems:
             raise ValueError(_config_error(problems))
@@ -394,21 +508,34 @@ class ArgentinaEquityEngine(BaseEngine):
             info = self._instrument(symbol)
             if info["kind"] == "cedear":
                 frame, events = reconcile_ratio_changes(
-                    frame, symbol, info["ratio_history"], tolerance=DEFAULT_RATIO_TOLERANCE)
+                    frame,
+                    symbol,
+                    info["ratio_history"],
+                    tolerance=DEFAULT_RATIO_TOLERANCE,
+                )
                 missing = [e["effective_date"] for e in events if not e["credit_date"]]
                 if missing:
                     raise ValueError(
                         f"{symbol}: ratio change(s) on {', '.join(missing)} need the depositary "
-                        "credit_date of the additional certificates")
+                        "credit_date of the additional certificates"
+                    )
                 self.ratio_adjustments.extend(events)
-            limit = self.max_cedear_move if info["kind"] == "cedear" else self.max_share_move
+            limit = (
+                self.max_cedear_move
+                if info["kind"] == "cedear"
+                else self.max_share_move
+            )
             jumps = discontinuities(frame, limit)
             if jumps:
                 raise ValueError(
                     f"{symbol}: unexplained price discontinuities on {', '.join(jumps[:5])}; "
-                    + ("declare the CEDEAR ratio change in ratio_history"
-                       if info["kind"] == "cedear" else "use a split-adjusted source")
-                    + " or exclude the window")
+                    + (
+                        "declare the CEDEAR ratio change in ratio_history"
+                        if info["kind"] == "cedear"
+                        else "use a split-adjusted source"
+                    )
+                    + " or exclude the window"
+                )
             frame.attrs.update(attrs)
             prepared[symbol] = frame
         self.dropped_no_trade_dates = sorted(dropped)
@@ -432,8 +559,13 @@ class ArgentinaEquityEngine(BaseEngine):
         if today is None:
             return scale
         for event in self.ratio_adjustments:
-            if event["symbol"].upper() == symbol.upper() and date.fromisoformat(event["effective_date"]) > today:
-                scale *= Decimal(str(event["new_ratio"])) / Decimal(str(event["old_ratio"]))
+            if (
+                event["symbol"].upper() == symbol.upper()
+                and date.fromisoformat(event["effective_date"]) > today
+            ):
+                scale *= Decimal(str(event["new_ratio"])) / Decimal(
+                    str(event["old_ratio"])
+                )
         return scale
 
     def round_size(self, raw_size: float, price: float) -> float:
@@ -441,14 +573,23 @@ class ArgentinaEquityEngine(BaseEngine):
         info = self._instrument(self._active_symbol)
         if not math.isfinite(raw_size) or raw_size <= 0:
             return 0.0
-        lot = Decimal(info["lot_size"]) * self.unit_scale(self._active_symbol, self._bar_ts)
-        return float((Decimal(repr(raw_size)) / lot).to_integral_value(rounding=ROUND_FLOOR) * lot)
+        lot = Decimal(info["lot_size"]) * self.unit_scale(
+            self._active_symbol, self._bar_ts
+        )
+        return float(
+            (Decimal(repr(raw_size)) / lot).to_integral_value(rounding=ROUND_FLOOR)
+            * lot
+        )
 
-    def calc_commission(self, size: float, price: float, direction: int, is_open: bool) -> float:
+    def calc_commission(
+        self, size: float, price: float, direction: int, is_open: bool
+    ) -> float:
         notional = size * price
         if not math.isfinite(notional) or notional <= 0:
             return 0.0
-        return notional * (self.brokerage_rate + self.exchange_fee_rate) + self.fixed_fee
+        return (
+            notional * (self.brokerage_rate + self.exchange_fee_rate) + self.fixed_fee
+        )
 
     def apply_slippage(self, price: float, direction: int) -> float:
         """Slip against the trader, then snap to the BYMA tick of the real price."""
@@ -456,9 +597,13 @@ class ArgentinaEquityEngine(BaseEngine):
         if not math.isfinite(price) or price <= 0:
             raise ValueError("BYMA execution price must be positive and finite")
         side = 1 if direction == 1 else -1
-        slipped = Decimal(str(price)) * (Decimal(1) + side * Decimal(str(self.slippage_rate)))
+        slipped = Decimal(str(price)) * (
+            Decimal(1) + side * Decimal(str(self.slippage_rate))
+        )
         scale = self.unit_scale(self._active_symbol, self._bar_ts)
-        tick = (info["tick_size"] or equity_tick(slipped * scale)) / scale
+        tick = (
+            info["tick_size"] or equity_tick(slipped * scale, info["tick_table"])
+        ) / scale
         rounding = ROUND_CEILING if side > 0 else ROUND_FLOOR
         return float((slipped / tick).to_integral_value(rounding=rounding) * tick)
 
@@ -474,8 +619,11 @@ class ArgentinaEquityEngine(BaseEngine):
 
 # ── state/rules helpers (shared with CompositeEngine, like hose_can_execute) ──
 
-def argentina_sell_allowed(state: BaseEngine, rules: ArgentinaEquityEngine, symbol: str, timestamp: Any) -> bool:
-    """Settled shares and credited certificates: the BYMA sell rule."""
+
+def argentina_sell_allowed(
+    state: BaseEngine, rules: ArgentinaEquityEngine, symbol: str, timestamp: Any
+) -> bool:
+    """Acquired shares may be resold; additional certificates must be credited."""
     today = _day(timestamp)
     if today is None or symbol not in state.positions:
         return False
@@ -489,34 +637,43 @@ def argentina_sell_allowed(state: BaseEngine, rules: ArgentinaEquityEngine, symb
             openings.append(fill)
     if not openings:
         return False
-    newest = openings[0]
-    if int(state._bar_idx) < _settlement_bar(newest):
-        return False
     first_open = min(_day(f.timestamp) for f in openings)
     earliest = _add_weekdays(today, normal_cash_lag(today))
     for event in rules.ratio_adjustments:
         if event["symbol"].upper() != symbol.upper() or not event["credit_date"]:
             continue
         ex = date.fromisoformat(event["effective_date"])
-        if first_open < ex <= today and earliest < date.fromisoformat(event["credit_date"]):
+        if first_open < ex <= today and earliest < date.fromisoformat(
+            event["credit_date"]
+        ):
             return False
     return True
 
 
-def argentina_available_cash(state: BaseEngine, rules: ArgentinaEquityEngine, timestamp: Any) -> float:
+def argentina_available_cash(
+    state: BaseEngine, rules: ArgentinaEquityEngine, timestamp: Any
+) -> float:
     """Cash for a purchase now: capital less sales settling after its session."""
     today = _day(timestamp)
     if today is None:
         raise ValueError("BYMA buying power requires a session timestamp")
     due = int(state._bar_idx) + normal_cash_lag(today)
-    later = sum(_net_proceeds(f) for f in state.fill_records
-                if f.action in _SALES and _settlement_bar(f) > due)
+    later = sum(
+        _net_proceeds(f)
+        for f in state.fill_records
+        if f.action in _SALES and _settlement_bar(f) > due
+    )
     return state.capital - later
 
 
-def argentina_can_execute(state: BaseEngine, rules: ArgentinaEquityEngine, symbol: str,
-                          direction: int, bar: pd.Series) -> bool:
-    """Long only, a traded bar, and settled/credited shares for a sale."""
+def argentina_can_execute(
+    state: BaseEngine,
+    rules: ArgentinaEquityEngine,
+    symbol: str,
+    direction: int,
+    bar: pd.Series,
+) -> bool:
+    """Long only, a traded bar, and CEDEAR credit protection for a sale."""
     rules._instrument(symbol)
     if direction not in (0, 1):
         return False
@@ -524,7 +681,9 @@ def argentina_can_execute(state: BaseEngine, rules: ArgentinaEquityEngine, symbo
         price, volume = float(bar.get("close")), float(bar.get("volume"))
     except (TypeError, ValueError):
         return False
-    if not (math.isfinite(price) and price > 0 and math.isfinite(volume) and volume > 0):
+    if not (
+        math.isfinite(price) and price > 0 and math.isfinite(volume) and volume > 0
+    ):
         return False  # a zero-volume bar is a stale print, not an executable price
     return direction == 1 or argentina_sell_allowed(state, rules, symbol, bar.name)
 
@@ -541,30 +700,47 @@ def byma_cash_ledger(state: BaseEngine) -> List[dict]:
         due = _settlement_bar(fill)
         buying_power = None
         if qty > 0:
-            later = sum(_net_proceeds(f) for f in state.fill_records[:index]
-                        if f.action in _SALES and _settlement_bar(f) > due)
+            later = sum(
+                _net_proceeds(f)
+                for f in state.fill_records[:index]
+                if f.action in _SALES and _settlement_bar(f) > due
+            )
             buying_power = cash - later
         cash += -(notional + fee) if qty > 0 else notional - fee
-        unsettled = sum(_net_proceeds(f) for f in state.fill_records[:index + 1]
-                        if f.action in _SALES and _settlement_bar(f) > int(fill.bar_idx))
+        unsettled = sum(
+            _net_proceeds(f)
+            for f in state.fill_records[: index + 1]
+            if f.action in _SALES and _settlement_bar(f) > int(fill.bar_idx)
+        )
         within = due < len(dates)
-        rows.append({
-            "timestamp": str(_day(fill.timestamp)), "code": fill.symbol,
-            "side": "buy" if qty > 0 else "sell", "qty": abs(qty),
-            "notional": round(notional, 6), "fee": round(fee, 6),
-            "total_cost": round(notional + fee, 6) if qty > 0 else "",
-            "net_proceeds": round(notional - fee, 6) if qty < 0 else "",
-            "cash_flow": round(-(notional + fee) if qty > 0 else notional - fee, 6),
-            "cash_after": round(cash, 6),
-            "settlement_date": str(_day(dates[due])) if within else "",
-            "settlement_basis": "observed_sessions" if within else "beyond_loaded_data",
-            "buying_power_before": "" if buying_power is None else round(buying_power, 6),
-            "unsettled_sale_proceeds_after": round(unsettled, 6),
-        })
+        rows.append(
+            {
+                "timestamp": str(_day(fill.timestamp)),
+                "code": fill.symbol,
+                "side": "buy" if qty > 0 else "sell",
+                "qty": abs(qty),
+                "notional": round(notional, 6),
+                "fee": round(fee, 6),
+                "total_cost": round(notional + fee, 6) if qty > 0 else "",
+                "net_proceeds": round(notional - fee, 6) if qty < 0 else "",
+                "cash_flow": round(-(notional + fee) if qty > 0 else notional - fee, 6),
+                "cash_after": round(cash, 6),
+                "settlement_date": str(_day(dates[due])) if within else "",
+                "settlement_basis": (
+                    "observed_sessions" if within else "beyond_loaded_data"
+                ),
+                "buying_power_before": (
+                    "" if buying_power is None else round(buying_power, 6)
+                ),
+                "unsettled_sale_proceeds_after": round(unsettled, 6),
+            }
+        )
     return rows
 
 
-def argentina_diagnostics(state: BaseEngine, rules: ArgentinaEquityEngine) -> Dict[str, Any]:
+def argentina_diagnostics(
+    state: BaseEngine, rules: ArgentinaEquityEngine
+) -> Dict[str, Any]:
     """Run facts: what the figures rest on and what terminal equity contains."""
     if not state.equity_snapshots:
         return {}
@@ -574,27 +750,52 @@ def argentina_diagnostics(state: BaseEngine, rules: ArgentinaEquityEngine) -> Di
     parts = []
     for symbol, info in sorted(rules.instruments.items()):
         prov = rules.provenance.get(symbol, {})
-        tick = TICK_SOURCE if info["tick_size"] is None else str(info["tick_size"])
-        parts.append(f"{symbol}: kind={info['kind']} [{prov.get('kind', 'declared')}], "
-                     f"lot={info['lot_size']} [{prov.get('lot_size')}], tick={tick}")
-    parts.append("settlement: T+2 (T+1 from 2024-05-27) counted in observed trading sessions "
-                 "[approximation, not an official calendar]")
+        tick = (
+            f"declared table {info['tick_table']}"
+            if info["tick_size"] is None
+            else str(info["tick_size"])
+        )
+        parts.append(
+            f"{symbol}: kind={info['kind']} [{prov.get('kind', 'declared')}], "
+            f"lot={info['lot_size']} [{prov.get('lot_size')}], tick={tick}"
+        )
+    parts.append(
+        "settlement: T+2 (T+1 from 2024-05-27) counted in observed trading sessions "
+        "[approximation, not an official calendar]"
+    )
     fee = rules.fee_basis
-    parts.append(f"costs: brokerage {fee['brokerage_rate']:.4%} ({fee['brokerage_source']}), "
-                 f"exchange {fee['exchange_fee_rate']:.4%}, fixed {fee['fixed_fee']:g}, "
-                 f"slippage {fee['slippage']:.4%} [assumptions]")
+    parts.append(
+        f"costs: brokerage {fee['brokerage_rate']:.4%} ({fee['brokerage_source']}), "
+        f"exchange {fee['exchange_fee_rate']:.4%}, fixed {fee['fixed_fee']:g}, "
+        f"slippage {fee['slippage']:.4%} [assumptions]"
+    )
     return {
         "settlement_currency": "ARS",
         "ar_data_basis": "; ".join(parts),
-        "ar_net_pnl": round(state.equity_snapshots[-1].equity - state.initial_capital, 6),
+        "ar_net_pnl": round(
+            state.equity_snapshots[-1].equity - state.initial_capital, 6
+        ),
         "ar_total_fees": round(sum(float(f.fee) for f in fills), 6),
-        "ar_buy_fees": round(sum(float(f.fee) for f in fills if f.signed_quantity > 0), 6),
-        "ar_sell_fees": round(sum(float(f.fee) for f in fills if f.signed_quantity < 0), 6),
-        "ar_unsettled_sale_receivable_at_end": round(sum(
-            _net_proceeds(f) for f in fills if f.action in _SALES and _settlement_bar(f) > last_bar), 6),
+        "ar_buy_fees": round(
+            sum(float(f.fee) for f in fills if f.signed_quantity > 0), 6
+        ),
+        "ar_sell_fees": round(
+            sum(float(f.fee) for f in fills if f.signed_quantity < 0), 6
+        ),
+        "ar_unsettled_sale_receivable_at_end": round(
+            sum(
+                _net_proceeds(f)
+                for f in fills
+                if f.action in _SALES and _settlement_bar(f) > last_bar
+            ),
+            6,
+        ),
         "ar_unliquidated_position_count": len(retained),
-        "ar_terminal_equity_basis": ("unsettled positions marked net of estimated exit costs"
-                                     if retained else "all positions liquidated at the last close"),
+        "ar_terminal_equity_basis": (
+            "credit-restricted positions marked net of estimated exit costs"
+            if retained
+            else "all positions liquidated at the last close"
+        ),
         "ar_cedear_ratio_adjustments": list(rules.ratio_adjustments),
         "ar_metadata_provenance": dict(rules.provenance),
         "ar_fee_basis": dict(fee),
@@ -602,22 +803,42 @@ def argentina_diagnostics(state: BaseEngine, rules: ArgentinaEquityEngine) -> Di
     }
 
 
-def write_byma_artifacts(run_dir: Any, state: BaseEngine, rules: ArgentinaEquityEngine) -> None:
+def write_byma_artifacts(
+    run_dir: Any, state: BaseEngine, rules: ArgentinaEquityEngine
+) -> None:
     """``artifacts/cash_ledger.csv`` and ``artifacts/byma_preparation.json``."""
     out = Path(run_dir) / "artifacts"
     out.mkdir(parents=True, exist_ok=True)
-    columns = ["timestamp", "code", "side", "qty", "notional", "fee", "total_cost", "net_proceeds",
-               "cash_flow", "cash_after", "settlement_date", "settlement_basis",
-               "buying_power_before", "unsettled_sale_proceeds_after"]
-    pd.DataFrame(byma_cash_ledger(state), columns=columns).to_csv(out / "cash_ledger.csv", index=False)
+    columns = [
+        "timestamp",
+        "code",
+        "side",
+        "qty",
+        "notional",
+        "fee",
+        "total_cost",
+        "net_proceeds",
+        "cash_flow",
+        "cash_after",
+        "settlement_date",
+        "settlement_basis",
+        "buying_power_before",
+        "unsettled_sale_proceeds_after",
+    ]
+    pd.DataFrame(byma_cash_ledger(state), columns=columns).to_csv(
+        out / "cash_ledger.csv", index=False
+    )
     diagnostics = argentina_diagnostics(state, rules)
     diagnostics["ar_unliquidated_positions"] = list(state.unliquidated_positions)
     diagnostics["ar_dropped_no_trade_dates"] = list(rules.dropped_no_trade_dates)
     (out / "byma_preparation.json").write_text(
-        json.dumps(diagnostics, indent=2, ensure_ascii=False, default=str) + "\n", encoding="utf-8")
+        json.dumps(diagnostics, indent=2, ensure_ascii=False, default=str) + "\n",
+        encoding="utf-8",
+    )
 
 
 # ── configuration ──
+
 
 def _rate(value: Any, key: str) -> float:
     try:
@@ -631,11 +852,13 @@ def _rate(value: Any, key: str) -> float:
 
 def _config_error(problems: List[str]) -> str:
     lines = "\n".join(f"- {p}" for p in problems)
-    return (f"BYMA backtest configuration incomplete:\n{lines}\n"
-            'Example: "ar_instruments": {"YPFD.BA": {"kind": "share"}, "AAPL.BA": {"kind": '
-            '"cedear", "underlying": "AAPL", "ratio_history": [{"effective_date": "YYYY-MM-DD", '
-            '"ratio": "20", "credit_date": "YYYY-MM-DD"}]}}. Local shares need no entry; '
-            'do not set "engine": .BA codes select the BYMA engine.')
+    return (
+        f"BYMA backtest configuration incomplete:\n{lines}\n"
+        'Example: "ar_instruments": {"YPFD.BA": {"kind": "share"}, "AAPL.BA": {"kind": '
+        '"cedear", "underlying": "AAPL", "ratio_history": [{"effective_date": "YYYY-MM-DD", '
+        '"ratio": "20", "credit_date": "YYYY-MM-DD"}]}}. Declare ar_tick_table or per-instrument tick_table/tick_size. Local shares need no kind entry; '
+        'do not set "engine": .BA codes select the BYMA engine.'
+    )
 
 
 def _iso(value: Any) -> Optional[date]:
@@ -661,10 +884,19 @@ def _field_problems(symbol: str, info: dict, *, require: bool = False) -> List[s
         problems.append(f"{symbol}.lot_size must be a positive integer")
     if info.get("tick_size") is not None:
         try:
-            if not Decimal(str(info["tick_size"])) > 0:
+            parsed_tick = Decimal(str(info["tick_size"]))
+            if not parsed_tick.is_finite() or not parsed_tick > 0:
                 raise ArithmeticError
         except (ValueError, ArithmeticError):
-            problems.append(f"{symbol}.tick_size must be a positive number (omit it for BYMA bands)")
+            problems.append(
+                f"{symbol}.tick_size must be a positive number (omit it for BYMA bands)"
+            )
+    elif require and info.get("tick_table") not in _TICK_TABLES:
+        problems.append(
+            f"{symbol}: declare tick_size, tick_table or global ar_tick_table from {tuple(_TICK_TABLES)}; panel membership and historical tick rules are not inferred"
+        )
+    if info.get("tick_table") is not None and info["tick_table"] not in _TICK_TABLES:
+        problems.append(f"{symbol}.tick_table must be one of {tuple(_TICK_TABLES)}")
     if kind == "cedear":
         if not info.get("underlying"):
             problems.append(f"{symbol}.underlying is required for a CEDEAR")
@@ -674,22 +906,36 @@ def _field_problems(symbol: str, info: dict, *, require: bool = False) -> List[s
             return problems
         previous: Optional[date] = None
         for item in history:
-            effective = _iso(item.get("effective_date")) if isinstance(item, dict) else None
+            effective = (
+                _iso(item.get("effective_date")) if isinstance(item, dict) else None
+            )
             try:
                 ratio = Decimal(str(item["ratio"]))
             except (KeyError, TypeError, ValueError, ArithmeticError):
                 ratio = Decimal(0)
             credit = item.get("credit_date") if isinstance(item, dict) else None
-            if (effective is None or not ratio.is_finite() or ratio <= 0
-                    or (previous is not None and effective <= previous)):
-                problems.append(f"{symbol}.ratio_history needs increasing ISO effective_date "
-                                "and positive ratio entries")
+            if (
+                effective is None
+                or not ratio.is_finite()
+                or ratio <= 0
+                or (previous is not None and effective <= previous)
+            ):
+                problems.append(
+                    f"{symbol}.ratio_history needs increasing ISO effective_date "
+                    "and positive ratio entries"
+                )
                 break
-            if credit is not None and (_iso(credit) is None or _iso(credit) < effective):
-                problems.append(f"{symbol}: credit_date must be an ISO date on/after effective_date")
+            if credit is not None and (
+                _iso(credit) is None or _iso(credit) < effective
+            ):
+                problems.append(
+                    f"{symbol}: credit_date must be an ISO date on/after effective_date"
+                )
                 break
             if item.get("price_series") not in (None, "adjusted", "unadjusted"):
-                problems.append(f"{symbol}: price_series must be 'adjusted' or 'unadjusted'")
+                problems.append(
+                    f"{symbol}: price_series must be 'adjusted' or 'unadjusted'"
+                )
                 break
             previous = effective
     return problems

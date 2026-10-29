@@ -151,6 +151,7 @@ class CompositeEngine(BaseEngine):
         # Crypto dedup state (owned by CompositeEngine, not sub-engine)
         self._funding_applied: set = set()
         self._funding_daily_done: set = set()
+        self._crypto_funding_pnl = 0.0
 
         # Forex dedup state
         self._last_swap_dates: dict = {}
@@ -201,6 +202,9 @@ class CompositeEngine(BaseEngine):
         if not by_market:
             return {}
         result: Dict[str, Any] = {"market_diagnostics": by_market}
+        if "crypto" in by_market:
+            by_market["crypto"]["crypto_funding_pnl"] = self._crypto_funding_pnl
+            result["crypto_funding_pnl"] = self._crypto_funding_pnl
         for details in by_market.values():
             for key, value in details.items():
                 if isinstance(value, list):
@@ -349,8 +353,9 @@ class CompositeEngine(BaseEngine):
                 crypto_sub.funding_rate,
                 self._funding_applied, self._funding_daily_done,
                 _interval_span_hours(self._run_interval),
-            )
+            ) if crypto_sub.funding_enabled(symbol) else 0.0
             self.capital -= fee
+            self._crypto_funding_pnl -= fee
 
             if check_crypto_liquidation(symbol, bar, self.positions):
                 pos = self.positions.get(symbol)

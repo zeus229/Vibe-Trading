@@ -765,7 +765,7 @@ class OpenAICodexLLM:
         tools = _convert_tools(self.tools)
         if tools:
             body["tools"] = tools
-        if self.reasoning_effort and self.reasoning_effort.lower() != "none":
+        if self.reasoning_effort:
             body["reasoning"] = {"effort": self.reasoning_effort.lower()}
         return body
 

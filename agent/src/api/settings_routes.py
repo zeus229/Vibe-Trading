@@ -324,7 +324,7 @@ def _extract_model_ids(payload: Any) -> List[str]:
 # Verified with the ChatGPT Codex catalog on 2026-10-27.
 _CODEX_MODELS_URL = "https://chatgpt.com/backend-api/codex/models"
 _CODEX_MODELS_CLIENT_VERSION = "0.159.0"
-_CODEX_EFFORT_LEVELS = frozenset({"low", "medium", "high", "xhigh", "max", "ultra"})
+_CODEX_EFFORT_LEVELS = frozenset(LLM_PROVIDER_BY_NAME["openai-codex"].reasoning_efforts)
 
 
 async def _list_openai_codex_models(provider: LLMProviderOption) -> LLMModelsResponse:
@@ -366,7 +366,9 @@ async def _list_openai_codex_models(provider: LLMProviderOption) -> LLMModelsRes
         for item in payload["models"][:1000]:
             if not isinstance(item, dict):
                 continue
-            if item.get("visibility") != "list" or item.get("supported_in_api") is not True:
+            # supported_in_api is an API-key catalog filter, not a ChatGPT
+            # entitlement check (Codex ModelPreset::filter_by_auth).
+            if item.get("visibility") != "list":
                 continue
             slug = item.get("slug")
             if not isinstance(slug, str) or not slug or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", slug):
@@ -383,11 +385,12 @@ async def _list_openai_codex_models(provider: LLMProviderOption) -> LLMModelsRes
                 supported = []
                 for level in levels:
                     effort = level.get("effort") if isinstance(level, dict) else None
-                    if effort in _CODEX_EFFORT_LEVELS and effort not in supported:
+                    if isinstance(effort, str) and effort in _CODEX_EFFORT_LEVELS and effort not in supported:
                         supported.append(effort)
                 efforts[model_id] = supported
             default = item.get("default_reasoning_level")
-            if isinstance(default, str) and default in _CODEX_EFFORT_LEVELS:
+            if (isinstance(default, str) and default in _CODEX_EFFORT_LEVELS
+                    and (model_id not in efforts or default in efforts[model_id])):
                 defaults[model_id] = default
         if not models:
             return fallback
