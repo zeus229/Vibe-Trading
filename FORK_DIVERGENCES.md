@@ -158,7 +158,8 @@ cases are asserted to return `None`). If this policy is ever relaxed, change bot
 ## Argentina dashboard link
 
 `frontend/src/components/layout/Layout.tsx` renders an "Argentina" link under
-`SidebarNavigation` (`VITE_ASISTENTE_CASA_UI_URL`).
+`SidebarNavigation` (`VITE_ASISTENTE_CASA_UI_URL`). Default URL: `https://nexo.cupaiolo.com.ar/investments-web/`
+(changed from `inversiones.cupaiolo.com.ar` on 2026-10-30).
 
 ## Rounding band stays at 0.5%
 
