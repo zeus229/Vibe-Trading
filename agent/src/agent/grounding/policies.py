@@ -902,7 +902,20 @@ class _PolicyMixin:
 
         for figure in relevant:
             matches = block.compatible_declarations(
-                figure.value, figure.percent, figure.digits
+                figure.value, figure.percent, figure.digits, figure.point_marked
+            )
+            # Keep the fork's per-entity contribution proof when upstream's
+            # point-marked bare-declaration match applies. Equal values for two
+            # entities must not let one combined sentence satisfy either row.
+            matches = tuple(
+                item for item in matches
+                if not (
+                    figure.point_marked and not item.percent
+                    and item.role == "observed" and item.unitless_numeric
+                    and item.ref.endswith(".contribution_pct")
+                ) or self._unitless_contribution_display_match(
+                    item, figure, content, line_symbols, symbol_records
+                )
             )
             if not matches and figure.percent:
                 proven_unitless: list[Declaration] = []

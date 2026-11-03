@@ -283,7 +283,11 @@ def test_real_session_service_scopes_api_and_scheduled_attempts(tmp_path, monkey
     monkeypatch.setattr("src.session.service.get_shared_index", lambda: Index())
     monkeypatch.setattr("src.tools.build_registry", build_registry)
     monkeypatch.setattr("src.agent.loop.AgentLoop", Agent)
-    monkeypatch.setattr("src.providers.chat.ChatLLM", lambda: object())
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    llm = SimpleNamespace(aclose=AsyncMock())
+    monkeypatch.setattr("src.providers.chat.ChatLLM", lambda: llm)
     monkeypatch.setattr("src.memory.persistent.PersistentMemory", lambda: object())
     monkeypatch.setattr("src.config.loader.load_runtime_agent_config", lambda overrides=None: _config())
     service = SessionService(store=SessionStore(tmp_path / "sessions"),

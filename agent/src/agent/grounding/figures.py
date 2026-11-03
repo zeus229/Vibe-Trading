@@ -118,7 +118,17 @@ _CURRENCY_CODES = frozenset(
 _PERCENT_CHARS = "%％"
 
 # Glued percentage-point and basis-point marks, and the percent each one is.
-_POINT_MARKS = (("个百分点", 1.0), ("bps", 0.01), ("pp", 1.0), ("bp", 0.01))
+# Longest first: "个百分点" before "百分点", "ppts" before "pp" and "bp".
+_POINT_MARKS = (
+    ("个百分点", 1.0),
+    ("百分点", 1.0),
+    ("ppts", 1.0),
+    ("ppt", 1.0),
+    ("pct", 1.0),
+    ("bps", 0.01),
+    ("pp", 1.0),
+    ("bp", 0.01),
+)
 
 # Magnitude marks glued to a figure ("24.6M", "2.4万"): a symbol set like the
 # currency marks. They scale the comparison with evidence and never decide shape.
@@ -175,7 +185,7 @@ class FiguresBlock:
     spans: tuple[tuple[int, int], ...] = ()
 
     def compatible_declarations(
-        self, value: float, percent: bool, digits: str | None = None
+        self, value: float, percent: bool, digits: str | None = None, point_marked: bool = False
     ) -> tuple[Declaration, ...]:
         """Return all declarations compatible with one prose figure, in block order.
 
@@ -186,12 +196,17 @@ class FiguresBlock:
         already equal to 0.23%).
         """
         candidates = [item for item in self.declarations if item.percent == percent]
+        borrowed = tuple(
+            item for item in self.declarations
+            if point_marked and percent and not item.percent
+            and abs(item.value - value) <= max(abs(value) * 1e-9, 1e-9)
+        )
         if not digits or "." not in digits:
             return tuple(
                 item
                 for item in candidates
                 if abs(item.value - value) <= max(abs(value) * 1e-9, 1e-9)
-            )
+            ) + borrowed
         places = len(digits.split(".", 1)[1])
         half_unit = 0.5 * 10.0 ** -places
         quant = Decimal(1).scaleb(-places)
@@ -214,17 +229,17 @@ class FiguresBlock:
                 within_relative_band or tie_rounds_to_written
             ):
                 compatible.append(item)
-        return tuple(compatible)
+        return tuple(compatible) + borrowed
 
     def match(
-        self, value: float, percent: bool, digits: str | None = None
+        self, value: float, percent: bool, digits: str | None = None, point_marked: bool = False
     ) -> Declaration | None:
         """Return the best declaration covering ``value``, or None.
 
         Exact numeric matches keep priority for backward compatibility. If none
         exists, use the nearest compatible rounded declaration.
         """
-        compatible = self.compatible_declarations(value, percent, digits)
+        compatible = self.compatible_declarations(value, percent, digits, point_marked)
         if not compatible:
             return None
         exact = [
@@ -266,6 +281,10 @@ class Figure:
     currency_code: str | None = None
     digits: str = ""
     sign: str = ""
+    # The trailing mark is a percentage-point spelling ("1.13个百分点", "3.6pp"),
+    # not "%": such a figure is a percent (unit 1.0) yet conventionally declared
+    # bare ("1.13"), and the gate may bind the two (#2107).
+    point_marked: bool = False
     # The span a redaction replaces: the figure plus its glued currency and
     # magnitude marks ("HK$1.10", "0.95 元", "24.6M").
     extent: tuple[int, int] | None = None
@@ -544,8 +563,22 @@ def _numbers(text: str, *, decimal_commas: bool | None = None) -> list[_Token]:
             body = body.replace(".", "")
             if fraction:
                 body = f"{body}.{fraction}"
-        tokens.append(_Token(match.start(), end, sign, body.replace(",", "")))
+        tokens.append(_Token(match.start(), end, sign, body.replace(",", ""), "," in body))
         cursor = end
+    # A dash right after a percent mark opens a range ("20%-30%"), it is not
+    # the sign of the number that follows (#2107). The endpoint keeps its own
+    # sign when written ("20%- -30%" stays a list) and the dash between two
+    # plain figures ("10-20") is untouched.
+    scrubbed: list[_Token] = []
+    for token in tokens:
+        if token.sign == "-":
+            between = text[max(0, token.start - 3) : token.start]
+            m = re.search(r"[%％]\s*$", between)
+            if m is not None:
+                scrubbed.append(replace(token, sign=""))
+                continue
+        scrubbed.append(token)
+    tokens = scrubbed
     signed = [
         replace(token, sign=text[lead]) if not token.sign and lead is not None else token
         for token in tokens + protected
@@ -619,27 +652,29 @@ def _writes_decimal_commas(text: str) -> bool:
     return decimal and not grouped
 
 
-def _percent_mark(text: str, end: int) -> tuple[float, int]:
-    """The percent a figure's trailing mark denotes, and where the mark ends.
+def _percent_mark(text: str, end: int) -> tuple[float, int, bool]:
+    """The percent a figure's trailing mark denotes, where the mark ends, and
+    whether the mark is a percentage-point spelling rather than ``%``.
 
     A percent sign or a points mark may follow horizontal whitespace. Point
     marks must end at a word boundary ("3.6ppm" is not a percentage point).
 
     Returns:
-        ``(1.0, end)`` for % and pp, ``(0.01, end)`` for bp, ``(0.0, end)``.
+        ``(1.0, end, False)`` for %, ``(unit, end, True)`` for a point mark,
+        ``(0.0, end, False)`` when there is no mark.
     """
     rest = text[end:]
     spaced = rest.lstrip(" \t")
     if spaced[:1] and spaced[0] in _PERCENT_CHARS:
-        return 1.0, end + len(rest) - len(spaced) + 1
+        return 1.0, end + len(rest) - len(spaced) + 1, False
     for mark, unit in _POINT_MARKS:
         # The CJK mark must be glued, as upstream reads it: "3.6 个百分点" is
         # a bare number in running prose, not a unit-bearing figure.
         tail = rest if mark == "个百分点" else spaced
         after = tail[len(mark) : len(mark) + 1]
         if tail[: len(mark)].casefold() == mark and not (after.isascii() and after.isalnum()):
-            return unit, end + len(rest) - len(tail) + len(mark)
-    return 0.0, end
+            return unit, end + len(rest) - len(tail) + len(mark), True
+    return 0.0, end, False
 
 
 def _reading(sign: str, digits: str, unit: float) -> tuple[float, str] | None:
@@ -739,7 +774,7 @@ def _parse_value(
     rest = field[token.end :].strip()
     if rest[:1] in _MAGNITUDES and not _is_currency_mark(rest):
         rest = rest[1:].lstrip()
-    unit, consumed = _percent_mark(rest, 0)
+    unit, consumed, _ = _percent_mark(rest, 0)
     tail = rest[consumed:].strip()
     if not unit and tail in _MULTIPLE_MARKS:
         # "5.5x": a multiple, written the way the answer writes it.
@@ -756,6 +791,35 @@ def _parse_value(
         return None
     value, canonical = reading
     return value, unit > 0, canonical + ("%" if unit > 0 else "")
+
+
+# A percent range written as one value ("20%-30%"): the dash runs between two
+# percent marks. Narrow on purpose — plain numeric or currency ranges keep
+# their existing readings.
+_PERCENT_RANGE_RE = re.compile(
+    r"^(?P<low>[+-]?[\d.,]+)\s*[%％]\s*[-–—~～]\s*(?P<high>[+-]?[\d.,]+)\s*[%％]$"
+)
+
+
+def _parse_range(
+    field: str, decimal_commas: bool | None = None
+) -> list[tuple[float, bool, str]]:
+    """Both endpoints of a declared percent range, each as ``_parse_value`` reads it.
+
+    Returns:
+        Two ``(value, percent, canonical)`` triples, or nothing when the field
+        is not exactly ``N% - N%``.
+    """
+    match = _PERCENT_RANGE_RE.fullmatch(_normalize(field).text.strip())
+    if match is None:
+        return []
+    endpoints = []
+    for side in (match.group("low") + "%", match.group("high") + "%"):
+        parsed = _parse_value(side, decimal_commas)
+        if parsed is None:
+            return []
+        endpoints.append(parsed)
+    return endpoints
 
 
 def _is_header_or_rule(parts: Sequence[str]) -> bool:
@@ -812,7 +876,26 @@ def parse_figures_block(content: str) -> FiguresBlock:
         )
         parsed = _parse_value(value_text, declaration_reading) if parts else None
         role = parts[1].casefold() if len(parts) > 1 else ""
-        if parsed is None or role not in ROLES:
+        if parsed is None:
+            # "20%-30%" declares both endpoints: one range, two declarations.
+            endpoints = _parse_range(parts[0], document_reading) if parts else []
+            if not endpoints or role not in ROLES:
+                malformed.append((number, line.strip()[:120]))
+                continue
+            for value, percent, canonical in endpoints:
+                declarations.append(
+                    Declaration(
+                        index=number,
+                        value_text=canonical,
+                        value=value,
+                        percent=percent,
+                        role=role,
+                        note=parts[2] if len(parts) > 2 else "",
+                        ref=parts[3] if len(parts) > 3 else "",
+                    )
+                )
+            continue
+        if role not in ROLES:
             malformed.append((number, line.strip()[:120]))
             continue
         value, percent, canonical = parsed
@@ -1265,7 +1348,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
 
     figures: list[Figure] = []
     for token in _numbers(text):
-        unit, unit_end = _percent_mark(text, token.end)
+        unit, unit_end, point_marked = _percent_mark(text, token.end)
         reading = _reading(token.sign, token.digits, unit)
         if reading is None:
             continue
@@ -1332,6 +1415,7 @@ def scan_figures(content: str, block: FiguresBlock) -> list[Figure]:
                 currency_code=currency_code,
                 digits=token.digits,
                 sign=token.sign,
+                point_marked=point_marked,
                 extent=(view.start(prefix_start), view.end(mark_end)),
                 fence=next(
                     (info for low, high, info, _ in fences if low <= start and digits_end <= high),
