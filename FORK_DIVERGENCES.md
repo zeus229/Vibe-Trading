@@ -1,6 +1,59 @@
 # Fork divergences from HKUDS/Vibe-Trading
 
-Last upstream sync: 2026-10-29 (upstream `de359932`, merged onto fork `d5add45e`).
+Last committed upstream sync: 2026-10-29 (upstream `de359932`, merged onto fork `d5add45e`).
+
+Uncommitted sync candidate: 2026-11-03, upstream `2ac20879389f0e0104b59ad2f2076db75cd41fb2` onto fork `b79ab7a0a3297e3d2114760f963fa9b460b6b34f`. No commit, publication or deployment yet.
+
+
+## Sync candidate 2026-11-03 (upstream `2ac20879`)
+
+56 upstream commits / 149 paths since `de359932`; merge prepared with
+`--no-commit --no-ff` on `sync/upstream-2ac20879-20261103`. Both histories
+are retained through the pending merge, with HEAD still at `b79ab7a0`.
+
+Upstream adopted: supervised silent provider streams, attempt-owned provider
+closure, session-scoped background cancellation and durable task outcomes,
+UTF-8 records/frontmatter and handoff preservation, research-goal objective
+editing, cache/reasoning usage accounting, comma-grouped document figures,
+explicit percentage-point declarations, bounded text-only final-answer retry,
+opt-in Parallel search, cn_a-only five-minute paper trading, Heston short-expiry
+correction, channel fixes and the welcome/theme refresh. No dependency locks,
+Docker files or Argentina engine/tick rules changed in this delta.
+
+Conflict resolutions (12 files): seven README tool counts; figures/policies;
+session service; research-goal skill; session tool-trail test. Session service
+uses upstream lifecycle/finally closure plus the fork's in-memory PPI scope and
+`calculate_ppi_indicators` exclusion for scheduled/ownerless sessions. Research
+Goal keeps both upstream objective editing and the fork completion-contract aid.
+Test doubles implement the new async provider close contract; the new goal test
+adds explicit manual provenance and checks evidence creation before the edit.
+
+Grounding retains the fork multi-occurrence declaration matcher, exact refs,
+entity boundaries, inherited nested currency, decimal-comma/dotted grouping,
+0.5% rounding band, strict ASCII-colon formulas and RepairContract. Upstream
+point-marked exact bare-declaration matching is threaded through that matcher;
+ordinary percent claims cannot borrow bare declarations. For unitless observed
+contributions the existing entity/exact-reference proof remains mandatory:
+equal-valued rows cannot be replaced by one joint sentence. The existing
+`test_unitless_observed_contributions_survive_correction_with_exact_refs` caught
+this merge interaction and passes after resolution. Comma-grouped document
+integer metadata is retained alongside fork dotted grouping.
+
+No fork feature was removed as redundant in this sync. BYMA engine/tick tables
+and Codex discovery were already absorbed in the previous sync. Portfolio ARS,
+signed cash, Risk X-Ray, canonical AC/MCP authority, replay protections and the
+Argentina `https://nexo.cupaiolo.com.ar/investments-web/` link remain unchanged.
+Parallel stays disabled by default; paper matching adds no live broker path.
+`PPI_TRADING_DISABLED=True` remains required and was verified in the unchanged
+production container. No OAuth login/refresh, production MCP/LLM call, real
+order, runtime configuration write or service restart was used for validation.
+
+Validation boundary: targeted offline checks, not a production E2E or a full
+suite certification. The same 179 grounding contract cases produce 20 failures
+on fork base and 19 on candidate, all 19 inherited; upstream fixes the single
+literal-note case. Do not call this ready for main while those known contract
+failures remain unresolved. Exact commands, failure IDs, environment limitations
+and cleanup evidence are in the accompanying sync validation report.
 
 ## Sync 2026-10-29 (upstream `de359932`)
 
