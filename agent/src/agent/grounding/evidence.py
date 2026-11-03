@@ -1931,9 +1931,12 @@ class _EvidenceMixin:
             if remaining <= 0:
                 return
             if _is_number(value):
+                # A currency-keyed monetary leaf is more specific than the
+                # enclosing payload's reporting currency (e.g. dividends.USD
+                # inside an ARS portfolio envelope).
                 evidence_currency = (
-                    currency
-                    or _currency_from_path(path)
+                    _currency_from_path(path)
+                    or currency
                     or _infer_currency(context.symbol or "")
                 )
                 # The unit is what the payload declares, never what the venue of
