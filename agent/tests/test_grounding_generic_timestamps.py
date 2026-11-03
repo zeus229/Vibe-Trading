@@ -174,3 +174,54 @@ def test_latest_date_preserves_timestamp_priority_and_absence(tmp_path, timestam
     assert not ledger.validate_final_answer(
         "| Date | Close |\n|---|---|\n| 2020-01-01 | 212.5 |"
     ).valid
+
+
+@pytest.mark.parametrize(
+    "leaf, expected_currency",
+    [
+        ("USD", "USD"),
+        ("EUR", "EUR"),
+    ],
+)
+def test_generic_currency_key_overrides_parent_reporting_currency(
+    tmp_path: Path, leaf: str, expected_currency: str
+) -> None:
+    _ledger(
+        tmp_path,
+        {
+            "currency": "ARS",
+            "data": {
+                "cashflows": {
+                    "income": {
+                        "dividends": {leaf: 3.38},
+                    }
+                }
+            },
+        },
+    )
+    evidence = json.loads(
+        (tmp_path / "artifacts" / "grounding_evidence.json").read_text(encoding="utf-8")
+    )["evidence"]
+    record = next(
+        row for row in evidence
+        if row["field"] == f"data.cashflows.income.dividends.{leaf}"
+    )
+    assert record["currency"] == expected_currency
+    assert record["value"] == 3.38
+
+
+def test_generic_money_without_currency_key_inherits_parent_currency(
+    tmp_path: Path,
+) -> None:
+    _ledger(
+        tmp_path,
+        {"currency": "ARS", "data": {"cashflows": {"income": {"total": 3.38}}}},
+    )
+    evidence = json.loads(
+        (tmp_path / "artifacts" / "grounding_evidence.json").read_text(encoding="utf-8")
+    )["evidence"]
+    record = next(
+        row for row in evidence
+        if row["field"] == "data.cashflows.income.total"
+    )
+    assert record["currency"] == "ARS"
