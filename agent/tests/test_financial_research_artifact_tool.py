@@ -55,6 +55,10 @@ def test_financial_tool_round_trip_idempotence_and_revisions(tmp_path, monkeypat
     first = json.loads(tool.execute(document=_document(), data_as_of="2026-11-04"))
     assert first["status"] == "ok"
     assert first["created"] is True
+    assert first["revision"]["evidence_missing"] is False
+    assert first["revision"]["evidence"] == [
+        {"source_id": "annual", "url": "https://example.org/annual"}
+    ]
     revision = first["revision"]
     artifact_id = revision["artifact_id"]
 
@@ -120,3 +124,33 @@ def test_agent_tool_is_discoverable_without_changing_narrative_tool():
     assert "save_research_artifact" in registry.tool_names
     schema = registry.get("save_financial_research_artifact").to_openai_schema()
     assert "document" in schema["function"]["parameters"]["required"]
+
+
+def test_financial_tool_merges_extra_evidence_without_dropping_fact_sources(tmp_path, monkeypatch):
+    from src.tools import financial_research_artifact_tool as tool_module
+
+    path = tmp_path / "evidence.sqlite"
+    monkeypatch.setattr(tool_module, "ResearchArtifactStore",
+                        lambda: ResearchArtifactStore(db_path=path))
+    extra = {"kind": "retrieval", "sha256": "abc123"}
+    result = json.loads(SaveFinancialResearchArtifactTool().execute(
+        document=_document(), data_as_of="2026-11-04", evidence=[extra]))
+    assert result["status"] == "ok"
+    assert result["revision"]["evidence_missing"] is False
+    assert result["revision"]["evidence"] == [
+        {"source_id": "annual", "url": "https://example.org/annual"},
+        extra,
+    ]
+
+
+def test_invalid_extra_evidence_is_rejected_before_store(monkeypatch):
+    from src.tools import financial_research_artifact_tool as tool_module
+
+    def unexpected_store():
+        raise AssertionError("invalid evidence must not reach storage")
+
+    monkeypatch.setattr(tool_module, "ResearchArtifactStore", unexpected_store)
+    result = json.loads(SaveFinancialResearchArtifactTool().execute(
+        document=_document(), data_as_of="2026-11-04", evidence=["invalid"]))
+    assert result["status"] == "error"
+    assert "evidence must be a list" in result["error"]
