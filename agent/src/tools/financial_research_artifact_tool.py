@@ -53,9 +53,9 @@ class SaveFinancialResearchArtifactTool(BaseTool):
                             "properties": {
                                 "metric": {"type": "string"},
                                 "period_kind": {"type": "string", "enum": ["duration", "instant"]},
-                                "period_start": {"type": ["string", "null"], "description": "YYYY-MM-DD for duration"},
-                                "period_end": {"type": ["string", "null"], "description": "YYYY-MM-DD for duration"},
-                                "as_of_date": {"type": ["string", "null"], "description": "YYYY-MM-DD for instant"},
+                                "period_start": {"type": ["string", "null"], "format": "date", "description": "ISO YYYY-MM-DD for duration facts; otherwise omit or null"},
+                                "period_end": {"type": ["string", "null"], "format": "date", "description": "ISO YYYY-MM-DD for duration facts; otherwise omit or null"},
+                                "as_of_date": {"type": ["string", "null"], "format": "date", "description": "ISO YYYY-MM-DD for instant facts; otherwise omit or null"},
                                 "scope": {"type": "string"},
                                 "definition": {"type": "string", "description": "Reported definition or derived formula and operands"},
                                 "value": {"type": ["number", "null"]},
@@ -69,6 +69,32 @@ class SaveFinancialResearchArtifactTool(BaseTool):
                             "required": ["metric", "period_kind", "scope", "definition", "value",
                                          "currency", "unit", "source_id", "source_section",
                                          "verification_status"],
+                            "allOf": [
+                                {
+                                    "if": {"properties": {"period_kind": {"const": "duration"}},
+                                           "required": ["period_kind"]},
+                                    "then": {
+                                        "required": ["period_start", "period_end"],
+                                        "properties": {
+                                            "period_start": {"type": "string", "format": "date"},
+                                            "period_end": {"type": "string", "format": "date"},
+                                            "as_of_date": {"type": "null"},
+                                        },
+                                    },
+                                },
+                                {
+                                    "if": {"properties": {"period_kind": {"const": "instant"}},
+                                           "required": ["period_kind"]},
+                                    "then": {
+                                        "required": ["as_of_date"],
+                                        "properties": {
+                                            "as_of_date": {"type": "string", "format": "date"},
+                                            "period_start": {"type": "null"},
+                                            "period_end": {"type": "null"},
+                                        },
+                                    },
+                                },
+                            ],
                         },
                     },
                 },
