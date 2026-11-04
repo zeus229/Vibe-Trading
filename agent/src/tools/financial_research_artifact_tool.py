@@ -4,10 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.agent.tools import BaseTool
 from src.research_artifacts.financial_facts import encode_financial_facts
 from src.research_artifacts.store import ResearchArtifactStore
 from src.tools.research_artifact_tool import _error, _ok
-from src.agent.tools import BaseTool
 
 
 class SaveFinancialResearchArtifactTool(BaseTool):
@@ -81,7 +81,5 @@ class SaveFinancialResearchArtifactTool(BaseTool):
                 return _ok(result.to_dict())
             finally:
                 store.close()
-        except (KeyError, TypeError, ValueError) as exc:
-            return _error(exc)
         except Exception as exc:
             return _error(exc)
