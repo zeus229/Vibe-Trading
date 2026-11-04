@@ -41,7 +41,7 @@ class SaveFinancialResearchArtifactTool(BaseTool):
             "evidence": {
                 "type": "array",
                 "items": {"type": "object"},
-                "description": "Optional artifact-level references; do not confuse with fact-level sources",
+                "description": "Optional additional references; fact sources are linked automatically",
             },
             "verification_status": {
                 "type": "string",
@@ -62,6 +62,21 @@ class SaveFinancialResearchArtifactTool(BaseTool):
             document = kwargs["document"]
             content = encode_financial_facts(document)
             subject = document["subject"].strip()  # Normalized by the encoder
+            # Link validated fact sources to revision-level evidence.
+            # References do not independently verify the cited documents.
+            supplied_evidence = kwargs.get("evidence")
+            if supplied_evidence is not None and (
+                not isinstance(supplied_evidence, list)
+                or any(not isinstance(item, dict) for item in supplied_evidence)
+            ):
+                raise ValueError("evidence must be a list of objects")
+            evidence = [
+                {"source_id": source["id"], "url": source["url"]}
+                for source in document["sources"]
+            ]
+            for item in supplied_evidence or []:
+                if item not in evidence:
+                    evidence.append(item)
             store = ResearchArtifactStore()
             try:
                 result = store.save(
@@ -70,7 +85,7 @@ class SaveFinancialResearchArtifactTool(BaseTool):
                     universe=kwargs.get("universe"),
                     content=content,
                     data_as_of=kwargs["data_as_of"],
-                    evidence=kwargs.get("evidence"),
+                    evidence=evidence,
                     verification_status=kwargs.get("verification_status"),
                     completeness=kwargs.get("completeness"),
                     hypothesis_id=kwargs.get("hypothesis_id"),
