@@ -67,7 +67,11 @@ structured issuer financial statements, the agent researches source filings and
 passes a **JSON object** (not a serialized string) to the new tool. This tool
 calls `encode_financial_facts` before invoking the existing
 `ResearchArtifactStore.save`. Invalid schema or provenance stops the write.
-The revision is still unverified by default, independently of the
+The tool also copies the validated `sources` catalog into revision-level
+`evidence` as `{source_id, url}` references, preserving any additional
+references supplied by the caller. This avoids `evidence_missing=true`
+for documents with source URLs without claiming that those URLs were
+independently retrieved or authenticated. The revision is still unverified by default, independently of the
 `verification_status` recorded on individual facts; tool success never
 attests to external document accuracy.
 
