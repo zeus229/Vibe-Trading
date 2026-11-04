@@ -14,14 +14,15 @@ from src.research_artifacts.financial_facts import (
 def example_fact(**overrides):
     fact = {
         "metric": "revenue",
-        "period": "2025-FY",
+        "period_start": "2025-01-01",
+        "period_end": "2025-12-31",
         "period_kind": "duration",
         "scope": "consolidated",
         "definition": "Revenue under reporting GAAP",
         "value": 1998,
         "currency": "USD",
         "unit": "millions",
-        "source_url": "https://example.org/filing",
+        "source_id": "filing-2025",
         "source_section": "Consolidated statement of income",
         "source_page": None,
         "verification_status": "verified",
@@ -32,7 +33,9 @@ def example_fact(**overrides):
 
 def example_document(*facts):
     return {"schema_version": "financial-facts/v1",
-            "subject": "Example Corporation", "facts": list(facts)}
+            "subject": "Example Corporation",
+            "sources": [{"id": "filing-2025", "url": "https://example.org/filing"}],
+            "facts": list(facts)}
 
 
 def test_round_trip_preserves_numeric_fact_and_provenance():
@@ -53,7 +56,7 @@ def test_unavailable_never_contains_a_number():
 
 def test_unavailable_can_preserve_missing_source():
     fact = example_fact(value=None, verification_status="unavailable",
-                        source_url=None, source_section=None,
+                        source_id=None, source_section=None,
                         currency=None, unit=None)
     assert validate_financial_facts(example_document(fact))["facts"][0] == fact
 
@@ -99,3 +102,60 @@ def test_existing_research_store_round_trip(tmp_path):
         assert revision.verification_status == "partial"
     finally:
         store.close()
+
+
+@pytest.mark.parametrize("start,end", [
+    ("banana", "2025-12-31"),
+    ("2025-12-31", "2025-01-01"),
+    ("2025-01-01", "2025-99-99"),
+])
+def test_bad_duration_dates_rejected(start, end):
+    with pytest.raises(ValueError, match="ISO date|invalid duration"):
+        validate_financial_facts(example_document(
+            example_fact(period_start=start, period_end=end)))
+
+
+def test_balance_sheet_fact_requires_instant_date():
+    with pytest.raises(ValueError, match="as_of_date"):
+        validate_financial_facts(example_document(
+            example_fact(metric="cash", period_kind="instant",
+                         period_start=None, period_end=None)))
+
+
+def test_instant_fact_with_as_of_date():
+    fact = example_fact(metric="cash", period_kind="instant",
+                        period_start=None, period_end=None,
+                        as_of_date="2025-12-31")
+    assert validate_financial_facts(example_document(fact))["facts"][0] == fact
+
+
+def test_duplicate_metric_period_scope_units_rejected_even_if_value_differs():
+    with pytest.raises(ValueError, match="duplicate financial fact identity"):
+        validate_financial_facts(example_document(
+            example_fact(value=100), example_fact(value=200)))
+
+
+@pytest.mark.parametrize("url", ["javascript:alert(1)", "http://example.org/filing",
+                                  "https://user:password@example.org/filing"])
+def test_untrusted_source_urls_rejected(url):
+    document = example_document(example_fact())
+    document["sources"][0]["url"] = url
+    with pytest.raises(ValueError, match="HTTPS URL"):
+        validate_financial_facts(document)
+
+
+def test_source_must_exist_in_envelope():
+    with pytest.raises(ValueError, match="source_id not found"):
+        validate_financial_facts(example_document(example_fact(source_id="missing")))
+
+
+def test_empty_fact_collection_rejected():
+    with pytest.raises(ValueError, match="between 1 and 1000"):
+        validate_financial_facts(example_document())
+
+
+def test_duplicate_source_ids_rejected():
+    document = example_document(example_fact())
+    document["sources"].append(dict(document["sources"][0]))
+    with pytest.raises(ValueError, match="duplicate source id"):
+        validate_financial_facts(document)
