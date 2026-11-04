@@ -110,3 +110,13 @@ def test_financial_tool_requires_document_object(tmp_path, monkeypatch):
     for bad in [None, '{"schema_version":"financial-facts/v1"}']:
         result = json.loads(tool.execute(document=bad, data_as_of="2026-11-04"))
         assert result["status"] == "error"
+
+
+def test_agent_tool_is_discoverable_without_changing_narrative_tool():
+    from src.tools import build_registry
+
+    registry = build_registry(include_shell_tools=False)
+    assert "save_financial_research_artifact" in registry.tool_names
+    assert "save_research_artifact" in registry.tool_names
+    schema = registry.get("save_financial_research_artifact").to_openai_schema()
+    assert "document" in schema["function"]["parameters"]["required"]
