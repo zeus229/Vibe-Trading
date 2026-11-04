@@ -8,7 +8,9 @@ No database migration, new endpoint, scheduled job, or country-specific behavior
 
 - `financial-facts/v1` is an opt-in schema; existing narrative artifacts remain valid.
 - Every fact has a metric, explicit ISO date boundaries and `period_kind` (`duration` for income/flows, `instant` for balance-sheet stocks), scope, definition, value, currency/unit, source location, and individual status.
-- The document contains a nonempty `facts` array and a `sources` catalog with unique IDs and HTTPS URLs; each verified fact links to a catalog entry. Duplicate metric/period/scope/unit identities are rejected.\n- A duration uses `period_start` and `period_end`; a balance-sheet instant uses `as_of_date`. The library cannot infer whether a metric should be an instant or a duration from its free-form name.\n- `verified` means **claimed evidence status**, not that the library verified the external document. Consumers must independently check evidence before promoting numbers.
+- The document contains a nonempty `facts` array and a `sources` catalog with unique IDs and HTTPS URLs; each verified fact links to a catalog entry. Duplicate metric/period/scope/unit identities are rejected.
+- A duration uses `period_start` and `period_end`; a balance-sheet instant uses `as_of_date`. The library cannot infer whether a metric should be an instant or a duration from its free-form name.
+- `verified` means **claimed evidence status**, not that the library verified the external document. Consumers must independently check evidence before promoting numbers.
 - `partial` may retain a numeric value with limitations; `unavailable` requires `null`.
 - The artifact's revision-level verification status remains independent from each fact.
 - No arithmetic, FX conversion, financial restatement, or GAAP equivalence is inferred.
