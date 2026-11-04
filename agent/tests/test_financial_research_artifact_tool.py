@@ -195,3 +195,21 @@ def test_financial_tool_saves_explicit_unavailable_fact(tmp_path, monkeypatch):
         assert facts[1]["value"] is None
     finally:
         store.close()
+
+
+def test_agent_offered_schema_requires_dates_by_period_kind():
+    """Inspect the actual tool schema, not a separately reconstructed schema."""
+    schema = SaveFinancialResearchArtifactTool().to_openai_schema()
+    fact = schema["function"]["parameters"]["properties"]["document"]["properties"]["facts"]["items"]
+    rules = fact["allOf"]
+    duration, instant = rules
+    assert duration["if"]["properties"]["period_kind"]["const"] == "duration"
+    assert set(duration["then"]["required"]) == {"period_start", "period_end"}
+    assert duration["then"]["properties"]["period_start"] == {"type": "string", "format": "date"}
+    assert duration["then"]["properties"]["period_end"] == {"type": "string", "format": "date"}
+    assert duration["then"]["properties"]["as_of_date"] == {"type": "null"}
+    assert instant["if"]["properties"]["period_kind"]["const"] == "instant"
+    assert instant["then"]["required"] == ["as_of_date"]
+    assert instant["then"]["properties"]["as_of_date"] == {"type": "string", "format": "date"}
+    assert instant["then"]["properties"]["period_start"] == {"type": "null"}
+    assert instant["then"]["properties"]["period_end"] == {"type": "null"}
