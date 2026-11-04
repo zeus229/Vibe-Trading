@@ -59,6 +59,39 @@ store.close()
 
 The authenticated existing GET endpoints return the original `content`; clients may decode it without any new route. A new revision is explicitly linked using `artifact_id`, and previous revisions remain immutable.
 
+## Agent-generated structured artifacts (opt-in)
+
+The agent now exposes `save_financial_research_artifact` alongside the unchanged
+`save_research_artifact` narrative tool. For an explicit request to produce
+structured issuer financial statements, the agent researches source filings and
+passes a **JSON object** (not a serialized string) to the new tool. This tool
+calls `encode_financial_facts` before invoking the existing
+`ResearchArtifactStore.save`. Invalid schema or provenance stops the write.
+The revision is still unverified by default, independently of the
+`verification_status` recorded on individual facts; tool success never
+attests to external document accuracy.
+
+This opt-in route does not change the general POST API or the legacy free-form
+research save tool, which remain compatible with narrative research.
+The system prompt asks the agent to keep exact dates and source locations,
+preserve formulas for derived numbers, and acknowledge missing evidence.
+As with any LLM tool decision, the prompt alone does not guarantee that a
+particular research session invokes the save tool: the persisted revision
+must be observed and decoded in acceptance testing.
+
+### Next validation
+
+- Confirm local tool registry discovery and that `save_financial_research_artifact`
+  is offered to the research agent.
+- Run `agent/tests/test_financial_research_artifact_tool.py` and existing
+  research-artifact regression tests in a detached worktree.
+- Verify a simulated agent tool call uses only isolated databases, produces
+  decodable `financial-facts/v1`, preserves immutable revisions, and leaves
+  narrative saves untouched.
+- Then run a **separate** real-agent YPF research trial against safely isolated
+  runtime paths, explicitly checking the tool was called and the artifact
+  was persisted. A simulated call does not establish real-agent reliability.
+
 ## Before proposing upstream
 
 1. Run isolated unit tests (`agent/tests/test_research_financial_facts.py`) and existing research artifact regressions.
