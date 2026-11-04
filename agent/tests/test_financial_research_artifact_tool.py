@@ -154,3 +154,44 @@ def test_invalid_extra_evidence_is_rejected_before_store(monkeypatch):
         document=_document(), data_as_of="2026-11-04", evidence=["invalid"]))
     assert result["status"] == "error"
     assert "evidence must be a list" in result["error"]
+
+
+def test_financial_tool_schema_exposes_fact_fields_to_llm():
+    schema = SaveFinancialResearchArtifactTool().to_openai_schema()
+    doc = schema["function"]["parameters"]["properties"]["document"]
+    assert set(doc["required"]) == {"schema_version", "subject", "sources", "facts"}
+    fact = doc["properties"]["facts"]["items"]
+    assert {"period_kind", "value", "source_id", "verification_status"} <= set(fact["required"])
+    assert fact["properties"]["period_kind"]["enum"] == ["duration", "instant"]
+    assert fact["properties"]["verification_status"]["enum"] == [
+        "verified", "partial", "unavailable"
+    ]
+
+
+def test_financial_tool_saves_explicit_unavailable_fact(tmp_path, monkeypatch):
+    from src.tools import financial_research_artifact_tool as tool_module
+
+    path = tmp_path / "unavailable.sqlite"
+    monkeypatch.setattr(tool_module, "ResearchArtifactStore",
+                        lambda: ResearchArtifactStore(db_path=path))
+    doc = _document()
+    missing = dict(doc["facts"][0])
+    missing.update(metric="cash", period_kind="instant", as_of_date="2025-12-31",
+                   value=None, source_id=None, source_section=None,
+                   verification_status="unavailable",
+                   definition="No issuer balance-sheet source retrieved")
+    missing.pop("period_start")
+    missing.pop("period_end")
+    doc["facts"].append(missing)
+    result = json.loads(SaveFinancialResearchArtifactTool().execute(
+        document=doc, data_as_of="2026-11-04"))
+    assert result["status"] == "ok"
+    store = ResearchArtifactStore(db_path=path)
+    try:
+        facts = decode_financial_facts(
+            store.get_revision(result["revision"]["revision_id"]).content)["facts"]
+        assert len(facts) == 2
+        assert facts[1]["verification_status"] == "unavailable"
+        assert facts[1]["value"] is None
+    finally:
+        store.close()
