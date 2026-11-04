@@ -104,6 +104,15 @@ the metric. This does not enforce coverage at the storage layer: the
 expected metric/period matrix is task-specific and must be independently
 checked during acceptance testing.
 
+The tool's offered schema now declares `format: date` and conditional
+`if/then` rules for duration (`period_start` plus `period_end`) versus
+instant (`as_of_date`) facts. The existing Python validator still checks
+actual ISO dates, chronological order and forbidden cross-kind fields.
+Provider support for conditional JSON Schema varies: verify the **actual**
+deferred tool schema and an isolated real-model call before relying on this
+guidance. If the provider rejects conditional schemas, adapt the tool-facing
+schema without weakening server-side validation.
+
 The first YPF trial is PARTIAL, not a demonstration of production-ready
 coverage. Retest real-agent behavior after isolated regressions, retaining
 the original trace for comparison. The trial's source catalog may contain
