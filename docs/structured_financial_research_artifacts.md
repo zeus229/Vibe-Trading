@@ -83,6 +83,33 @@ As with any LLM tool decision, the prompt alone does not guarantee that a
 particular research session invokes the save tool: the persisted revision
 must be observed and decoded in acceptance testing.
 
+### Coverage and agent-input improvements (YPF pilot follow-up)
+
+The first real-agent YPF trial saved five cited facts but omitted most of the
+requested periods and metrics; four save attempts were rejected before the
+successful revision. The save tool now advertises a nested JSON Schema for
+`document.sources` and individual `document.facts` fields, instead of an
+unconstrained object. This is guidance to the LLM; the Python validator remains
+the final authority.
+
+For an explicitly requested metric-by-period grid, the agent is instructed
+to account for every requested cell. Missing figures with known reporting
+dates should be represented by `verification_status="unavailable"` and
+`value=null`, with the missing-evidence reason in `definition`, rather
+than silently omitted. Duplicate annual/quarterly balance-sheet instants
+are still represented once. Missing or uncertain dates must never be
+invented just to satisfy the grid. A saved unavailable record records a
+research coverage gap, **not** evidence that the issuer never published
+the metric. This does not enforce coverage at the storage layer: the
+expected metric/period matrix is task-specific and must be independently
+checked during acceptance testing.
+
+The first YPF trial is PARTIAL, not a demonstration of production-ready
+coverage. Retest real-agent behavior after isolated regressions, retaining
+the original trace for comparison. The trial's source catalog may contain
+retrieved documents that do not support any saved fact; evidence_missing=false
+does not imply that every listed source supports every metric.
+
 ### Next validation
 
 - Confirm local tool registry discovery and that `save_financial_research_artifact`
