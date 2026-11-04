@@ -61,7 +61,7 @@ class SaveFinancialResearchArtifactTool(BaseTool):
         try:
             document = kwargs["document"]
             content = encode_financial_facts(document)
-            subject = document["subject"]  # Normalized/validated by encoder
+            subject = document["subject"].strip()  # Normalized/validated by encoder
             store = ResearchArtifactStore()
             try:
                 result = store.save(
