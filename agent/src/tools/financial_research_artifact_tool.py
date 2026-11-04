@@ -33,7 +33,46 @@ class SaveFinancialResearchArtifactTool(BaseTool):
         "properties": {
             "document": {
                 "type": "object",
-                "description": "Complete financial-facts/v1 envelope, including source catalog and facts",
+                "description": "Financial facts envelope. Represent requested missing metrics with unavailable/null rather than silently omitting them.",
+                "properties": {
+                    "schema_version": {"type": "string", "enum": ["financial-facts/v1"]},
+                    "subject": {"type": "string"},
+                    "sources": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "properties": {"id": {"type": "string"}, "url": {"type": "string"}},
+                            "required": ["id", "url"],
+                        },
+                    },
+                    "facts": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": {
+                            "type": "object",
+                            "properties": {
+                                "metric": {"type": "string"},
+                                "period_kind": {"type": "string", "enum": ["duration", "instant"]},
+                                "period_start": {"type": ["string", "null"], "description": "YYYY-MM-DD for duration"},
+                                "period_end": {"type": ["string", "null"], "description": "YYYY-MM-DD for duration"},
+                                "as_of_date": {"type": ["string", "null"], "description": "YYYY-MM-DD for instant"},
+                                "scope": {"type": "string"},
+                                "definition": {"type": "string", "description": "Reported definition or derived formula and operands"},
+                                "value": {"type": ["number", "null"]},
+                                "currency": {"type": ["string", "null"]},
+                                "unit": {"type": ["string", "null"]},
+                                "source_id": {"type": ["string", "null"]},
+                                "source_section": {"type": ["string", "null"]},
+                                "source_page": {"type": ["string", "integer", "null"]},
+                                "verification_status": {"type": "string", "enum": ["verified", "partial", "unavailable"]},
+                            },
+                            "required": ["metric", "period_kind", "scope", "definition", "value",
+                                         "currency", "unit", "source_id", "source_section",
+                                         "verification_status"],
+                        },
+                    },
+                },
+                "required": ["schema_version", "subject", "sources", "facts"],
             },
             "data_as_of": {"type": "string", "description": "Date or timestamp of the researched data"},
             "artifact_id": {"type": "string", "description": "Existing artifact series to revise"},
