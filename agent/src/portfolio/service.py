@@ -462,10 +462,13 @@ class PortfolioService:
                         cash_total = Decimal("0")
                         unsettled_cash = Decimal("0")
                         cash_semantics = None
-                    unpriced_or_other = max(
-                        Decimal("0"),
-                        account_total - priced_total - cash_total - unsettled_cash,
-                    )
+                    residual = account_total - priced_total - cash_total - unsettled_cash
+                    if broker == "asistente-casa" and residual < Decimal("-0.00001"):
+                        raise ValueError(
+                            "Asistente Casa snapshot components exceed account total; "
+                            "refusing to persist an inconsistent live capture"
+                        )
+                    unpriced_or_other = max(Decimal("0"), residual)
                     priced_count = sum(
                         1 for row in broker_positions if row.get("priced")
                     )
