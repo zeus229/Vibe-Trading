@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.grounding import GroundingLedger
-from src.agent.grounding.figures import parse_figures_block, scan_figures
+from evals.grounding import GroundingLedger
+from evals.grounding.figures import parse_figures_block, scan_figures
 
 pytestmark = pytest.mark.unit
 
@@ -261,10 +261,6 @@ def test_plain_ref_fields_keep_the_fraction_reading(tmp_path: Path) -> None:
     assert points.valid is False
 
 
-# Fork divergence: the fork's generic structured-money contract lets a nested money leaf
-# inherit the ISO currency its surrounding object declares (see FORK_DIVERGENCES.md,
-# test_generic_structured_money_uses_currency_context_for_observed_claims).
-@pytest.mark.xfail(strict=True, reason="fork: nested money leaves inherit the declared currency (pinned by test_grounding_nested_currency_scope.py)")
 @pytest.mark.parametrize("nested", [{"value_end": 20.0}, [{"value_end": 20.0}]])
 def test_currency_does_not_cross_into_nested_objects(tmp_path, nested):
     ledger = _ledger(tmp_path, {"data": {"currency": "USD", "value_end": 10.0, "child": nested}})

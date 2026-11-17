@@ -5,6 +5,30 @@ Last committed upstream sync: 2026-10-29 (upstream `de359932`, merged onto fork 
 Uncommitted sync candidate: 2026-11-03, upstream `2ac20879389f0e0104b59ad2f2076db75cd41fb2` onto fork `b79ab7a0a3297e3d2114760f963fa9b460b6b34f`. No commit, publication or deployment yet.
 
 
+## Sync candidate 2026-11-17 (upstream `b74c4c81`) — runtime grounding gate retired
+
+Merge of `HKUDS/Vibe-Trading@b74c4c810d1e597587c9accb2dbd3f99f21359e2` onto fork
+`main@903db71d`. Decision (option A, authorized): adopt upstream's research
+delivery flow, which no longer blocks, rewrites or discounts answers on numeric
+grounding. Not deployed; production stays on `cacb470d` until a separate deploy.
+
+Retired fork code: `agent/src/agent/grounding/{release,loop_grounding,derived,repair_contract}.py`,
+the `figures` declaration prompt, the `Grounding call ID` prefix in the Codex
+Responses adapter, and the fork's gate-only tests. `agent/evals/grounding` is
+upstream's offline diagnostic package, taken as-is.
+
+Preserved (independent of the numeric gate):
+- `instrument_identity.py` (upstream module) plus fork additions: `identity_conflict`
+  authorization for contradictory verified ISINs, no `.BA` suffix inference, and
+  `portfolio_summary` ingestion of verified provider identities (called from
+  `IdentityLedger.ingest_tool_result`). Tests: `test_verified_portfolio_isin_conflicts.py`,
+  `test_asistente_casa_provider_identity.py`.
+- Observed tool-call ledger for goal-evidence provenance, Asistente Casa MCP/PPI tools,
+  read-only posture, `VIBE_TRADING_FORWARDED_ALLOW_IPS`, BYMA/ARS/cash ledger/Risk X-Ray,
+  Nexo sidebar link.
+- PR #92 (structured financial facts) is absorbed by upstream #2164; only its
+  `docs/structured_financial_research_artifacts.md` is unique.
+
 ## Sync candidate 2026-11-03 (upstream `2ac20879`)
 
 56 upstream commits / 149 paths since `de359932`; merge prepared with

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.provider_helpers import chat_with_adapter
+
 import json
 import sys
 from types import SimpleNamespace
@@ -14,7 +16,6 @@ from src.agent.loop import AgentLoop
 from src.agent.tools import BaseTool, ToolRegistry
 from src.agent.trace import TraceWriter
 from src.config.accessor import get_env_config, reset_env_config
-from src.providers.chat import ChatLLM
 from src.providers.llm import provider_diagnostics
 from src.providers.tool_policy import bash_policy, policy_status
 from src.providers import tool_policy
@@ -70,11 +71,8 @@ class _RecordingLLM:
         yield AIMessageChunk(content="ok", response_metadata={"finish_reason": "stop"})
 
 
-def _chat(llm: _RecordingLLM) -> ChatLLM:
-    chat = ChatLLM.__new__(ChatLLM)
-    chat._llm = llm
-    chat.model_name = "gpt-test"
-    return chat
+def _chat(llm: _RecordingLLM):
+    return chat_with_adapter(llm, model="gpt-test")
 
 
 def test_chat_filters_denied_tools_before_any_provider_binds(shared_policy) -> None:
@@ -280,3 +278,33 @@ def test_windows_python_paths_use_cmd_quoting(monkeypatch):
     command, reason = tool_policy.check_bash_command('python -c "print(1)"')
     assert reason is None
     assert command.startswith('"C:\\Program Files\\Python\\python.exe" ')
+
+
+def test_mcp_tools_that_bypass_the_registry_still_honour_the_deny_list(monkeypatch):
+    """`backtest` and `web_search` are MCP tools that call their code directly."""
+    import asyncio
+
+    from fastmcp import Client
+    from fastmcp.exceptions import ToolError
+
+    import mcp_server
+
+    async def listed() -> set[str]:
+        async with Client(mcp_server.mcp) as client:
+            return {tool.name for tool in await client.list_tools()}
+
+    unfiltered = asyncio.run(listed())
+    assert {"backtest", "web_search"} <= unfiltered
+
+    monkeypatch.setenv("VIBE_TRADING_DENY_TOOL_PREFIXES", "backtest,web_")
+    reset_env_config()
+    filtered = asyncio.run(listed())
+    assert not {name for name in filtered if name.startswith(("backtest", "web_"))}
+    assert filtered == {name for name in unfiltered if not name.startswith(("backtest", "web_"))}
+
+    async def call_denied() -> None:
+        async with Client(mcp_server.mcp) as client:
+            await client.call_tool("backtest", {"run_dir": "unused"})
+
+    with pytest.raises(ToolError, match="disabled by the active tool policy"):
+        asyncio.run(call_denied())

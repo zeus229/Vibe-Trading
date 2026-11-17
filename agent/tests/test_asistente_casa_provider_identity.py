@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from src.agent.grounding import GroundingLedger
+from src.agent.instrument_identity import IdentityLedger
 from src.market_data import detect_source
 from src.portfolio.normalization import normalize_position, value_position
 
@@ -91,7 +91,7 @@ def test_non_asistente_connector_cannot_smuggle_trusted_provider_identity():
 
 
 def test_verified_isin_portfolio_identity_locks_ba_symbol(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analiza mi cartera")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Analiza mi cartera")
     identity = _verified_identity("GGAL.BA", "ARP495251018")
     ledger.ingest_tool_result(
         tool_name="portfolio_summary",
@@ -150,7 +150,7 @@ def test_unverified_or_wrong_isin_portfolio_identity_does_not_lock(tmp_path):
     ]
     for index, identity in enumerate(cases):
         run_dir = tmp_path / str(index)
-        ledger = GroundingLedger(run_dir=run_dir, user_message="Analiza mi cartera")
+        ledger = IdentityLedger(run_dir=run_dir, user_message="Analiza mi cartera")
         ledger.ingest_tool_result(
             tool_name="portfolio_summary",
             arguments={},

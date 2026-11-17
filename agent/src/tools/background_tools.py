@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from src.agent.tools import BaseTool
+from src.data_gateway.guidance import SHELL_DATA_GUIDANCE
 from src.tools._shell_safety import broad_python_kill_error
 
 WORKDIR = Path(__file__).resolve().parents[2]
@@ -211,7 +212,7 @@ class BackgroundManager:
         """
         if self._store is None:
             return {"recovered": 0, "unchanged": 0, "unreadable": []}
-        from src.tools.background_store import reconcile_after_restart
+        from src.tools.background_store import TaskRecord, reconcile_after_restart
 
         records, unreadable = self._store.load_all()
         with _LIVE_TASK_IDS_LOCK:
@@ -224,6 +225,7 @@ class BackgroundManager:
             except Exception:
                 logging.getLogger(__name__).exception("Could not persist recovered task %s", record.task_id)
         with self._lock:
+            restored: list[TaskRecord] = []
             for record in recovered + unchanged:
                 if record.task_id in self.tasks:
                     continue
@@ -235,7 +237,20 @@ class BackgroundManager:
                     "started_wall_time": record.started_at, "ended_at": record.ended_at,
                     "duration_seconds": record.duration_seconds,
                     "recovery_reason": record.recovery_reason,
+                    "notification_pending": record.notification_pending,
                 }
+                if record.notification_pending is True:
+                    restored.append(record)
+            restored.sort(key=lambda record: (
+                record.ended_at if record.ended_at is not None else record.updated_at,
+                record.task_id,
+            ))
+            self._notifications[:0] = [(record.owner_id, {
+                "task_id": record.task_id, "status": record.status,
+                "command": record.command_preview[:80],
+                "result": (record.result_preview or "(no output)")[:500],
+                "exit_code": record.exit_code,
+            }) for record in restored]
         return {"recovered": len(recovered), "unchanged": len(unchanged), "unreadable": unreadable}
 
     def run(self, command: str) -> str:
@@ -270,6 +285,7 @@ class BackgroundManager:
                 "started_wall_time": time.time(),
                 "owner_id": self._scope.owner_id,
                 "attempt_id": self._scope.attempt_id,
+                "notification_pending": True,
             }
             with _LIVE_TASK_IDS_LOCK:
                 _LIVE_TASK_IDS.add(task_id)
@@ -501,13 +517,26 @@ class BackgroundManager:
         """Return this owner's queued notifications, oldest first.
 
         Notifications belonging to other owners stay queued for them; draining
-        one session can never consume another's result.
+        one session can never consume another's result. Durable delivery is
+        acknowledged after the in-memory claim. If that write or the process
+        fails, the next restart can replay a notice (at-least-once delivery).
         """
+        acknowledged: list[str] = []
         with self._lock:
             mine = [payload for owner, payload in self._notifications
                     if owner == self._scope.owner_id]
             self._notifications[:] = [(owner, payload) for owner, payload in self._notifications
                                       if owner != self._scope.owner_id]
+            for payload in mine:
+                task_id = payload.get("task_id")
+                task = self.tasks.get(task_id)
+                if task is not None and task.get("notification_pending") is True:
+                    task["notification_pending"] = False
+                    acknowledged.append(task_id)
+        # Do not hold the task lock while taking the persistence lock: _persist
+        # takes them in the opposite order on completion and cancellation.
+        for task_id in acknowledged:
+            self._persist(task_id)
         return mine
 
 
@@ -549,7 +578,7 @@ class BackgroundRunTool(BaseTool):
         "task_id immediately and times out after 300 seconds. On Windows the "
         "shell is cmd.exe, not PowerShell. Poll with check_background and stop "
         "only with cancel_background; never use taskkill/pkill/killall."
-    )
+    ) + SHELL_DATA_GUIDANCE
     parameters = {"type": "object", "properties": {
         "command": {"type": "string", "description": "Shell command to run in background"},
     }, "required": ["command"]}

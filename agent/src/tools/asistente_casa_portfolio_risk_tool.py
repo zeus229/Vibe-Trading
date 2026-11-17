@@ -7,7 +7,7 @@ history. Vibe performs the deterministic risk computation.
 This tool is self-contained by design: it resolves its own symbols/weights
 from Asistente Casa and never accepts a ``symbols`` argument from the model,
 so it never trips the generic instrument-identity gate
-(``agent/src/agent/grounding/identity.py`` only gates calls whose arguments
+(``agent/src/agent/instrument_identity.py`` only gates calls whose arguments
 carry a key in ``code/codes/symbol/symbols/ticker/tickers/underlying/
 underlyings``) and never touches the generic market-data fallback chain
 (``search_symbol``, ``fetch_market_data``/``get_market_data``, yfinance,

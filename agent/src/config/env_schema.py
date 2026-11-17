@@ -171,7 +171,9 @@ class LLMConfig(_EnvBase):
     langchain_max_tokens: int | None = Field(
         alias="LANGCHAIN_MAX_TOKENS", default=None, gt=0
     )
-    anthropic_max_tokens: int | None = Field(alias="ANTHROPIC_MAX_TOKENS", default=None, gt=0)
+    # Use an explicit, configurable output budget so unknown proxy aliases do
+    # not silently inherit the adapter's 4096-token fallback (including thinking).
+    anthropic_max_tokens: int | None = Field(alias="ANTHROPIC_MAX_TOKENS", default=16384, gt=0)
     timeout_seconds: int = Field(alias="TIMEOUT_SECONDS", default=120)
     max_retries: int = Field(alias="MAX_RETRIES", default=2)
     langchain_reasoning_effort: str = Field(alias="LANGCHAIN_REASONING_EFFORT", default="")
@@ -230,6 +232,7 @@ class DataConfig(_EnvBase):
     alphavantage_api_key: str = Field(alias="ALPHAVANTAGE_API_KEY", default="")
     tiingo_api_key: str = Field(alias="TIINGO_API_KEY", default="")
     fmp_api_key: str = Field(alias="FMP_API_KEY", default="")
+    gildata_features: str = Field(alias="VIBE_TRADING_GILDATA_FEATURES", default="")
     gildata_token: str = Field(alias="GILDATA_TOKEN", default="")
     gildata_base_url: str = Field(
         alias="GILDATA_BASE_URL",
@@ -278,8 +281,6 @@ class DataConfig(_EnvBase):
     vibe_trading_data_cache: EnvBool = Field(alias="VIBE_TRADING_DATA_CACHE", default=False)
     vibe_trading_data_cache_root: str = Field(alias="VIBE_TRADING_DATA_CACHE_ROOT", default="")
     aliyun_iqs_api_key: str = Field(alias="ALIYUN_IQS_API_KEY", default="")
-    qveris_api_key: str = Field(alias="QVERIS_API_KEY", default="")
-    qveris_base_url: str = Field(alias="QVERIS_BASE_URL", default="")
     tickerall_api_key: str = Field(alias="TICKERALL_API_KEY", default="")
     tickerall_account_id: str = Field(alias="TICKERALL_ACCOUNT_ID", default="")
     tickerall_base_url: str = Field(alias="TICKERALL_BASE_URL", default="")
@@ -300,6 +301,7 @@ class DataConfig(_EnvBase):
     market_data_order_hk_equity: str = Field(alias="MARKET_DATA_ORDER_HK_EQUITY", default="")
     market_data_order_india_equity: str = Field(alias="MARKET_DATA_ORDER_INDIA_EQUITY", default="")
     market_data_order_kr_equity: str = Field(alias="MARKET_DATA_ORDER_KR_EQUITY", default="")
+    market_data_order_jp_equity: str = Field(alias="MARKET_DATA_ORDER_JP_EQUITY", default="")
     market_data_order_ca_equity: str = Field(alias="MARKET_DATA_ORDER_CA_EQUITY", default="")
     market_data_order_ar_equity: str = Field(alias="MARKET_DATA_ORDER_AR_EQUITY", default="")
     market_data_order_br_equity: str = Field(alias="MARKET_DATA_ORDER_BR_EQUITY", default="")

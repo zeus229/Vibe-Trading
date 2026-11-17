@@ -535,7 +535,7 @@ class AddGoalEvidenceTool(_GoalToolBase):
         "Use provenance_kind=single_tool only for evidence from one concrete tool result and "
         "copy its exact tool_call_id. Use synthesis for combined evidence and manual for notes "
         "not attributable to one tool call. The runtime validates single-tool ids against calls "
-        "actually observed in this run; evidence_id (ev_...) is never a grounding source ref."
+        "actually observed in this run; evidence_id (ev_...) identifies the goal-ledger row, not a tool result."
     )
     is_readonly = False
     parameters = {

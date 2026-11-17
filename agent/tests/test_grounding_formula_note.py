@@ -8,8 +8,8 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.grounding import GroundingLedger
-from src.agent.grounding.policies import _evaluate_formula, _formula_in_note
+from evals.grounding import GroundingLedger
+from evals.grounding.policies import _evaluate_formula, _formula_in_note
 
 pytestmark = pytest.mark.unit
 
@@ -28,16 +28,6 @@ pytestmark = pytest.mark.unit
     ],
 )
 def test_descriptive_colon_preserves_formula(note: str, separator: str) -> None:
-    # Fork policy: an ASCII colon requires a complete arithmetic suffix and fails
-    # closed on trailing result/explanation/unit text (see
-    # test_grounding_note_formula_extraction.py); the full-width colon keeps
-    # upstream's tolerant reading.
-    strict_ascii = separator == ":" and any(
-        marker in note for marker in ("= 1.25", ", explanation", "units")
-    )
-    if strict_ascii:
-        assert _formula_in_note(note.format(separator=separator)) is None
-        return
     expected = _evaluate_formula("125 / 10000 * 100")
     actual = _formula_in_note(note.format(separator=separator))
 
