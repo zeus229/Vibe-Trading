@@ -1357,8 +1357,17 @@ class PortfolioService:
                 profile.transport == "local_plugin" or self._use_connection_scoped_reads
             ):
                 read_options["connection_id"] = connection.id
-            account = self._get_account(profile_id, **read_options)
-            positions_payload = self._get_positions(profile_id, **read_options)
+            if broker == "asistente-casa" and profile.transport == "local_plugin":
+                # One live capture must back both account and positions. Separate
+                # calls may observe different prices during market hours.
+                from src.trading.service import get_portfolio_snapshot
+
+                atomic = get_portfolio_snapshot(profile_id, **read_options)
+                account = atomic["account"]
+                positions_payload = atomic["positions"]
+            else:
+                account = self._get_account(profile_id, **read_options)
+                positions_payload = self._get_positions(profile_id, **read_options)
         for label, payload in (("account", account), ("positions", positions_payload)):
             if str(payload.get("status") or "ok").lower() not in {"ok", "success"}:
                 raise RuntimeError(
