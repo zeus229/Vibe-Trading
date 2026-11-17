@@ -75,6 +75,10 @@ def test_native_account_separates_unsettled_cash(tmp_path, monkeypatch):
         settings_store=settings,
         get_account=_get_account,
         get_positions=_get_positions,
+        get_portfolio_snapshot=lambda profile_id, **opts: {
+            "account": _get_account(profile_id, **opts),
+            "positions": _get_positions(profile_id, **opts),
+        },
         get_quote=lambda *args, **kwargs: {},
         fx_fetcher=_unexpected_fx,
     )
@@ -116,12 +120,17 @@ def _refresh_with_account(tmp_path, monkeypatch, account, *, source_pnl=None):
     settings.connection_store.ensure("ars", profile.id, "ARS")
     settings.save({"display_currency": "ARS", "sources": [{
         "connection_id": "ars", "label": "ARS", "enabled": True, "order": 0, "include_cash": True}]})
+    def atomic_reader(profile_id, *, connection_id=None):
+        assert profile_id == profile.id and connection_id == "ars"
+        return {"account": {"account": account}, "positions": {"positions": [{
+            "symbol": "GGAL", "quantity": "1", "average_cost": "600", "current_price": "700",
+            "market_value": "700", "currency": "ARS", "unrealized_pnl": source_pnl}]}}
+
     service = PortfolioService(
         PortfolioStore(tmp_path / "portfolio.sqlite3"), settings_store=settings,
-        get_account=lambda profile_id, *, connection_id=None: {"account": account},
-        get_positions=lambda profile_id, *, connection_id=None: {"positions": [{
-            "symbol": "GGAL", "quantity": "1", "average_cost": "600", "current_price": "700",
-            "market_value": "700", "currency": "ARS", "unrealized_pnl": source_pnl}]},
+        get_account=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("account read must not run")),
+        get_positions=lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("positions read must not run")),
+        get_portfolio_snapshot=atomic_reader,
         get_quote=lambda *a, **k: {},
         fx_fetcher=lambda: (_ for _ in ()).throw(AssertionError("no FX")),
     )
