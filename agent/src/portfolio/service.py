@@ -237,6 +237,7 @@ class PortfolioService:
         settings_store: PortfolioSettingsStore | None = None,
         get_account: Callable[..., dict[str, Any]] | None = None,
         get_positions: Callable[..., dict[str, Any]] | None = None,
+        get_portfolio_snapshot: Callable[..., dict[str, Any]] | None = None,
         get_quote: Callable[..., dict[str, Any]] | None = None,
         get_longbridge_quotes: Callable[..., dict[str, Any]] | None = None,
         fx_fetcher: Callable[[], FxQuote | tuple[Decimal, Decimal, str]] | None = None,
@@ -252,6 +253,8 @@ class PortfolioService:
                 ``src.trading.service.get_account``.
             get_positions: Positions reader. Defaults to
                 ``src.trading.service.get_positions``.
+            get_portfolio_snapshot: Atomic Asistente Casa account/positions reader.
+                Defaults to ``src.trading.service.get_portfolio_snapshot``.
             get_quote: Single-symbol quote reader. Defaults to
                 ``src.trading.service.get_quote``.
             get_longbridge_quotes: Optional batch quote reader used only for
@@ -271,6 +274,11 @@ class PortfolioService:
             get_positions = get_positions or trading.get_positions
             get_quote = get_quote or trading.get_quote
         self.store = store or PortfolioStore()
+        if get_portfolio_snapshot is None:
+            from src.trading.service import get_portfolio_snapshot as atomic_reader
+
+            get_portfolio_snapshot = atomic_reader
+        self._get_portfolio_snapshot = get_portfolio_snapshot
         self._get_account = get_account
         self._get_positions = get_positions
         self._get_quote = get_quote
@@ -1363,9 +1371,7 @@ class PortfolioService:
             if broker == "asistente-casa" and profile.transport == "local_plugin":
                 # One live capture must back both account and positions. Separate
                 # calls may observe different prices during market hours.
-                from src.trading.service import get_portfolio_snapshot
-
-                atomic = get_portfolio_snapshot(profile_id, **read_options)
+                atomic = self._get_portfolio_snapshot(profile_id, **read_options)
                 account = atomic["account"]
                 positions_payload = atomic["positions"]
             else:
