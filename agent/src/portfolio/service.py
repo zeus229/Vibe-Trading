@@ -237,6 +237,7 @@ class PortfolioService:
         settings_store: PortfolioSettingsStore | None = None,
         get_account: Callable[..., dict[str, Any]] | None = None,
         get_positions: Callable[..., dict[str, Any]] | None = None,
+        get_portfolio_snapshot: Callable[..., dict[str, Any]] | None = None,
         get_quote: Callable[..., dict[str, Any]] | None = None,
         get_longbridge_quotes: Callable[..., dict[str, Any]] | None = None,
         fx_fetcher: Callable[[], FxQuote | tuple[Decimal, Decimal, str]] | None = None,
@@ -252,6 +253,8 @@ class PortfolioService:
                 ``src.trading.service.get_account``.
             get_positions: Positions reader. Defaults to
                 ``src.trading.service.get_positions``.
+            get_portfolio_snapshot: Atomic Asistente Casa account/positions reader.
+                Defaults to ``src.trading.service.get_portfolio_snapshot``.
             get_quote: Single-symbol quote reader. Defaults to
                 ``src.trading.service.get_quote``.
             get_longbridge_quotes: Optional batch quote reader used only for
@@ -271,6 +274,11 @@ class PortfolioService:
             get_positions = get_positions or trading.get_positions
             get_quote = get_quote or trading.get_quote
         self.store = store or PortfolioStore()
+        if get_portfolio_snapshot is None:
+            from src.trading.service import get_portfolio_snapshot as atomic_reader
+
+            get_portfolio_snapshot = atomic_reader
+        self._get_portfolio_snapshot = get_portfolio_snapshot
         self._get_account = get_account
         self._get_positions = get_positions
         self._get_quote = get_quote
@@ -462,10 +470,13 @@ class PortfolioService:
                         cash_total = Decimal("0")
                         unsettled_cash = Decimal("0")
                         cash_semantics = None
-                    unpriced_or_other = max(
-                        Decimal("0"),
-                        account_total - priced_total - cash_total - unsettled_cash,
-                    )
+                    residual = account_total - priced_total - cash_total - unsettled_cash
+                    if broker == "asistente-casa" and residual < Decimal("-0.00001"):
+                        raise ValueError(
+                            "Asistente Casa snapshot components exceed account total; "
+                            "refusing to persist an inconsistent live capture"
+                        )
+                    unpriced_or_other = max(Decimal("0"), residual)
                     priced_count = sum(
                         1 for row in broker_positions if row.get("priced")
                     )
@@ -1357,8 +1368,15 @@ class PortfolioService:
                 profile.transport == "local_plugin" or self._use_connection_scoped_reads
             ):
                 read_options["connection_id"] = connection.id
-            account = self._get_account(profile_id, **read_options)
-            positions_payload = self._get_positions(profile_id, **read_options)
+            if broker == "asistente-casa" and profile.transport == "local_plugin":
+                # One live capture must back both account and positions. Separate
+                # calls may observe different prices during market hours.
+                atomic = self._get_portfolio_snapshot(profile_id, **read_options)
+                account = atomic["account"]
+                positions_payload = atomic["positions"]
+            else:
+                account = self._get_account(profile_id, **read_options)
+                positions_payload = self._get_positions(profile_id, **read_options)
         for label, payload in (("account", account), ("positions", positions_payload)):
             if str(payload.get("status") or "ok").lower() not in {"ok", "success"}:
                 raise RuntimeError(

@@ -243,6 +243,32 @@ def get_account(profile_id: str | None = None, **overrides: Any) -> dict[str, An
     )
 
 
+def get_portfolio_snapshot(profile_id: str | None = None, **overrides: Any) -> dict[str, Any]:
+    """Read account and positions from one local connector capture.
+
+    Supported only by the Asistente Casa read-only local plugin. No fallback to
+    two independent reads: that would silently violate snapshot consistency.
+    """
+    profile = profile_by_id(profile_id)
+    if profile.transport != "local_plugin" or profile.connector != "asistente-casa":
+        raise ValueError("atomic portfolio read requires the Asistente Casa local plugin")
+    result = _local_plugin_call(profile, "get_portfolio_snapshot", overrides)
+    account = result.get("account_snapshot")
+    positions = result.get("positions_snapshot")
+    if not isinstance(account, dict) or not isinstance(positions, dict):
+        raise ValueError("atomic portfolio connector response missing account or positions")
+    for key in ("source_capture_id", "captured_at"):
+        left, right = account.get(key), positions.get(key)
+        if not isinstance(left, str) or not left.strip() or left != right:
+            raise ValueError(f"atomic portfolio capture {key} missing or mismatched")
+        if result.get(key) != left:
+            raise ValueError(f"atomic portfolio envelope {key} mismatch")
+    return {
+        "account": _with_profile(profile, account),
+        "positions": _with_profile(profile, positions),
+    }
+
+
 def get_accounts(profile_id: str | None = None, **overrides: Any) -> dict[str, Any]:
     """List the broker accounts a remote MCP profile can be scoped to.
 
