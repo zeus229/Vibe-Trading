@@ -5,6 +5,19 @@ Last committed upstream sync: 2026-10-29 (upstream `de359932`, merged onto fork 
 Uncommitted sync candidate: 2026-11-03, upstream `2ac20879389f0e0104b59ad2f2076db75cd41fb2` onto fork `b79ab7a0a3297e3d2114760f963fa9b460b6b34f`. No commit, publication or deployment yet.
 
 
+## Joint ACCIONES + CEDEARS risk through the Asistente Casa adapter (2026-11-17)
+
+`asistente_casa_portfolio_risk_xray` accepts `asset_type="ACCIONES+CEDEARS"`: one
+whole-portfolio capture (`asset_type=ALL`), ACCIONES+CEDEARS filtered and reweighted by
+market value, history requested per instrument type, ARS-only series (a foreign or
+undeclared currency fails closed), then the unchanged upstream `compute_risk_xray`.
+`lookback_sessions=N` now means N returns (N+1 closes), matching the Asistente Casa MCP
+risk tool. `meta.coverage` lists included/excluded instruments, the share of the total
+portfolio covered, dates, number of returns, window sources, close-only bars and returns
+that span several sessions. BONOS, FCI and cash are reported as out of scope. No core
+module, no grounding rule and no identity rule changed; the tool still takes no symbol
+argument. Top 5 / Top 10 are intentionally not implemented.
+
 ## Sync candidate 2026-11-17 (upstream `b74c4c81`) — runtime grounding gate retired
 
 Merge of `HKUDS/Vibe-Trading@b74c4c810d1e597587c9accb2dbd3f99f21359e2` onto fork
