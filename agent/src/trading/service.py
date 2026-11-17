@@ -257,6 +257,12 @@ def get_portfolio_snapshot(profile_id: str | None = None, **overrides: Any) -> d
     positions = result.get("positions_snapshot")
     if not isinstance(account, dict) or not isinstance(positions, dict):
         raise ValueError("atomic portfolio connector response missing account or positions")
+    for key in ("source_capture_id", "captured_at"):
+        left, right = account.get(key), positions.get(key)
+        if not isinstance(left, str) or not left.strip() or left != right:
+            raise ValueError(f"atomic portfolio capture {key} missing or mismatched")
+        if result.get(key) != left:
+            raise ValueError(f"atomic portfolio envelope {key} mismatch")
     return {
         "account": _with_profile(profile, account),
         "positions": _with_profile(profile, positions),
