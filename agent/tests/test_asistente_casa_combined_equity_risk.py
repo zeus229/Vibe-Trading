@@ -244,7 +244,12 @@ def test_interior_gap_is_counted_as_a_multi_session_return(monkeypatch):
     _install(monkeypatch, history=history)
     payload = _run(lookback_sessions=40)
     assert payload["status"] == "ok"
-    assert payload["meta"]["coverage"]["bridged_returns"] == 1
+    coverage = payload["meta"]["coverage"]
+    assert coverage["bridged_returns"] == 1
+    detail = coverage["bridged_return_details"][0]  # the return is identified, not just counted
+    assert detail["symbols_missing_on_skipped_dates"] == ["AAA"]
+    assert detail["skipped_dates"] == [DATES[60].date().isoformat()]
+    assert detail["return_from"] == DATES[59].date().isoformat() and detail["return_to"] == DATES[61].date().isoformat()
     assert any("span more than one session" in w for w in payload["data"]["warnings"])
 
 
@@ -335,3 +340,31 @@ def test_a_recent_holding_does_not_clamp_the_start_of_long_windows(monkeypatch):
     assert payload["data"]["inputs"]["return_observations"] == 60
     first_history = [c for c in calls if c[0].endswith("/market-history")][0][1]
     assert first_history["from"] == DATES[0].date().isoformat()  # not the newest holding's first bar
+
+
+def test_coverage_percentages_state_their_denominators_in_ars(monkeypatch):
+    def history(kind):
+        series = _series(kind)
+        if kind == "CEDEARS":
+            series["DDD"]["observations"] = series["DDD"]["observations"][-10:]
+        return series
+
+    _install(monkeypatch, history=history)
+    payload = _run(lookback_sessions=40)
+    den = payload["meta"]["coverage"]["denominators"]
+    cov = payload["meta"]["coverage"]
+
+    assert den["total_portfolio_value_ars"] == TOTAL
+    assert den["scope_value_ars"] == 900_000.0          # ACCIONES+CEDEARS only, not the whole portfolio
+    assert den["included_value_ars"] == 850_000.0
+    assert den["excluded_value_ars"] == 50_000.0
+    assert den["out_of_scope_value_ars"] == 90_000.0    # BONOS + FCI
+    # each published percentage is exactly value / its declared denominator
+    assert cov["covered_pct_of_total_portfolio"] == pytest.approx(100 * den["included_value_ars"] / den["total_portfolio_value_ars"])
+    assert cov["excluded_pct_of_total_portfolio"] == pytest.approx(100 * den["excluded_value_ars"] / den["total_portfolio_value_ars"])
+    assert cov["out_of_scope_pct_of_total_portfolio"] == pytest.approx(100 * den["out_of_scope_value_ars"] / den["total_portfolio_value_ars"])
+    assert cov["covered_pct_of_scope"] == pytest.approx(100 * den["included_value_ars"] / den["scope_value_ars"])
+    assert set(den["definitions"]) >= {"covered_pct_of_total_portfolio", "covered_pct_of_scope", "weight_scope_pct"}
+    # meta.scope_value_ars must be the equity scope, not the ALL-portfolio value the endpoint reports
+    assert payload["meta"]["scope_value_ars"] == 900_000.0
+    assert payload["meta"]["total_value_ars"] == TOTAL

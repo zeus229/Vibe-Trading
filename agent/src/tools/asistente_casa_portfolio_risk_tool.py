@@ -223,19 +223,33 @@ def _window_sources(
     return out
 
 
-def _bridged_returns(closes: pd.DataFrame, raw_index: pd.DatetimeIndex) -> int:
+def _bridged_returns(
+    closes: pd.DataFrame, raw: pd.DataFrame
+) -> list[dict[str, Any]]:
     """Returns whose two closes are separated by a raw date that was dropped.
 
     The strict shared-date panel can pair two non-adjacent closes when a symbol
-    lacks an interior bar; that return spans several sessions. It is counted, not
-    hidden, so the caller can see how much of the sample it affects.
+    lacks an interior bar; that return spans several sessions. Each one is listed
+    with the skipped date(s) and the symbol(s) lacking a bar there, so it is
+    identified rather than hidden.
     """
     dates = list(closes.index)
-    count = 0
+    details: list[dict[str, Any]] = []
     for before, after in zip(dates[:-1], dates[1:]):
-        if ((raw_index > before) & (raw_index < after)).any():
-            count += 1
-    return count
+        skipped = raw.index[(raw.index > before) & (raw.index < after)]
+        if len(skipped):
+            missing = sorted(
+                str(column) for column in raw.columns if raw.loc[skipped, column].isna().any()
+            )
+            details.append(
+                {
+                    "return_from": before.date().isoformat(),
+                    "return_to": after.date().isoformat(),
+                    "skipped_dates": [stamp.date().isoformat() for stamp in skipped],
+                    "symbols_missing_on_skipped_dates": missing,
+                }
+            )
+    return details
 
 
 def _env_credentials() -> tuple[str, str]:
@@ -684,11 +698,13 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
 
         included_set = set(coverage_meta["included_symbols"])
         return_observations = int(report["inputs"]["return_observations"])
-        bridged = _bridged_returns(closes, closes_raw.index)
+        bridged_details = _bridged_returns(closes, closes_raw)
+        bridged = len(bridged_details)
         if bridged:
             report.setdefault("warnings", []).append(
                 f"{bridged} of {return_observations} returns span more than one session because a "
-                "symbol lacks an interior bar; they are kept as observed and not synthesized"
+                "symbol lacks an interior bar (listed in meta.coverage.bridged_return_details); "
+                "they are kept as observed and not synthesized"
             )
         window_sources = _window_sources(
             history_payload.get("series", {}),
@@ -747,6 +763,36 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             None if any(value is None for value in all_weight_pct)
             else round(max(0.0, 100.0 - sum(all_weight_pct)), 4)  # type: ignore[arg-type]
         )
+        def _value(position: Mapping[str, Any]) -> float | None:
+            value = position.get("market_value_ars")
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+                return None
+            return float(value)
+
+        def _value_sum(items: list[Mapping[str, Any]]) -> float | None:
+            values = [_value(item) for item in items]
+            return None if any(value is None for value in values) else round(sum(values), 2)
+
+        total_value = portfolio_block.get("total_value_ars")
+        total_value = float(total_value) if isinstance(total_value, (int, float)) and not isinstance(total_value, bool) else None
+        included_positions = [position_by_symbol[row["symbol"]] for row in included_rows]
+        excluded_positions = [position_by_symbol[row["symbol"]] for row in excluded_rows]
+        scope_value = _value_sum(list(positions))
+        denominators = {
+            "total_portfolio_value_ars": total_value,
+            "scope_value_ars": scope_value,
+            "included_value_ars": _value_sum(included_positions),
+            "excluded_value_ars": _value_sum(excluded_positions),
+            "out_of_scope_value_ars": _value_sum(list(out_of_scope)),
+            "definitions": {
+                "covered_pct_of_total_portfolio": "included_value_ars / total_portfolio_value_ars (total includes cash and every instrument type)",
+                "excluded_pct_of_total_portfolio": "excluded_value_ars / total_portfolio_value_ars",
+                "out_of_scope_pct_of_total_portfolio": "out_of_scope_value_ars / total_portfolio_value_ars",
+                "cash_and_other_pct_of_total_portfolio": "100 - sum of every position's weight over total_portfolio_value_ars",
+                "covered_pct_of_scope": "included weight / scope weight (scope = " + asset_type + ")",
+                "weight_scope_pct": "position value / scope_value_ars",
+            },
+        }
         quality_notes = [
             "Constant-weight historical model over persisted ARS EOD closes; not account performance or True TWR.",
         ]
@@ -769,11 +815,13 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             "out_of_scope_pct_of_total_portfolio": out_pct,
             "cash_and_other_pct_of_total_portfolio": cash_other_pct,
             "covered_pct_of_scope": coverage_meta["included_weight_pct"],
+            "denominators": denominators,
             "return_observations": return_observations,
             "first_close_date": closes.index[0].date().isoformat(),
             "first_return_date": closes.index[1].date().isoformat(),
             "last_date": closes.index[-1].date().isoformat(),
             "bridged_returns": bridged,
+            "bridged_return_details": bridged_details,
             "history_sources": source_totals,
             "history_quality": quality_totals,
             "per_symbol_sources": window_sources,
@@ -818,7 +866,9 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "risk_position_count": len(coverage_meta["included_symbols"]),
                 **coverage_meta,
                 "total_value_ars": portfolio_block.get("total_value_ars"),
-                "scope_value_ars": portfolio_block.get("scope_value_ars"),
+                "scope_value_ars": (
+                    denominators["scope_value_ars"] if combined else portfolio_block.get("scope_value_ars")
+                ),
                 "weight_sum": weight_sum,
                 "risk_weight_sum": sum(risk_weights.values()),
                 "history_complete": history_response_complete,
