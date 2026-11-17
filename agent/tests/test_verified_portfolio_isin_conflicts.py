@@ -1,7 +1,7 @@
 """Verified portfolio listing identity must fail closed on ambiguity."""
 import pytest
 
-from src.agent.grounding import GroundingLedger
+from src.agent.instrument_identity import IdentityLedger
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +28,7 @@ def state(ledger, isin):
 
 
 def test_one_verified_listing_stays_locked(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Portfolio")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Portfolio")
     ingest(ledger, row("AR0000000001", "GGAL.BA"))
     assert state(ledger, "AR0000000001").status == "locked"
     assert state(ledger, "AR0000000001").symbol == "GGAL.BA"
@@ -36,7 +36,7 @@ def test_one_verified_listing_stays_locked(tmp_path):
 
 @pytest.mark.parametrize("reverse", [False, True])
 def test_two_qualified_listings_for_same_isin_do_not_choose_last(tmp_path, reverse):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Portfolio")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Portfolio")
     rows = [row("AR0000000001", "GGAL.BA"), row("AR0000000001", "GGALD.BA")]
     ingest(ledger, *(list(reversed(rows)) if reverse else rows))
     record = state(ledger, "AR0000000001")
@@ -46,7 +46,7 @@ def test_two_qualified_listings_for_same_isin_do_not_choose_last(tmp_path, rever
 
 
 def test_conflict_across_separate_calls_stays_closed(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Portfolio")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Portfolio")
     ingest(ledger, row("AR0000000001", "GGAL.BA"))
     ingest(ledger, row("AR0000000001", "GGALD.BA"))
     assert state(ledger, "AR0000000001").status == "portfolio_conflict"
@@ -56,7 +56,7 @@ def test_conflict_across_separate_calls_stays_closed(tmp_path):
 
 @pytest.mark.parametrize("separate", [False, True])
 def test_distinct_isins_for_same_symbol_are_both_conflicting(tmp_path, separate):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Portfolio")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Portfolio")
     first = row("AR0000000001", "GGAL.BA")
     second = row("AR0000000002", "GGAL.BA")
     if separate:
@@ -69,7 +69,7 @@ def test_distinct_isins_for_same_symbol_are_both_conflicting(tmp_path, separate)
 
 
 def test_unverified_row_does_not_create_conflict(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Portfolio")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Portfolio")
     ingest(ledger, row("AR0000000001", "GGAL.BA"),
            row("AR0000000001", "GGALD.BA", verified=False))
     assert state(ledger, "AR0000000001").status == "locked"
@@ -77,7 +77,7 @@ def test_unverified_row_does_not_create_conflict(tmp_path):
 
 
 def test_unrelated_locked_symbol_survives_portfolio_ambiguity(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
     ingest(
         ledger,
         row("AR0000000001", "GGAL.BA"),
@@ -103,7 +103,7 @@ def test_unrelated_locked_symbol_survives_portfolio_ambiguity(tmp_path):
 
 
 def test_unrelated_symbol_is_still_available_after_later_conflict(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
     ingest(ledger, row("AR0000000002", "YPFD.BA"))
     ingest(ledger, row("AR0000000001", "GGAL.BA"))
     ingest(ledger, row("AR0000000001", "GGALD.BA"))
@@ -116,20 +116,9 @@ def test_unrelated_symbol_is_still_available_after_later_conflict(tmp_path):
     assert state(ledger, "AR0000000001").status == "portfolio_conflict"
 
 
-def test_conflict_prose_is_rejected_without_poisoning_clean_prose(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
-    ingest(ledger, row("AR0000000001", "GGAL.BA"),
-           row("AR0000000001", "GGALD.BA"),
-           row("AR0000000002", "YPFD.BA"))
-    bad = ledger.validate_final_answer("GGAL.BA shows an uptrend; hold.")
-    assert not bad.valid
-    assert any(issue.get("reason") == "portfolio_identity_conflict" for issue in bad.issues)
-    clean = ledger.revalidate("YPFD.BA is a verified portfolio listing.")
-    assert not any(issue.get("reason") == "portfolio_identity_conflict" for issue in clean.issues)
-
 
 def test_symbol_search_cannot_supersede_portfolio_conflict(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
     ingest(ledger, row("AR0000000001", "GGAL.BA"),
            row("AR0000000002", "GGAL.BA"))
     assert all(state(ledger, isin).status == "portfolio_conflict"
@@ -140,27 +129,23 @@ def test_symbol_search_cannot_supersede_portfolio_conflict(tmp_path):
     assert "GGAL.BA" in ledger._portfolio_conflict_symbols()
 
 
-def test_portfolio_conflict_only_allows_generic_summary_without_resolver_recovery(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Summarize my portfolio")
-    ingest(ledger, row("AR0000000001", "GGAL.BA"),
-           row("AR0000000001", "GGALD.BA"))
-    assert ledger.identity_status == "ambiguous"
-    generic = ledger.validate_final_answer("La cartera contiene varias posiciones.")
-    assert not any(issue.get("reason") == "identity_not_locked" for issue in generic.issues)
-    assert ledger.recovery_action(generic) is None
-    assert not ledger.validate_final_answer("GGAL.BA muestra tendencia alcista.").valid
+def test_market_data_on_conflicting_isin_is_blocked_with_identity_conflict(tmp_path):
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
+    ingest(ledger, row("AR0000000001", "GGAL.BA"), row("AR0000000001", "GGALD.BA"))
+    blocked = ledger.authorize_tool_call(
+        "get_market_data", {"codes": ["GGAL.BA"]},
+        batch_authorized_symbols=ledger.authorized_symbols, call_id="call_search",
+        batch_identity_status=ledger.identity_status,
+    )
+    assert not blocked.allowed
+    assert blocked.error_code == "identity_conflict"
 
 
-def test_conflict_refusal_is_not_a_trading_claim(tmp_path):
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analyze GGAL.BA")
-    ingest(ledger, row("AR0000000001", "GGAL.BA"),
-           row("AR0000000001", "GGALD.BA"))
-    refusal = "No puedo analizar GGAL.BA porque su identidad es contradictoria."
-    assert not any(issue.get("reason") == "portfolio_identity_conflict"
-                   for issue in ledger.validate_final_answer(refusal).issues)
-    mixed = refusal + " GGAL.BA muestra tendencia alcista."
-    assert any(issue.get("reason") == "portfolio_identity_conflict"
-               for issue in ledger.revalidate(mixed).issues)
-    recommendation = refusal + " Recomiendo mantener."
-    assert any(issue.get("reason") == "portfolio_identity_conflict"
-               for issue in ledger.revalidate(recommendation).issues)
+def test_locked_ba_identity_never_authorizes_bare_ticker_by_suffix(tmp_path):
+    ledger = IdentityLedger(run_dir=tmp_path, user_message="Analyze verified holdings")
+    ingest(ledger, row("AR0000000001", "GGAL.BA"))
+    assert ledger._match_authorized_symbol("GGAL", {"GGAL.BA"}) is None
+    assert ledger._match_authorized_symbol("GGAL.BA", {"GGAL.BA"}) == "GGAL.BA"
+    # A non-BA listing keeps the upstream bare-ticker uniqueness rule.
+    assert ledger._match_authorized_symbol("AAPL", {"AAPL.US"}) == "AAPL.US"
+

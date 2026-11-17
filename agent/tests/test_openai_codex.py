@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from src.providers import settings as _provider_configuration
+
 import json
 import time
 from pathlib import Path
@@ -70,7 +72,7 @@ def test_codex_base_url_is_restricted_to_chatgpt_endpoint() -> None:
 
 
 def test_build_llm_returns_codex_adapter(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setattr(llm_mod, "_dotenv_loaded", True)
+    monkeypatch.setattr(_provider_configuration, "_dotenv_loaded", True)
     monkeypatch.setenv("LANGCHAIN_PROVIDER", "openai-codex")
     monkeypatch.setenv("LANGCHAIN_MODEL_NAME", DEFAULT_CODEX_MODEL)
     monkeypatch.setenv("OPENAI_CODEX_BASE_URL", DEFAULT_CODEX_URL)
@@ -136,7 +138,7 @@ def test_codex_tool_output_exposes_full_grounding_id_without_changing_protocol_i
     output = next(item for item in body["input"] if item.get("type") == "function_call_output")
     assert call["call_id"] == output["call_id"] == "call_synthetic123"
     assert call["id"] == "fc_synthetic456"
-    assert output["output"].startswith(f"Grounding call ID (cite verbatim): {full_id}\n")
+    assert output["output"] == messages[-1]["content"]  # protocol call_id only; no grounding prefix
     assert '"top1_weight":0.4' in output["output"]
 
 

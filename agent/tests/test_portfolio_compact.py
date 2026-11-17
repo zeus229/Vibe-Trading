@@ -10,7 +10,7 @@ from src.portfolio.compact import CompactPortfolioError, compact_snapshot
 from src.portfolio.service import PortfolioService
 from src.tools.portfolio_tool import PortfolioSummaryTool
 from src.config.limits import truncate_tool_result
-from src.agent.grounding import GroundingLedger
+from src.agent.instrument_identity import IdentityLedger
 
 
 def snapshot():
@@ -95,36 +95,6 @@ def test_tool_budget_and_simultaneous_visibility(monkeypatch):
     assert "Argentina" in c["aggregates"]["by_country"]
     assert {"GGAL", "BMA", "BBAR"} <= {x["symbol"] for x in c["holdings"]}
 
-
-def test_grounding_entities_units_and_aggregate(tmp_path):
-    c = compact_snapshot(snapshot())
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Composición de GGAL BMA BBAR")
-    ledger.ingest_tool_result(
-        tool_name="portfolio_summary",
-        arguments={"view": "compact"},
-        result=json.dumps({"status": "ok", "context": c}),
-        call_id="compact-call",
-        success=True,
-    )
-    evidence = {e.field: e for e in ledger._evidence}
-    for i in (0, 36, 37):
-        e = evidence[f"context.holdings[{i}].market_value_ars"]
-        assert (e.symbol, e.identity_scope, e.unit, e.currency) == (
-            c["holdings"][i]["symbol"],
-            "entity",
-            "money",
-            "ARS",
-        )
-        assert evidence[f"context.holdings[{i}].weight_portfolio"].unit == "ratio"
-    for path in (
-        "totals.portfolio_market_value_ars",
-        "totals.cash_ars",
-        "totals.unsettled_cash_ars",
-        "aggregates.by_country.Argentina.market_value_ars",
-    ):
-        e = evidence["context." + path]
-        assert (e.symbol, e.identity_scope, e.unit, e.currency) == (None, "aggregate", "money", "ARS")
-        assert e.timestamp == c["as_of"]
 
 
 @pytest.mark.parametrize("change", ["currency", "unpriced", "cash_missing", "mismatch", "identity"])

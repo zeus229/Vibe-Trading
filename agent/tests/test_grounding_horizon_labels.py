@@ -1,6 +1,6 @@
 """Regression tests for compact horizon labels in Markdown tables."""
 
-from src.agent.grounding.figures import parse_figures_block, scan_figures
+from evals.grounding.figures import parse_figures_block, scan_figures
 
 
 def _figures(content: str):

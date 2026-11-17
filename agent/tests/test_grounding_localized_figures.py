@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.agent.grounding.figures import parse_figures_block
+from evals.grounding.figures import parse_figures_block
 
 
 def test_ars_period_grouping_with_decimal_comma_parses_as_one_declaration() -> None:

@@ -124,6 +124,9 @@ export function Layout() {
     pendingSessionActions.current.add(sid);
     try {
       await api.deleteSession(sid);
+      // Any older list snapshot predates this accepted mutation.
+      sessionsLoadGeneration.current += 1;
+      setSessionsLoading(false);
       setSessions((prev) => prev.filter((s) => s.session_id !== sid));
       setDeleteTarget(null);
     } catch (error) {
@@ -140,6 +143,9 @@ export function Layout() {
     const title = renameValue.trim();
     try {
       await api.renameSession(sid, title);
+      // Any older list snapshot predates this accepted mutation.
+      sessionsLoadGeneration.current += 1;
+      setSessionsLoading(false);
       setSessions((prev) => prev.map((s) => s.session_id === sid ? { ...s, title } : s));
       setRenameTarget(null);
     } catch (error) {

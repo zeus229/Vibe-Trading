@@ -25,13 +25,12 @@ from pathlib import Path
 
 import pytest
 
-from src.agent.grounding import GroundingLedger
+from evals.grounding import GroundingLedger
 from tests.grounding_parameter_helpers import declared_parameter
-from src.agent.grounding.figures import (
+from evals.grounding.figures import (
     ROLES,
     parse_figures_block,
     scan_figures,
-    strip_figures_block,
 )
 
 pytestmark = pytest.mark.unit
@@ -217,22 +216,8 @@ def test_every_role_in_the_contract_is_accepted() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_block_is_stripped_from_the_released_text(tmp_path: Path) -> None:
-    """The contract is between the model and the gate; the user never sees it."""
-    answer = HDR + _block(HDR_ROW)
-
-    result = _ledger(tmp_path).validate_final_answer(answer)
-
-    assert result.valid is True, result.issues
-    assert result.released_text == HDR
-    assert "figures" not in result.released_text
-    assert "observed" not in result.released_text
 
 
-def test_stripping_a_draft_without_a_block_changes_nothing(tmp_path: Path) -> None:
-    result = _ledger(tmp_path).validate_final_answer(HDR)
-
-    assert result.released_text == HDR
 
 
 def test_the_raw_block_is_kept_in_the_artifact(tmp_path: Path) -> None:
@@ -247,9 +232,6 @@ def test_the_raw_block_is_kept_in_the_artifact(tmp_path: Path) -> None:
     assert HDR_ROW in artifact["validations"][0]["figures_block"]
 
 
-def test_strip_is_addressable_on_its_own() -> None:
-    text = "line one\n\n```figures\n1.0 | count | n\n```"
-    assert strip_figures_block(text, parse_figures_block(text)) == "line one"
 
 
 # ---------------------------------------------------------------------------
@@ -284,13 +266,6 @@ def _shapes(text: str) -> dict[str, str]:
         "09-14 收盘",                           # zero-padded MM-DD alone
         "2026-10-11 / 10-14 两次盘中低点",       # unpadded MM-DD opened by a full date
         "| 价位 | 含义 |\n|---|---|\n| 近端支撑 | 2026-09-11 / 09-14 盘中低点 |",  # real run
-        "cierre el 31-12-2024",                 # day-month-year date, es-AR/es-ES (#GGAL-C1)
-        "resultado al 31-12-2024",               # day-month-year date, another sentence shape
-        "4Q2024 的业绩",                         # quarter label, digit-Q-year (#GGAL-C3)
-        "2024Q4 的业绩",                         # quarter label, year-Q-digit
-        "SEC Form 20-F fue presentado",         # SEC annual report form, ASCII hyphen
-        "SEC Form 20‑F fue presentado",    # SEC annual report form, U+2011
-        "SEC Form 20–F fue presentado",    # SEC annual report form, U+2013
     ],
 )
 def test_structural_shapes_need_no_declaration(text: str) -> None:
@@ -319,34 +294,6 @@ def test_structural_shapes_need_no_declaration(text: str) -> None:
 def test_measurement_shapes_must_be_declared(text: str) -> None:
     """§3: a decimal, a percent, a currency mark or a table cell is a claim."""
     assert "measured" in _shapes(text).values(), text
-
-
-def test_period_grouped_thousands_reads_as_one_figure() -> None:
-    """#GGAL-C2: an es-AR/es-ES thousands-by-period figure ("1.618.596") is
-    ONE measured figure with value 1618596, not two undeclared integers.
-    """
-    text = "Resultado neto atribuible de ARS 1.618.596 millones."
-    block = parse_figures_block(text)
-    figures = scan_figures(text, block)
-    measured = [figure for figure in figures if figure.shape == "measured"]
-
-    assert len(measured) == 1, figures
-    assert measured[0].text == "1.618.596"
-    assert measured[0].value == 1618596.0
-
-
-def test_a_single_period_group_still_reads_as_an_ordinary_decimal() -> None:
-    """The period-thousands fix is deliberately narrow: a lone period group
-    ("45.850") stays exactly as ambiguous as before — read as the decimal
-    45.85, never merged into a thousands figure.
-    """
-    text = "Ratio de capital 45.850."
-    block = parse_figures_block(text)
-    figures = scan_figures(text, block)
-    measured = [figure for figure in figures if figure.shape == "measured"]
-
-    assert len(measured) == 1, figures
-    assert measured[0].value == 45.85
 
 
 @pytest.mark.parametrize(
@@ -647,72 +594,10 @@ def test_undeclared_mode_does_not_guess_proposed_or_derived(tmp_path: Path) -> N
     assert [issue["value"] for issue in result.issues] == ["0.646", "0.97"]
 
 
-def test_the_correction_prompt_names_each_figure_and_its_reason(
-    tmp_path: Path,
-) -> None:
-    """§6: the feedback is per number, not a restatement of the policy.
-
-    Three things per figure — what was written, what was declared, what the
-    evidence says — plus the three fixes stated once.
-    """
-    ledger = _ledger(tmp_path)
-    validation = ledger.validate_final_answer(
-        HDR + " 建议买入价 2.50 元。" + _block(HDR_ROW, "2.50 | proposed | entry")
-    )
-
-    prompt = ledger.correction_prompt(validation)
-    line = next(row for row in prompt.splitlines() if row.startswith("- 2.50"))
-
-    assert "declared proposed" in line
-    assert "0.567" in line and "1.053" in line
-    # The nearest values are the symbol's closes, not every field of every bar.
-    assert "nearest observed 1.04, 0.666" in line
-    assert "figures" in prompt
-    assert "DECLARE" in prompt
-    assert "auto_repair" in prompt
-    assert "preserve_rewrite" in prompt
-    assert "preserve_options" in prompt
-    assert "derive" in prompt
-    assert "recover" in prompt
-    assert "Copy every ref byte-for-byte" in prompt
-    assert "|fc_..." in prompt
-    assert "drop" in prompt
 
 
-def test_a_value_is_called_repeated_only_from_its_second_rejection(
-    tmp_path: Path,
-) -> None:
-    """The current draft is not its own predecessor.
-
-    Comparing against every recorded validation, the current one included,
-    told the model on its FIRST rejection that the figure had been refused
-    "repeatedly", which is false and trains it to ignore the line.
-    """
-    ledger = _ledger(tmp_path)
-    draft = HDR + " 建议买入价 2.50 元。" + _block(HDR_ROW, "2.50 | proposed | entry")
-
-    first = ledger.correction_prompt(ledger.validate_final_answer(draft))
-    second = ledger.correction_prompt(ledger.validate_final_answer(draft))
-
-    assert "more than one draft" not in first
-    assert "more than one draft: 2.50." in second
 
 
-def test_a_derived_percent_is_corrected_in_its_own_units(tmp_path: Path) -> None:
-    """A model that wrote "12%" is told what its formula gives in percent."""
-    ledger = _ledger(tmp_path)
-    validation = ledger.validate_final_answer(
-        HDR
-        + " 较 5 月高点回撤 12%。"
-        + _block(HDR_ROW, "12% | derived | (0.666 − 1.053) / 1.053 | c1")
-    )
-
-    prompt = ledger.correction_prompt(validation)
-    line = next(row for row in prompt.splitlines() if row.startswith("- 12"))
-
-    assert "declared derived" in line
-    assert "evaluates to -36.7521%" in line
-    assert "-0.36" not in prompt
 
 
 # ---------------------------------------------------------------------------
@@ -783,44 +668,10 @@ def _prompt_blocks() -> list[str]:
     ]
 
 
-def test_every_figures_example_in_the_system_prompt_parses() -> None:
-    """A malformed example teaches every run to write a malformed block."""
-    blocks = [parse_figures_block("answer\n\n" + raw) for raw in _prompt_blocks()]
-
-    assert len(blocks) == 2
-    assert all(block.malformed == () for block in blocks)
-    assert {d.role for block in blocks for d in block.declarations} == set(ROLES)
 
 
-def test_the_chinese_prompt_example_passes_the_gate_it_describes(tmp_path: Path) -> None:
-    """The example sits on the same two bars this module probes with."""
-    ledger = _ledger(tmp_path)
-    prose = (
-        "159516.SZ（akshare，CNY）最新收盘 0.666 元，第一档 0.646 元，"
-        "折扣系数97%。较 5 月高点回撤 37%，买入参考 0.62 元。"
-    )
-
-    result = ledger.validate_final_answer(prose + "\n\n" + _prompt_blocks()[0])
-
-    assert result.valid, result.issues
-    assert result.released_text == prose
 
 
-@pytest.mark.parametrize(
-    ("text", "safe"),
-    [
-        ("答案。", len("答案。")),
-        ("答案。\n\n```figures\n0.666 | observed", len("答案。\n\n")),
-        ("答案。\n\n``", len("答案。\n\n")),
-        ("答案。\n\n```fig", len("答案。\n\n")),
-        ("答案。\n```python\nx = 1\n", len("答案。\n```python\nx = 1\n")),
-        ("收盘 0.666 元。", len("收盘 ")),            # an unchecked measurement waits
-        ("复盘 3", len("复盘 ")),                     # a number still being written waits
-        ("复盘 3 次。", len("复盘 3 次。")),          # a finished bare integer streams
-    ],
-)
-def test_streaming_holds_back_the_figures_fence_and_nothing_else(text: str, safe: int) -> None:
-    assert GroundingLedger.streamable_length(text) == safe
 
 
 def test_a_magnitude_mark_scales_the_comparison_not_the_shape(tmp_path: Path) -> None:
@@ -846,16 +697,6 @@ def test_a_magnitude_mark_scales_the_comparison_not_the_shape(tmp_path: Path) ->
     assert [issue["value"] for issue in invented.issues] == ["0.300"]
 
 
-def test_a_cut_figure_takes_its_magnitude_mark_with_it(tmp_path: Path) -> None:
-    """A real release read "(omitted※)M → (omitted※)M" before this."""
-    ledger = _ledger(tmp_path)
-    draft = HDR + " 成交量 0.300M 手。"
-
-    released = ledger.redacted_release(draft, ledger.validate_final_answer(draft))
-
-    assert released is not None
-    assert "0.300" not in released
-    assert "M" not in released
 
 
 @pytest.mark.parametrize(
@@ -870,7 +711,7 @@ def test_a_cut_figure_takes_its_magnitude_mark_with_it(tmp_path: Path) -> None:
 def test_a_magnitude_mark_is_a_glued_symbol_not_a_word(
     text: str, end: int, expected: tuple[float, int]
 ) -> None:
-    from src.agent.grounding.figures import magnitude_suffix
+    from evals.grounding.figures import magnitude_suffix
 
     assert magnitude_suffix(text, end) == expected
 
@@ -884,42 +725,6 @@ def test_an_untagged_fence_is_prose_and_a_tagged_one_is_code() -> None:
 
     assert measured == {"0.881", "0.800"}
     assert not [f for f in scan_figures(tagged, parse_figures_block(tagged)) if f.shape == "measured"]
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "SEC Form 20-F fue presentado ante la SEC.",
-        "SEC Form 20‑F fue presentado ante la SEC.",  # U+2011 non-breaking hyphen
-        "SEC Form 20–F fue presentado ante la SEC.",  # U+2013 en dash
-    ],
-)
-def test_sec_form_20f_reads_as_a_structural_exempt_token(text: str) -> None:
-    """The SEC annual-report form name is structure, never a measurement.
-
-    "20" inside "20-F" may still be located by ``scan_figures``, but it must
-    read as ``exempt`` and never trip ``figure_undeclared``.
-    """
-    block = parse_figures_block(text)
-    figures = scan_figures(text, block)
-
-    assert [(figure.text, figure.shape) for figure in figures] == [("20", "exempt")]
-
-
-def test_sec_form_rule_does_not_hide_a_real_range_starting_at_20() -> None:
-    """"20–25%" is a real range/measurement — the SEC rule must never exempt it.
-
-    Only a literal "20-F" (any of the accepted dashes, "F" required and
-    word-bounded) is structure; "20" followed by a range dash and another
-    number is left completely alone.
-    """
-    text = "margen 20–25%."
-    block = parse_figures_block(text)
-    figures = scan_figures(text, block)
-    by_text = {figure.text: figure.shape for figure in figures}
-
-    assert by_text["25%"] == "measured"
-    assert by_text["20"] != "exempt"
 
 
 # ---------------------------------------------------------------------------

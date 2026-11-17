@@ -21,7 +21,6 @@ from mcp import types as mcp_types
 from pydantic import BaseModel, field_serializer
 
 import src.tools.mcp as mcp_module
-from src.agent.grounding import GroundingLedger
 from src.config.schema import MCPServerConfig
 from src.tools.mcp import (
     MCPRemoteTool,
@@ -448,50 +447,6 @@ def test_only_curated_asistente_casa_report_reads_are_replayable():
         assert tool.replay_after_compaction is False
 
 
-def test_text_only_json_mcp_result_becomes_grounding_evidence(tmp_path: Path) -> None:
-    """Grounding sees numeric leaves from a text-only remote MCP result."""
-    structured = {
-        "ok": True,
-        "scope": {"asset_type": "ACCIONES", "currency": "ARS"},
-        "portfolio": {
-            "return_pct": 0.9562,
-            "value_start": 119588023.0,
-            "value_end": 119584468.5,
-        },
-    }
-    payload = _execute_data_result(
-        None,
-        content=[
-            mcp_types.TextContent(type="text", text=json.dumps(structured)),
-        ],
-    )
-    ledger = GroundingLedger(
-        run_dir=tmp_path,
-        user_message="¿Cómo fueron mis acciones los últimos 45 días?",
-    )
-    tool_name = "mcp_asistente_casa_consultar_performance_cartera_scope"
-    ledger.ingest_tool_result(
-        tool_name=tool_name,
-        arguments={"asset_type": "ACCIONES", "period": "45d"},
-        result=json.dumps(payload),
-        call_id="call-mcp-performance",
-        success=True,
-    )
-
-    artifact = json.loads(
-        (tmp_path / "artifacts" / "grounding_evidence.json").read_text(encoding="utf-8")
-    )
-    matches = [
-        row
-        for row in artifact["evidence"]
-        if row["call_id"] == "call-mcp-performance"
-        and row["tool"] == tool_name
-        and row["field"] == "data.portfolio.return_pct"
-    ]
-
-    assert len(matches) == 1
-    assert matches[0]["value"] == pytest.approx(0.9562)
-    assert matches[0]["status"] == "observed"
 
 def test_robinhood_dataclass_dates_are_json_safe_end_to_end() -> None:
     """A real FastMCP dataclass round trip must stay JSON-safe (#922)."""

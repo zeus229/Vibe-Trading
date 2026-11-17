@@ -122,23 +122,6 @@ def test_ppi_indicators_are_computed_from_real_mcp_wrapper(observed_ppi):
     assert result["ppi_symbol"] == "XLV"
 
 
-def test_ppi_indicator_values_are_grounded_to_requested_byma_identity(observed_ppi, tmp_path):
-    from src.agent.grounding import GroundingLedger
-
-    tool, _ = observed_ppi(_payload())
-    result = json.loads(tool.execute(symbol="XLV.BA", instrument_type="CEDEARS",
-                                     _runtime_call_id="call_calc1234"))
-    ledger = GroundingLedger(run_dir=tmp_path, user_message="Analizá XLV.BA")
-    ledger.ingest_tool_result(
-        tool_name="calculate_ppi_indicators",
-        arguments={"symbol": "XLV.BA", "instrument_type": "CEDEARS"},
-        result=json.dumps(result), call_id="call_calc1234", success=True,
-    )
-    values = [record for record in ledger._evidence if record.field == "indicators.sma_20"]
-    assert len(values) == 1
-    assert values[0].symbol == "XLV.BA"
-    assert values[0].identity_scope == "entity"
-
 
 @pytest.mark.parametrize("status", ["ok", "success", "available"])
 def test_wrapped_mcp_response_indicators(status, observed_ppi):
