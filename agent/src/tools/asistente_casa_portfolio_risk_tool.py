@@ -484,13 +484,17 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 coverage = _fetch_coverage(
                     base_url, api_key, symbols=symbols_by_type[kind], asset_type=kind
                 )
-                earliest_common_raw = coverage.get("earliest_common_date")
-                if not earliest_common_raw:
+                # The broadest start bounds the fetch; it must NOT be the basket's
+                # earliest COMMON date, which a single recent holding (NU, PFE)
+                # pulls to last week and would starve every longer window. Short
+                # histories are handled by the explicit partial-coverage fallback.
+                earliest_raw = coverage.get("earliest_any_date") or coverage.get("earliest_common_date")
+                if not earliest_raw:
                     raise ValueError(
                         "Asistente Casa coverage has no earliest_common_date for this basket"
                     )
-                earliest_dates.append(date.fromisoformat(str(earliest_common_raw)))
-            coverage_earliest_common = max(earliest_dates)
+                earliest_dates.append(date.fromisoformat(str(earliest_raw)))
+            coverage_earliest_common = min(earliest_dates)
             estimated_calendar_days = max(
                 _DEFAULT_LOOKBACK_DAYS, lookback_sessions * 2 + 14
             )

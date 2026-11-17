@@ -303,3 +303,35 @@ def test_tool_still_takes_no_symbol_arguments_so_identity_gate_is_not_involved(t
     )
     assert decision.allowed
     assert "symbols" not in AsistenteCasaPortfolioRiskXrayTool.parameters["properties"]
+
+
+def test_a_recent_holding_does_not_clamp_the_start_of_long_windows(monkeypatch):
+    """The coverage endpoint's earliest COMMON date follows the newest holding.
+
+    Using it as the fetch start starved every window longer than that holding's
+    history (NU: 4 bars). The earliest ANY date bounds the fetch instead and the
+    explicit partial-coverage fallback excludes the short symbol.
+    """
+    def history(kind):
+        series = _series(kind)
+        if kind == "CEDEARS":
+            series["DDD"]["observations"] = series["DDD"]["observations"][-5:]
+        return series
+
+    calls = _install(monkeypatch, history=history)
+    original = risk_module._get
+
+    def with_any_date(base_url, api_key, path, params):
+        payload = original(base_url, api_key, path, params)
+        if path == "/inversiones/vibe/market-history/coverage":
+            payload["earliest_common_date"] = DATES[-5].date().isoformat()  # pulled by the newest holding
+            payload["earliest_any_date"] = DATES[0].date().isoformat()
+        return payload
+
+    monkeypatch.setattr(risk_module, "_get", with_any_date)
+    payload = _run(lookback_sessions=60)
+    assert payload["status"] == "ok"
+    assert payload["meta"]["coverage_mode"] == "partial_high_coverage"
+    assert payload["data"]["inputs"]["return_observations"] == 60
+    first_history = [c for c in calls if c[0].endswith("/market-history")][0][1]
+    assert first_history["from"] == DATES[0].date().isoformat()  # not the newest holding's first bar
