@@ -368,3 +368,19 @@ def test_coverage_percentages_state_their_denominators_in_ars(monkeypatch):
     # meta.scope_value_ars must be the equity scope, not the ALL-portfolio value the endpoint reports
     assert payload["meta"]["scope_value_ars"] == 900_000.0
     assert payload["meta"]["total_value_ars"] == TOTAL
+
+
+def test_an_excluded_short_history_symbol_does_not_create_or_explain_bridged_returns(monkeypatch):
+    def history(kind):
+        series = _series(kind)
+        if kind == "CEDEARS":  # DDD: short history, excluded; its bars sit on dates AAA also has
+            series["DDD"]["observations"] = series["DDD"]["observations"][-12:]
+            del series["DDD"]["observations"][5]  # an interior hole in an EXCLUDED symbol
+        return series
+
+    _install(monkeypatch, history=history)
+    payload = _run(lookback_sessions=40)
+    assert payload["status"] == "ok"
+    cov = payload["meta"]["coverage"]
+    assert [r["symbol"] for r in cov["excluded_from_statistics"]] == ["DDD"]
+    assert cov["bridged_returns"] == 0 and cov["bridged_return_details"] == []

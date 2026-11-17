@@ -698,7 +698,10 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
 
         included_set = set(coverage_meta["included_symbols"])
         return_observations = int(report["inputs"]["return_observations"])
-        bridged_details = _bridged_returns(closes, closes_raw)
+        # Only dates/symbols that are part of the analysed basket: an excluded
+        # short-history symbol must neither create nor explain a skipped date.
+        raw_included = closes_raw[[s for s in symbols if s in included_set and s in closes_raw]].dropna(how="all")
+        bridged_details = _bridged_returns(closes, raw_included)
         bridged = len(bridged_details)
         if bridged:
             report.setdefault("warnings", []).append(
