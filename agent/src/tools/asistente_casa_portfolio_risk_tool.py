@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 from datetime import date, timedelta
 from typing import Any, Mapping
 from urllib.error import HTTPError, URLError
@@ -43,6 +44,12 @@ logger = logging.getLogger(__name__)
 
 _DEFAULT_LOOKBACK_DAYS = 120
 _SUPPORTED_ASSET_TYPES = {"ACCIONES", "CEDEARS"}
+#: Joint ACCIONES + CEDEARS basket, analyzed as ONE portfolio (one capture, one
+#: panel, one native ``compute_risk_xray`` call). BONOS, FCI and cash stay out of
+#: the statistics and are reported as out-of-scope weight.
+_COMBINED_SCOPE = "ACCIONES+CEDEARS"
+_COMBINED_TYPES = ("ACCIONES", "CEDEARS")
+_ARS = "ARS"
 _SUPPORTED_HORIZONS = {"1y", "ytd", "since_inception"}
 _TIMEOUT_SECONDS = 30.0
 _NUMERIC_FORMAT = "json_number"
@@ -130,6 +137,107 @@ def _select_risk_panel(
     )
 
 
+def _position_value(position: Mapping[str, Any]) -> float:
+    value = position.get("market_value_ars")
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+        raise ValueError(
+            f"position {position.get('symbol')!r} has no finite market_value_ars; "
+            "the joint basket cannot be weighted"
+        )
+    return float(value)
+
+
+def _split_combined_positions(
+    positions: list[Mapping[str, Any]],
+) -> tuple[list[dict[str, Any]], list[Mapping[str, Any]]]:
+    """Keep ACCIONES + CEDEARS from one whole-portfolio capture and reweight them.
+
+    The weights are market value over the combined ACCIONES+CEDEARS value, taken
+    from the same capture. Everything else (BONOS, FCI) is returned separately so
+    it can be reported as out of scope, never silently dropped.
+    """
+    in_scope: list[dict[str, Any]] = []
+    out_of_scope: list[Mapping[str, Any]] = []
+    for position in positions:
+        kind = str(position.get("instrument_type") or "").strip().upper()
+        if kind in _COMBINED_TYPES:
+            in_scope.append(dict(position))
+        else:
+            out_of_scope.append(position)
+    total = sum(_position_value(position) for position in in_scope)
+    if total <= 0:
+        raise ValueError("the ACCIONES+CEDEARS basket has no positive market value")
+    for position in in_scope:
+        position["weight_scope"] = _position_value(position) / total
+    return in_scope, out_of_scope
+
+
+def _assert_ars_series(
+    series: Mapping[str, Any], symbols: list[str], *, strict: bool
+) -> None:
+    """Refuse series whose declared currency is not ARS (returns must be comparable).
+
+    ``strict`` (the joint basket) also refuses a series that declares no currency
+    at all, because mixing an undeclared series with ARS ones is exactly the case
+    this guard exists for. Single-scope calls keep their historical behaviour.
+    """
+    for symbol in symbols:
+        item = series.get(symbol)
+        if not isinstance(item, Mapping):
+            continue
+        declared = {str(item.get("currency") or "").strip().upper()}
+        for row in item.get("observations") or []:
+            if isinstance(row, Mapping):
+                declared.add(str(row.get("currency") or "").strip().upper())
+        declared.discard("")
+        foreign = declared - {_ARS}
+        if foreign:
+            raise ValueError(
+                f"{symbol} history is not in ARS (declared: {sorted(foreign)}); "
+                "refusing to mix currencies in one basket"
+            )
+        if strict and not declared:
+            raise ValueError(f"{symbol} history does not declare its currency; refusing to assume ARS")
+
+
+def _window_sources(
+    series: Mapping[str, Any], symbols: list[str], first: pd.Timestamp, last: pd.Timestamp
+) -> dict[str, dict[str, dict[str, int]]]:
+    """Count observation sources and quality flags inside the analysed window."""
+    out: dict[str, dict[str, dict[str, int]]] = {}
+    for symbol in symbols:
+        sources: dict[str, int] = {}
+        quality: dict[str, int] = {}
+        item = series.get(symbol)
+        for row in (item.get("observations") if isinstance(item, Mapping) else None) or []:
+            if not isinstance(row, Mapping):
+                continue
+            stamp = pd.Timestamp(row["date"])
+            if stamp < first or stamp > last:
+                continue
+            source = str(row.get("source") or "unknown")
+            sources[source] = sources.get(source, 0) + 1
+            flag = str(row.get("quality") or "unknown")
+            quality[flag] = quality.get(flag, 0) + 1
+        out[symbol] = {"sources": sources, "quality": quality}
+    return out
+
+
+def _bridged_returns(closes: pd.DataFrame, raw_index: pd.DatetimeIndex) -> int:
+    """Returns whose two closes are separated by a raw date that was dropped.
+
+    The strict shared-date panel can pair two non-adjacent closes when a symbol
+    lacks an interior bar; that return spans several sessions. It is counted, not
+    hidden, so the caller can see how much of the sample it affects.
+    """
+    dates = list(closes.index)
+    count = 0
+    for before, after in zip(dates[:-1], dates[1:]):
+        if ((raw_index > before) & (raw_index < after)).any():
+            count += 1
+    return count
+
+
 def _env_credentials() -> tuple[str, str]:
     base_url = str(get_env_value("ASISTENTE_CASA_BASE_URL") or "").strip().rstrip("/")
     api_key = str(get_env_value("ASISTENTE_CASA_API_KEY") or "").strip()
@@ -204,8 +312,9 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         "symbols or weights. For requests such as 'últimas N ruedas' / 'last N "
         "trading sessions', pass lookback_sessions=N exactly; do not translate N "
         "into calendar days. The model must NOT call search_symbol/fetch_market_data/"
-        "get_market_data first. Currently validated for ACCIONES (Argentine "
-        "equities) and CEDEARS, analyzed as separate scopes. "
+        "get_market_data first. Validated for ACCIONES (Argentine "
+        "equities), CEDEARS, and the joint basket asset_type='ACCIONES+CEDEARS' "
+        "(one portfolio, ARS closes, one capture). "
         "IMPORTANT ROUTING RULES: this result is deterministic for the same "
         "portfolio snapshot and date range. Call this tool at most ONCE per "
         "scope for a given analysis unless the user explicitly requests a "
@@ -215,8 +324,11 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         "tool may return an explicitly labeled partial_high_coverage result only "
         "if at least 90% of sleeve value and 30 common observations remain. Do NOT "
         "use ACCIONES or CEDEARS "
-        "metrics as if either scope represented the complete portfolio. Do NOT "
-        "combine or extrapolate these results to BONOS or FCI."
+        "metrics as if either scope represented the complete portfolio, and do NOT "
+        "merge or average the numbers of two single-scope calls: ask for "
+        "asset_type='ACCIONES+CEDEARS' instead. The result lists included and "
+        "excluded instruments and the share of the total portfolio covered "
+        "(meta.coverage). Do NOT extrapolate these results to BONOS or FCI."
     )
 
     parameters = {
@@ -224,8 +336,11 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         "properties": {
             "asset_type": {
                 "type": "string",
-                "enum": ["ACCIONES", "CEDEARS"],
-                "description": "Portfolio asset type. Validated scopes: ACCIONES and CEDEARS.",
+                "enum": ["ACCIONES", "CEDEARS", "ACCIONES+CEDEARS"],
+                "description": (
+                    "Portfolio asset type. Validated scopes: ACCIONES, CEDEARS, and "
+                    "ACCIONES+CEDEARS (joint ARS equity basket)."
+                ),
             },
             "start_date": {
                 "type": "string",
@@ -291,11 +406,14 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             )
 
     def _run(self, **kwargs: Any) -> str:
-        asset_type = str(kwargs.get("asset_type") or "ACCIONES").strip().upper()
-        if asset_type not in _SUPPORTED_ASSET_TYPES:
+        asset_type = str(kwargs.get("asset_type") or "ACCIONES").strip().upper().replace(" ", "")
+        combined = asset_type == _COMBINED_SCOPE
+        if asset_type not in _SUPPORTED_ASSET_TYPES and not combined:
             raise ValueError(
-                f"asset_type {asset_type!r} is not validated; currently supported: ACCIONES, CEDEARS"
+                f"asset_type {asset_type!r} is not validated; currently supported: "
+                f"ACCIONES, CEDEARS, {_COMBINED_SCOPE}"
             )
+        scope_types = _COMBINED_TYPES if combined else (asset_type,)
 
         start_raw = kwargs.get("start_date")
         end_raw = kwargs.get("end_date")
@@ -322,30 +440,57 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         # ------------------------------------------------------------
         # Canonical portfolio, scoped to this asset_type
         # ------------------------------------------------------------
-        portfolio_payload = _get(base_url, api_key, "/inversiones/vibe/portfolio", {"asset_type": asset_type})
+        # The joint basket reads the whole portfolio ONCE (``ALL``) and filters it
+        # here, so every weight comes from a single capture; two per-scope reads
+        # could value the two sleeves at different instants.
+        portfolio_payload = _get(
+            base_url, api_key, "/inversiones/vibe/portfolio",
+            {"asset_type": "ALL" if combined else asset_type},
+        )
         portfolio_block = portfolio_payload.get("portfolio", {})
-        positions = portfolio_block.get("positions", [])
+        all_positions = portfolio_block.get("positions", [])
+        if combined:
+            positions, out_of_scope = _split_combined_positions(all_positions)
+        else:
+            positions, out_of_scope = all_positions, []
         if not positions:
             raise ValueError(f"Asistente Casa returned no positions for {asset_type}")
 
         symbols = [str(position["symbol"]).strip().upper() for position in positions]
+        if len(set(symbols)) != len(symbols):
+            raise ValueError("Asistente Casa returned a symbol in more than one instrument type")
         weights = {
             str(position["symbol"]).strip().upper(): float(position["weight_scope"])
             for position in positions
+        }
+        type_by_symbol = {
+            str(position["symbol"]).strip().upper(): (
+                str(position.get("instrument_type") or "").upper() or None
+            )
+            for position in positions
+        }
+        symbols_by_type = {
+            kind: [s for s in symbols if (type_by_symbol[s] or asset_type) == kind]
+            for kind in scope_types
         }
 
         end = date.fromisoformat(str(end_raw)) if end_raw else date.today()
         coverage_earliest_common: date | None = None
         if lookback_sessions is not None:
-            coverage = _fetch_coverage(
-                base_url, api_key, symbols=symbols, asset_type=asset_type
-            )
-            earliest_common_raw = coverage.get("earliest_common_date")
-            if not earliest_common_raw:
-                raise ValueError(
-                    "Asistente Casa coverage has no earliest_common_date for this basket"
+            earliest_dates: list[date] = []
+            for kind in scope_types:
+                if not symbols_by_type[kind]:
+                    continue
+                coverage = _fetch_coverage(
+                    base_url, api_key, symbols=symbols_by_type[kind], asset_type=kind
                 )
-            coverage_earliest_common = date.fromisoformat(str(earliest_common_raw))
+                earliest_common_raw = coverage.get("earliest_common_date")
+                if not earliest_common_raw:
+                    raise ValueError(
+                        "Asistente Casa coverage has no earliest_common_date for this basket"
+                    )
+                earliest_dates.append(date.fromisoformat(str(earliest_common_raw)))
+            coverage_earliest_common = max(earliest_dates)
             estimated_calendar_days = max(
                 _DEFAULT_LOOKBACK_DAYS, lookback_sessions * 2 + 14
             )
@@ -362,6 +507,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 asset_type=asset_type,
                 base_url=base_url,
                 api_key=api_key,
+                symbols_by_type=symbols_by_type if combined else None,
             )
         if start >= end:
             raise ValueError("start_date must be before end_date")
@@ -390,26 +536,52 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         # ------------------------------------------------------------
         # Canonical persisted market history, daily EOD only
         # ------------------------------------------------------------
-        history_payload = _get(
-            base_url,
-            api_key,
-            "/inversiones/vibe/market-history",
-            {"symbols": ",".join(symbols), "asset_type": asset_type, "from": start_date, "to": end_date},
-        )
-        if history_payload.get("policy") != "persisted_only":
-            raise ValueError("Asistente Casa market-history policy is not persisted_only")
-        if str(history_payload.get("interval") or "").upper() != "1D":
-            raise ValueError("Asistente Casa market-history interval is not 1D")
-        unresolved = list(history_payload.get("unresolved_symbols") or [])
-        unsafe = list(history_payload.get("unsafe_symbols") or [])
-        if unresolved or unsafe:
-            raise ValueError(
-                "Asistente Casa historical coverage has unresolved/unsafe identities: "
-                f"unresolved={unresolved}, unsafe={unsafe}"
-            )
+        def _fetch_history(from_date: str, to_date: str) -> dict[str, Any]:
+            """Read persisted EOD history per instrument type and merge it.
+
+            Each type is requested with its own ``asset_type`` so identity
+            resolution stays strict; the merged payload keeps the single-scope
+            shape the rest of this method (and its tests) already consume.
+            """
+            merged_series: dict[str, Any] = {}
+            complete = True
+            last: dict[str, Any] = {}
+            for kind in scope_types:
+                kind_symbols = symbols_by_type[kind]
+                if not kind_symbols:
+                    continue
+                payload = _get(
+                    base_url,
+                    api_key,
+                    "/inversiones/vibe/market-history",
+                    {"symbols": ",".join(kind_symbols), "asset_type": kind, "from": from_date, "to": to_date},
+                )
+                if payload.get("policy") != "persisted_only":
+                    raise ValueError("Asistente Casa market-history policy is not persisted_only")
+                if str(payload.get("interval") or "").upper() != "1D":
+                    raise ValueError("Asistente Casa market-history interval is not 1D")
+                unresolved = list(payload.get("unresolved_symbols") or [])
+                unsafe = list(payload.get("unsafe_symbols") or [])
+                if unresolved or unsafe:
+                    raise ValueError(
+                        "Asistente Casa historical coverage has unresolved/unsafe identities: "
+                        f"unresolved={unresolved}, unsafe={unsafe}"
+                    )
+                _assert_ars_series(payload.get("series") or {}, kind_symbols, strict=combined)
+                complete = complete and bool(payload.get("complete"))
+                merged_series.update(payload.get("series") or {})
+                last = payload
+            return {**last, "series": merged_series, "complete": complete}
+
+        history_payload = _fetch_history(start_date, end_date)
         history_response_complete = bool(history_payload.get("complete"))
 
-        min_observations = lookback_sessions or _MIN_RISK_OBSERVATIONS
+        # N daily returns need N+1 closes: the first close only anchors the first
+        # return. ``lookback_sessions`` therefore counts RETURNS, as the Asistente
+        # Casa MCP risk tool (63/126/252 returns) does.
+        min_observations = (
+            lookback_sessions + 1 if lookback_sessions is not None else _MIN_RISK_OBSERVATIONS
+        )
 
         def _panel(payload: Mapping[str, Any]):
             series: dict[str, pd.Series] = {}
@@ -449,23 +621,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
             # to the authoritative earliest common date.
             start = coverage_earliest_common
             start_date = start.isoformat()
-            history_payload = _get(
-                base_url,
-                api_key,
-                "/inversiones/vibe/market-history",
-                {
-                    "symbols": ",".join(symbols),
-                    "asset_type": asset_type,
-                    "from": start_date,
-                    "to": end_date,
-                },
-            )
-            if history_payload.get("policy") != "persisted_only":
-                raise ValueError("Asistente Casa market-history policy is not persisted_only")
-            if str(history_payload.get("interval") or "").upper() != "1D":
-                raise ValueError("Asistente Casa market-history interval is not 1D")
-            if history_payload.get("unresolved_symbols") or history_payload.get("unsafe_symbols"):
-                raise ValueError("Asistente Casa historical coverage has unresolved/unsafe identities")
+            history_payload = _fetch_history(start_date, end_date)
             history_response_complete = bool(history_payload.get("complete"))
             first_panel = _try_panel(history_payload)
             if first_panel is not None:
@@ -488,8 +644,8 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 ).dropna(axis=0, how="any")
             )
             raise ValueError(
-                f"requested {lookback_sessions} shared trading sessions but only "
-                f"{available} are available for {asset_type}"
+                f"requested {lookback_sessions} daily returns ({lookback_sessions + 1} shared "
+                f"closes) but only {available} shared closes are available for {asset_type}"
             )
 
         missing_by_symbol = {
@@ -499,7 +655,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         dropped_non_common_dates = len(closes_raw) - len(closes)
         common_date_count_before_window = len(closes)
         if lookback_sessions is not None:
-            closes = closes.tail(lookback_sessions)
+            closes = closes.tail(lookback_sessions + 1)
 
         # ------------------------------------------------------------
         # Vibe deterministic Risk X-Ray
@@ -521,6 +677,104 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 f"the default {MIN_HISTORY_DAYS}-session history filter; short-window "
                 "risk estimates may be less stable"
             )
+
+        included_set = set(coverage_meta["included_symbols"])
+        return_observations = int(report["inputs"]["return_observations"])
+        bridged = _bridged_returns(closes, closes_raw.index)
+        if bridged:
+            report.setdefault("warnings", []).append(
+                f"{bridged} of {return_observations} returns span more than one session because a "
+                "symbol lacks an interior bar; they are kept as observed and not synthesized"
+            )
+        window_sources = _window_sources(
+            history_payload.get("series", {}),
+            [symbol for symbol in symbols if symbol in included_set],
+            closes.index[0],
+            closes.index[-1],
+        )
+        source_totals: dict[str, int] = {}
+        quality_totals: dict[str, int] = {}
+        for item in window_sources.values():
+            for key, value in item["sources"].items():
+                source_totals[key] = source_totals.get(key, 0) + value
+            for key, value in item["quality"].items():
+                quality_totals[key] = quality_totals.get(key, 0) + value
+
+        def _pct_total(position: Mapping[str, Any]) -> float | None:
+            weight = position.get("weight_total_portfolio")
+            return round(100.0 * float(weight), 4) if isinstance(weight, (int, float)) and not isinstance(weight, bool) else None
+
+        position_by_symbol = {str(pos["symbol"]).strip().upper(): pos for pos in positions}
+        included_rows: list[dict[str, Any]] = []
+        excluded_rows: list[dict[str, Any]] = []
+        for symbol in symbols:
+            position = position_by_symbol[symbol]
+            row = {
+                "symbol": symbol,
+                "instrument_type": type_by_symbol[symbol] or asset_type,
+                "weight_total_portfolio_pct": _pct_total(position),
+                "weight_scope_pct": round(100.0 * weights[symbol] / weight_sum, 4),
+                "valid_closes_in_fetched_history": int(closes_raw[symbol].count()) if symbol in closes_raw else 0,
+            }
+            if symbol in included_set:
+                included_rows.append(row)
+            else:
+                row["reason"] = "insufficient_common_history_for_requested_window"
+                excluded_rows.append(row)
+        out_of_scope_rows = [
+            {
+                "symbol": str(pos.get("symbol") or "").strip().upper(),
+                "instrument_type": str(pos.get("instrument_type") or "").strip().upper() or None,
+                "weight_total_portfolio_pct": _pct_total(pos),
+                "reason": "no_adequate_statistical_series_in_scope",
+            }
+            for pos in out_of_scope
+        ]
+
+        def _sum(rows: list[dict[str, Any]]) -> float | None:
+            values = [row["weight_total_portfolio_pct"] for row in rows]
+            return None if any(value is None for value in values) else round(sum(values), 4)
+
+        covered_pct = _sum(included_rows)
+        excluded_pct = _sum(excluded_rows)
+        out_pct = _sum(out_of_scope_rows)
+        all_weight_pct = [_pct_total(pos) for pos in all_positions]
+        cash_other_pct = (
+            None if any(value is None for value in all_weight_pct)
+            else round(max(0.0, 100.0 - sum(all_weight_pct)), 4)  # type: ignore[arg-type]
+        )
+        quality_notes = [
+            "Constant-weight historical model over persisted ARS EOD closes; not account performance or True TWR.",
+        ]
+        if coverage_meta["coverage_mode"] != "strict_full_basket":
+            quality_notes.append("Excluded instruments are part of the real portfolio; these metrics do not describe their risk.")
+        if quality_totals.get("close_only"):
+            quality_notes.append(
+                f"{quality_totals['close_only']} window bars are close_only (provider Open/High/Low inconsistent); only the close is used."
+            )
+        if bridged:
+            quality_notes.append(f"{bridged} multi-session returns (see warnings).")
+        coverage_report = {
+            "scope": asset_type,
+            "currency": _ARS,
+            "included": included_rows,
+            "excluded_from_statistics": excluded_rows,
+            "out_of_scope": out_of_scope_rows,
+            "covered_pct_of_total_portfolio": covered_pct,
+            "excluded_pct_of_total_portfolio": excluded_pct,
+            "out_of_scope_pct_of_total_portfolio": out_pct,
+            "cash_and_other_pct_of_total_portfolio": cash_other_pct,
+            "covered_pct_of_scope": coverage_meta["included_weight_pct"],
+            "return_observations": return_observations,
+            "first_close_date": closes.index[0].date().isoformat(),
+            "first_return_date": closes.index[1].date().isoformat(),
+            "last_date": closes.index[-1].date().isoformat(),
+            "bridged_returns": bridged,
+            "history_sources": source_totals,
+            "history_quality": quality_totals,
+            "per_symbol_sources": window_sources,
+            "quality_notes": quality_notes,
+        }
 
         result = {
             "status": "ok",
@@ -569,6 +823,8 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
                 "full_basket_common_date_count": full_basket_common_date_count,
                 "full_basket_dropped_non_common_dates": len(closes_raw) - full_basket_common_date_count,
                 "close_observations": len(closes),
+                "return_observations": return_observations,
+                "coverage": coverage_report,
                 "common_date_count": len(closes),
                 "common_date_count_before_window": common_date_count_before_window,
                 "dropped_non_common_dates": dropped_non_common_dates,
@@ -631,6 +887,7 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         asset_type: str,
         base_url: str,
         api_key: str,
+        symbols_by_type: Mapping[str, list[str]] | None = None,
     ) -> date:
         """Resolve the effective start date for the requested window.
 
@@ -646,13 +903,21 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         if horizon == "ytd":
             return date(end.year, 1, 1)
         if horizon == "since_inception":
-            coverage = _fetch_coverage(base_url, api_key, symbols=symbols, asset_type=asset_type)
-            earliest_common = coverage.get("earliest_common_date")
-            if not earliest_common:
-                raise ValueError(
-                    "Asistente Casa coverage has no earliest_common_date for this basket"
-                )
-            return date.fromisoformat(str(earliest_common))
+            groups = (
+                [(kind, syms) for kind, syms in symbols_by_type.items() if syms]
+                if symbols_by_type
+                else [(asset_type, symbols)]
+            )
+            earliest: list[date] = []
+            for kind, syms in groups:
+                coverage = _fetch_coverage(base_url, api_key, symbols=syms, asset_type=kind)
+                earliest_common = coverage.get("earliest_common_date")
+                if not earliest_common:
+                    raise ValueError(
+                        "Asistente Casa coverage has no earliest_common_date for this basket"
+                    )
+                earliest.append(date.fromisoformat(str(earliest_common)))
+            return max(earliest)
         return end - timedelta(days=_DEFAULT_LOOKBACK_DAYS)
 
 

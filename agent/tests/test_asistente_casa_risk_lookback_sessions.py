@@ -95,10 +95,12 @@ def test_dynamic_lookback_sessions_selects_exact_shared_tail(
     assert payload["status"] == "ok"
     assert payload["meta"]["horizon"] == "lookback_sessions"
     assert payload["meta"]["lookback_sessions"] == sessions
-    assert payload["meta"]["common_date_count"] == sessions
-    assert payload["data"]["inputs"]["aligned_days"] == sessions
-    assert payload["data"]["inputs"]["return_observations"] == sessions - 1
-    assert payload["meta"]["start_date"] == observations[-sessions]["date"]
+    # lookback_sessions counts RETURNS: N returns need N+1 closes.
+    assert payload["meta"]["common_date_count"] == sessions + 1
+    assert payload["data"]["inputs"]["aligned_days"] == sessions + 1
+    assert payload["data"]["inputs"]["return_observations"] == sessions
+    assert payload["meta"]["return_observations"] == sessions
+    assert payload["meta"]["start_date"] == observations[-(sessions + 1)]["date"]
     assert payload["meta"]["end_date"] == observations[-1]["date"]
     assert payload["data"]["concentration"]["top1_weight"] == pytest.approx(1.0)
 
@@ -183,8 +185,9 @@ def test_lookback_sessions_widens_once_to_coverage_boundary(
     assert payload["status"] == "ok"
     assert len(history_calls) == 2
     assert history_calls[-1] == full[0]["date"]
-    assert payload["meta"]["common_date_count"] == 42
-    assert payload["data"]["inputs"]["aligned_days"] == 42
+    assert payload["meta"]["common_date_count"] == 43  # 42 returns need 43 closes
+    assert payload["data"]["inputs"]["aligned_days"] == 43
+    assert payload["data"]["inputs"]["return_observations"] == 42
 
 
 def test_lookback_sessions_fails_closed_when_coverage_is_insufficient(
@@ -219,4 +222,4 @@ def test_lookback_sessions_fails_closed_when_coverage_is_insufficient(
     )
 
     assert payload["status"] == "error"
-    assert "requested 21 shared trading sessions but only 10 are available" in payload["error"]
+    assert "requested 21 daily returns (22 shared closes) but only 10 shared closes are available" in payload["error"]
