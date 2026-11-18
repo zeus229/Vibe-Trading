@@ -43,6 +43,8 @@ from src.config.accessor import get_env_value
 logger = logging.getLogger(__name__)
 
 _DEFAULT_LOOKBACK_DAYS = 120
+_WIDEN_CALENDAR_DAYS_PER_SESSION = 3
+_WIDEN_CALENDAR_DAYS_BASE = 30
 _SUPPORTED_ASSET_TYPES = {"ACCIONES", "CEDEARS"}
 #: Joint ACCIONES + CEDEARS basket, analyzed as ONE portfolio (one capture, one
 #: panel, one native ``compute_risk_xray`` call). BONOS, FCI and cash stay out of
@@ -632,18 +634,25 @@ class AsistenteCasaPortfolioRiskXrayTool(BaseTool):
         first_panel = _try_panel(history_payload)
         if first_panel is not None:
             closes_raw, closes, risk_weights, coverage_meta = first_panel
-        if lookback_sessions is not None and (
-            first_panel is None or first_panel[3]["coverage_mode"] != "strict_full_basket"
-        ) and coverage_earliest_common is not None and start > coverage_earliest_common:
-            # The initial window was too short for N shared sessions: widen once
-            # to the authoritative earliest common date.
-            start = coverage_earliest_common
-            start_date = start.isoformat()
-            history_payload = _fetch_history(start_date, end_date)
-            history_response_complete = bool(history_payload.get("complete"))
-            first_panel = _try_panel(history_payload)
-            if first_panel is not None:
-                closes_raw, closes, risk_weights, coverage_meta = first_panel
+        if lookback_sessions is not None and first_panel is None and coverage_earliest_common is not None:
+            # No usable panel at all (not even the explicit partial fallback):
+            # widen ONCE, bounded to 3*N+30 calendar days before end. A usable
+            # partial panel is never widened -- a wider range cannot add history
+            # to short-history symbols (NU, PFE) but would cross corporate-action
+            # events (CEDEAR ratio changes) that Asistente Casa's identity guard
+            # rejects by design. That guard is deliberately not caught here.
+            wide_start = max(
+                coverage_earliest_common,
+                end - timedelta(days=_WIDEN_CALENDAR_DAYS_PER_SESSION * lookback_sessions + _WIDEN_CALENDAR_DAYS_BASE),
+            )
+            if wide_start < start:
+                start = wide_start
+                start_date = start.isoformat()
+                history_payload = _fetch_history(start_date, end_date)
+                history_response_complete = bool(history_payload.get("complete"))
+                first_panel = _try_panel(history_payload)
+                if first_panel is not None:
+                    closes_raw, closes, risk_weights, coverage_meta = first_panel
         if first_panel is None:
             available = len(
                 pd.DataFrame(

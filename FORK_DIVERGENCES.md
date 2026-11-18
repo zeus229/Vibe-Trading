@@ -18,6 +18,12 @@ that span several sessions. BONOS, FCI and cash are reported as out of scope. No
 module, no grounding rule and no identity rule changed; the tool still takes no symbol
 argument. Top 5 / Top 10 are intentionally not implemented.
 
+**Window widening (PR #96, 2026-11-18).** A usable panel, including the explicit partial
+fallback (short-history holdings such as NU/PFE excluded), is never widened: a wider range
+cannot add history to those symbols and would cross CEDEAR ratio-change events that
+Asistente Casa rejects with `corporate_action_adjustment_required`. That guard is not caught or
+bypassed; when a legitimate window crosses an event the tool fails explicitly.
+
 ## Sync candidate 2026-11-17 (upstream `b74c4c81`) — runtime grounding gate retired
 
 Merge of `HKUDS/Vibe-Trading@b74c4c810d1e597587c9accb2dbd3f99f21359e2` onto fork
@@ -262,8 +268,8 @@ the band to 1% was superseded by this policy and archived.
 - **Asistente Casa integration:** `asistente_casa_portfolio_risk_xray` (canonical weights and
   persisted EOD history from Asistente Casa, strict shared-calendar alignment with an explicit
   high-coverage fallback). `lookback_sessions=N` (merged from PR #23) selects the last N shared
-  sessions after alignment, widens the fetch once to `earliest_common_date`, and fails closed
-  when fewer than N sessions exist.
+  sessions after alignment, widens the fetch at most once (only when no usable panel exists, bounded
+  to `end - (3*N + 30)` calendar days; PR #96) and fails closed when fewer than N sessions exist.
 - **PPI conversation tools** (`calculate_ppi_indicators`, conversation-scoped PPI MCP research),
   with `PPI_TRADING_DISABLED=True` enforced by deployment and all operations read-only.
 - **Compact portfolio snapshot** with canonical daily change, ISO-4217 native currencies and
