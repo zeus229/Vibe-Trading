@@ -24,5 +24,7 @@ def test_system_prompt_does_not_authorize_outlier_rewriting() -> None:
     """An extreme observation alone must never authorize history mutation."""
     from src.agent.context import _SYSTEM_PROMPT
 
-    assert "Do not delete, winsorize, replace" in _SYSTEM_PROMPT
-    assert "only when the anomaly materially changes" in _SYSTEM_PROMPT
+    normalized_prompt = " ".join(_SYSTEM_PROMPT.split())
+
+    assert "Do not delete, winsorize, replace" in normalized_prompt
+    assert "only when the anomaly materially changes" in normalized_prompt
