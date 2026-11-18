@@ -146,7 +146,7 @@ def test_lookback_sessions_rejects_invalid_values(bad_value) -> None:
     assert payload["status"] == "error"
 
 
-def test_lookback_sessions_widens_once_to_coverage_boundary(
+def test_lookback_sessions_widens_once_bounded_when_no_usable_panel(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("ASISTENTE_CASA_BASE_URL", "http://ac.local")
@@ -167,7 +167,7 @@ def test_lookback_sessions_widens_once_to_coverage_boundary(
             }
         if path == "/inversiones/vibe/market-history":
             history_calls.append(params["from"])
-            if params["from"] == full[0]["date"]:
+            if len(history_calls) > 1:  # the widened (bounded) fetch sees the longer history
                 return _history_payload(full)
             return _history_payload(recent)
         raise AssertionError(path)
@@ -184,7 +184,9 @@ def test_lookback_sessions_widens_once_to_coverage_boundary(
 
     assert payload["status"] == "ok"
     assert len(history_calls) == 2
-    assert history_calls[-1] == full[0]["date"]
+    # widened once, bounded to 3*N+30 calendar days before end (PR #96), not to coverage start
+    assert history_calls[-1] == "2026-04-20"  # 2026-09-23 - (3*42+30) days
+    assert history_calls[-1] > full[0]["date"]
     assert payload["meta"]["common_date_count"] == 43  # 42 returns need 43 closes
     assert payload["data"]["inputs"]["aligned_days"] == 43
     assert payload["data"]["inputs"]["return_observations"] == 42
