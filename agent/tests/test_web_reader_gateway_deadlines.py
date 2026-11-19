@@ -34,7 +34,7 @@ def reader_gateway(tmp_path, monkeypatch):
 
 
 def test_slow_web_document_uses_its_own_budget_without_changing_general_deadlines(
-    reader_gateway, monkeypatch,
+    reader_gateway, monkeypatch
 ):
     """A valid 100-ms document must outlive a normal 20-ms market-data source."""
     import src.tools.web_reader_tool as module
@@ -95,7 +95,10 @@ def test_web_document_timeout_is_bounded_and_retains_occupied_slot(
         # the longer request budget. Allow generous scheduler jitter.
         assert elapsed < reader_gateway.config.web_reader_source_timeout + 0.12
         assert elapsed < reader_gateway.config.web_reader_request_timeout
-        assert observed and 0 < observed[0] <= reader_gateway.config.web_reader_source_timeout
+        assert (
+            observed
+            and 0 < observed[0] <= reader_gateway.config.web_reader_source_timeout
+        )
         assert not reader_gateway.source_slots.acquire(blocking=False)
         assert not reader_gateway.document_slots.acquire(blocking=False)
     finally:
@@ -234,8 +237,11 @@ def test_slow_document_does_not_hold_shared_coordinators(tmp_path, monkeypatch):
             # Both shared coordinators and two source slots remain available.
             started = time.monotonic()
             normal = read(
-                gateway, "test:ordinary", {},
-                lambda: {"ok": True}, cacheable=False,
+                gateway,
+                "test:ordinary",
+                {},
+                lambda: {"ok": True},
+                cacheable=False,
             )
             assert normal == {"ok": True}
             assert time.monotonic() - started < gateway.config.request_timeout
