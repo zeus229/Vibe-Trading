@@ -19,6 +19,8 @@ import uuid
 
 owned_source = ContextVar("gateway_owned_source", default=False)
 current_gateway = ContextVar("gateway_current", default=None)
+# Only the explicitly admitted long document acquisition caps its HTTP request.
+document_read_budget = ContextVar("gateway_document_read_budget", default=False)
 
 
 def _usable(value):
@@ -56,6 +58,7 @@ def read(
     cacheable=True,
     source_timeout=None,
     request_timeout=None,
+    long_document=False,
 ):
     """Acquire an existing reader using the shared bounded queues and cache.
 
@@ -69,6 +72,8 @@ def read(
         source_timeout: Optional per-acquisition budget, for explicitly
             slower read-only tools. Does not change gateway concurrency.
         request_timeout: Optional outer deadline, including queue time.
+        long_document: Admit at most one long-running document directly into
+            the bounded source pool, without occupying a coordinator worker.
 
     Returns:
         The original reader result, or a fresh decoded cached JSON value.
@@ -125,6 +130,34 @@ def read(
     parent_deadline = source_deadline.get()
     if parent_deadline is not None:
         until = min(until, parent_deadline)
+
+    if long_document:
+        # A slow renderer must not block both shared coordinators. Admission
+        # is nonblocking, and the document token stays held even if the caller
+        # times out, until the underlying HTTP worker actually completes.
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Data gateway document request expired")
+        if not gateway.document_slots.acquire(blocking=False):
+            raise GatewayBusy("Data gateway document reader busy; retry shortly")
+        try:
+            def acquire_document():
+                document_read_budget.set(True)
+                return acquire()
+
+            future = gateway.submit_source(
+                acquire_document, {}, min(remaining, source_timeout)
+            )
+        except Exception:
+            gateway.document_slots.release()
+            raise
+        future.add_done_callback(lambda _: gateway.document_slots.release())
+        try:
+            return future.result(timeout=max(0, until - time.monotonic()))
+        except TimeoutError as exc:
+            raise TimeoutError(
+                "Data gateway document deadline exceeded; retry shortly"
+            ) from exc
 
     def execute():
         from .scheduling import deadline
@@ -211,6 +244,7 @@ def public_data_read(*, cacheable=True, timeout_profile=None):
                         gateway.config.web_reader_request_timeout
                         if timeout_profile == "web_reader" else None
                     ),
+                    long_document=timeout_profile == "web_reader",
                 )
             except (GatewayError, TimeoutError) as exc:
                 return json.dumps(
