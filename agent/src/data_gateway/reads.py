@@ -48,8 +48,14 @@ def _usable(value):
 
 
 def read(
-    gateway, operation, params, acquire, *, cacheable=True,
-    source_timeout=None, request_timeout=None,
+    gateway,
+    operation,
+    params,
+    acquire,
+    *,
+    cacheable=True,
+    source_timeout=None,
+    request_timeout=None,
 ):
     """Acquire an existing reader using the shared bounded queues and cache.
 
