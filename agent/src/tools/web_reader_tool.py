@@ -171,7 +171,12 @@ def read_url(
     if not allowed:
         return json.dumps({"status": "error", "error": error}, ensure_ascii=False)
 
-    # Invalid selection arguments should not trigger a paid/remote fetch.
+    # Validate selection arguments before making a remote HTTP request.
+    if start_char is not None and (type(start_char) is not int or start_char < 0):
+        return json.dumps({
+            "status": "error",
+            "error": "start_char must be a non-negative integer",
+        }, ensure_ascii=False)
     try:
         _select_document_excerpt("", find, start_char if start_char is None else 0)
     except ValueError as exc:
