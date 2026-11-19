@@ -5,10 +5,12 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import time
 from urllib.parse import urlsplit
 
 import requests
 
+from backtest.loaders.acquisition import source_deadline
 from src.agent.progress import emit_progress
 from src.data_gateway.reads import managed_reader, public_data_read
 from src.agent.tools import BaseTool
@@ -81,7 +83,13 @@ def read_url(url: str, no_cache: bool = False) -> str:
     if not allowed:
         return json.dumps({"status": "error", "error": error}, ensure_ascii=False)
 
+    timeout = _TIMEOUT
     try:
+        # Use the remaining gateway source budget for the HTTP transport as
+        # well. A timed-out reader cannot free its source slot until GET ends.
+        until = source_deadline.get()
+        if until is not None:
+            timeout = min(_TIMEOUT, max(0.001, until - time.monotonic()))
         headers = {"Accept": "text/markdown"}
         if no_cache:
             headers["x-no-cache"] = "true"
@@ -92,7 +100,7 @@ def read_url(url: str, no_cache: bool = False) -> str:
         resp = requests.get(
             f"{_JINA_PREFIX}{target_url}",
             headers=headers,
-            timeout=_TIMEOUT,
+            timeout=timeout,
         )
         emit_progress("parsing", message="extracting markdown")
         if resp.status_code != 200:
@@ -125,7 +133,7 @@ def read_url(url: str, no_cache: bool = False) -> str:
         return json.dumps(result, ensure_ascii=False)
 
     except requests.Timeout:
-        return json.dumps({"status": "error", "error": f"Request timed out ({_TIMEOUT}s)"}, ensure_ascii=False)
+        return json.dumps({"status": "error", "error": f"Request timed out ({timeout:g}s)"}, ensure_ascii=False)
     except Exception as exc:
         logger.warning("read_url request failed: %s", exc)
         return json.dumps(
@@ -163,7 +171,7 @@ class WebReaderTool(BaseTool):
     # remains the explicit freshness escape hatch and bypasses that replay.
     replay_after_compaction = True
 
-    @public_data_read(cacheable=False)
+    @public_data_read(cacheable=False, timeout_profile="web_reader")
     def execute(self, **kwargs) -> str:
         """Fetch web page."""
         try:
