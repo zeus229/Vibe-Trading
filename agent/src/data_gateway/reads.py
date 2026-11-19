@@ -145,15 +145,22 @@ def read(
                 document_read_budget.set(True)
                 return acquire()
 
+            # The caller and worker must share the shorter source deadline.
+            # Waiting for the outer request deadline would report a source
+            # timeout only after the (potentially much longer) queue budget.
+            source_wait = min(remaining, source_timeout)
+            wait_until = time.monotonic() + source_wait
             future = gateway.submit_source(
-                acquire_document, {}, min(remaining, source_timeout)
+                acquire_document, {}, source_wait
             )
         except Exception:
             gateway.document_slots.release()
             raise
         future.add_done_callback(lambda _: gateway.document_slots.release())
         try:
-            return future.result(timeout=max(0, until - time.monotonic()))
+            return future.result(
+                timeout=max(0, min(until, wait_until) - time.monotonic())
+            )
         except TimeoutError as exc:
             raise TimeoutError(
                 "Data gateway document deadline exceeded; retry shortly"
