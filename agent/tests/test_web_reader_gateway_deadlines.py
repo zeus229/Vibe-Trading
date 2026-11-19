@@ -22,7 +22,7 @@ def reader_gateway(tmp_path, monkeypatch):
             cache_dir=tmp_path,
             source_timeout=0.02,
             request_timeout=0.07,
-            web_reader_source_timeout=0.35,
+            web_reader_source_timeout=0.20,
             web_reader_request_timeout=0.45,
             workers=1,
         ),
@@ -63,7 +63,9 @@ def test_slow_web_document_uses_its_own_budget_without_changing_general_deadline
     assert reader_gateway.config.request_timeout == 0.07
 
 
-def test_web_document_timeout_is_bounded_and_retains_occupied_slot(reader_gateway, monkeypatch):
+def test_web_document_timeout_is_bounded_and_retains_occupied_slot(
+    reader_gateway, monkeypatch
+):
     """A stalled external fetch remains in the shared slot until it actually exits."""
     import src.tools.web_reader_tool as module
 
@@ -89,14 +91,67 @@ def test_web_document_timeout_is_bounded_and_retains_occupied_slot(reader_gatewa
         assert entered.is_set()
         assert response["status"] == "error"
         assert response["error_code"] == "data_gateway_unavailable"
+        # The caller must return around the source deadline, not wait for
+        # the longer request budget. Allow generous scheduler jitter.
+        assert elapsed < reader_gateway.config.web_reader_source_timeout + 0.12
         assert elapsed < reader_gateway.config.web_reader_request_timeout
         assert observed and 0 < observed[0] <= reader_gateway.config.web_reader_source_timeout
         assert not reader_gateway.source_slots.acquire(blocking=False)
+        assert not reader_gateway.document_slots.acquire(blocking=False)
     finally:
         release.set()
 
 
-def test_reader_preserves_upstream_http_error_without_retry(reader_gateway, monkeypatch):
+def test_document_source_deadline_precedes_longer_request_deadline(
+    tmp_path, monkeypatch
+):
+    """A blocked fetch returns at the 100ms source limit, not the 250ms request limit."""
+    import src.data_gateway as gateway_module
+    import src.tools.web_reader_tool as module
+
+    entered = threading.Event()
+    release = threading.Event()
+    gateway = MarketDataGateway(
+        Config(
+            cache_dir=tmp_path,
+            workers=1,
+            source_timeout=0.02,
+            request_timeout=0.05,
+            web_reader_source_timeout=0.10,
+            web_reader_request_timeout=0.25,
+        ),
+        {},
+    )
+    monkeypatch.setattr(gateway_module, "get_gateway", lambda: gateway)
+
+    def get(url, *, headers, timeout):
+        entered.set()
+        release.wait(1)
+
+        class Response:
+            status_code = 200
+            text = "Title: Late document"
+
+        return Response()
+
+    monkeypatch.setattr(module.requests, "get", get)
+    try:
+        started = time.monotonic()
+        result = json.loads(WebReaderTool().execute(url="https://example.org/late"))
+        elapsed = time.monotonic() - started
+        assert entered.is_set()
+        assert result["error_code"] == "data_gateway_unavailable"
+        assert elapsed < 0.20
+        assert not gateway.source_slots.acquire(blocking=False)
+        assert not gateway.document_slots.acquire(blocking=False)
+    finally:
+        release.set()
+        gateway.close()
+
+
+def test_reader_preserves_upstream_http_error_without_retry(
+    reader_gateway, monkeypatch
+):
     import src.tools.web_reader_tool as module
 
     calls = []
@@ -117,7 +172,9 @@ def test_reader_preserves_upstream_http_error_without_retry(reader_gateway, monk
     assert len(calls) == 1
 
 
-def test_reader_rejects_private_targets_without_fetch(reader_gateway, monkeypatch):
+def test_reader_rejects_private_targets_without_fetch(
+    reader_gateway, monkeypatch
+):
     import src.tools.web_reader_tool as module
 
     def must_not_fetch(*args, **kwargs):
@@ -191,7 +248,7 @@ def test_slow_document_does_not_hold_shared_coordinators(tmp_path, monkeypatch):
 
 
 def test_expired_parent_deadline_prevents_any_http_dispatch(
-    reader_gateway, monkeypatch,
+    reader_gateway, monkeypatch
 ):
     """A nested request must fail before GET once its parent's deadline elapsed."""
     import src.tools.web_reader_tool as module
@@ -217,7 +274,9 @@ def test_expired_parent_deadline_prevents_any_http_dispatch(
         source_deadline.reset(parent)
 
 
-def test_direct_read_url_retains_legacy_http_timeout(reader_gateway, monkeypatch):
+def test_direct_read_url_retains_legacy_http_timeout(
+    reader_gateway, monkeypatch
+):
     """The 30s transport contract for direct read_url consumers is unchanged."""
     import src.tools.web_reader_tool as module
 
