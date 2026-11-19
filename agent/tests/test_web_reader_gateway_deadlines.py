@@ -175,9 +175,7 @@ def test_reader_preserves_upstream_http_error_without_retry(
     assert len(calls) == 1
 
 
-def test_reader_rejects_private_targets_without_fetch(
-    reader_gateway, monkeypatch
-):
+def test_reader_rejects_private_targets_without_fetch(reader_gateway, monkeypatch):
     import src.tools.web_reader_tool as module
 
     def must_not_fetch(*args, **kwargs):
@@ -280,9 +278,7 @@ def test_expired_parent_deadline_prevents_any_http_dispatch(
         source_deadline.reset(parent)
 
 
-def test_direct_read_url_retains_legacy_http_timeout(
-    reader_gateway, monkeypatch
-):
+def test_direct_read_url_retains_legacy_http_timeout(reader_gateway, monkeypatch):
     """The 30s transport contract for direct read_url consumers is unchanged."""
     import src.tools.web_reader_tool as module
 
