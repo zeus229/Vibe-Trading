@@ -52,6 +52,8 @@ class MarketDataGateway:
         self.pacer = SourcePacer(config.source_spacing)
         self.sources = ThreadPoolExecutor(max_workers=config.workers, thread_name_prefix="gateway-source")
         self.source_slots = threading.BoundedSemaphore(config.workers)
+        # One slow document at a time; never occupy a shared coordinator.
+        self.document_slots = threading.BoundedSemaphore(1)
         # Fan-out uses existing capacity while leaving room for one background
         # call and one interactive quote/option call at the default four slots.
         self.fanout_slots = threading.BoundedSemaphore(max(1, config.workers - 2))
