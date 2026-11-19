@@ -12,7 +12,7 @@ import requests
 
 from backtest.loaders.acquisition import source_deadline
 from src.agent.progress import emit_progress
-from src.data_gateway.reads import managed_reader, public_data_read
+from src.data_gateway.reads import document_read_budget, managed_reader, public_data_read
 from src.agent.tools import BaseTool
 from src.tools._arguments import boolean_argument
 from src.security.scanner import with_security_warnings
@@ -89,7 +89,11 @@ def read_url(url: str, no_cache: bool = False) -> str:
         # well. A timed-out reader cannot free its source slot until GET ends.
         until = source_deadline.get()
         if until is not None:
-            timeout = min(_TIMEOUT, max(0.001, until - time.monotonic()))
+            remaining = until - time.monotonic()
+            if remaining <= 0:
+                raise TimeoutError("Document read deadline expired before HTTP dispatch")
+            if document_read_budget.get():
+                timeout = min(_TIMEOUT, remaining)
         headers = {"Accept": "text/markdown"}
         if no_cache:
             headers["x-no-cache"] = "true"
