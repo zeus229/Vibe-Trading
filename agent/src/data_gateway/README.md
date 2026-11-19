@@ -212,10 +212,16 @@ Internal injected resolver hooks retain their existing integration contract.
 Shared HTTP clients and bundled skill examples enter the same acquisition
 boundary. A nested provider operation already inside a gateway source slot
 runs inline; it never queues behind itself. Most sources retain a 6-second source timeout and a 15-second request deadline.
-The opt-in `read_url` reader alone uses bounded document budgets (25/30
-seconds by default). It retains the same 4 source slots and 16 pending requests,
-never persistently caches external documents, and caps its Jina HTTP timeout to
-the remaining source budget. Parent deadlines, when present, remain binding.
+The opt-in `read_url` Agent tool uses bounded document budgets (25/30
+seconds by default). At most one long document is admitted at a time, directly
+to the shared bounded source pool rather than through its two coordinators;
+concurrent long-document attempts are rejected promptly without blocking normal
+reads. Its source slot and document admission remain held until the underlying
+fetch completes, even if its caller times out. It uses the existing source worker
+and pending limits, never persistently caches external documents, and caps the
+Jina HTTP timeout to the remaining source budget. Parent deadlines, when present,
+remain binding. The standalone `read_url()` helper keeps its original 30-second
+HTTP timeout contract, still subject to the ordinary gateway source deadline.
 Timed-out source work retains its slot until it actually ends. Curl and POST
 transports now also cap their socket timeout to the remaining source budget.
 Large opaque results are not silently truncated to meet the 2 MiB entry limit;
