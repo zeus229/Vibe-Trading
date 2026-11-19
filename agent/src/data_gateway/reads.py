@@ -19,6 +19,8 @@ import uuid
 
 owned_source = ContextVar("gateway_owned_source", default=False)
 current_gateway = ContextVar("gateway_current", default=None)
+# Only the explicitly admitted long document acquisition caps its HTTP request.
+document_read_budget = ContextVar("gateway_document_read_budget", default=False)
 
 
 def _usable(value):
@@ -47,7 +49,17 @@ def _usable(value):
     return not incomplete(value)
 
 
-def read(gateway, operation, params, acquire, *, cacheable=True):
+def read(
+    gateway,
+    operation,
+    params,
+    acquire,
+    *,
+    cacheable=True,
+    source_timeout=None,
+    request_timeout=None,
+    long_document=False,
+):
     """Acquire an existing reader using the shared bounded queues and cache.
 
     Args:
@@ -57,6 +69,11 @@ def read(gateway, operation, params, acquire, *, cacheable=True):
         acquire: Zero-argument provider operation with its existing return type.
         cacheable: Whether successful JSON snapshots may be reused. Opaque
             results pass through without truncation or persistent retention.
+        source_timeout: Optional per-acquisition budget, for explicitly
+            slower read-only tools. Does not change gateway concurrency.
+        request_timeout: Optional outer deadline, including queue time.
+        long_document: Admit at most one long-running document directly into
+            the bounded source pool, without occupying a coordinator worker.
 
     Returns:
         The original reader result, or a fresh decoded cached JSON value.
@@ -68,6 +85,10 @@ def read(gateway, operation, params, acquire, *, cacheable=True):
     """
     from .service import GatewayBusy
 
+    if source_timeout is None:
+        source_timeout = gateway.config.source_timeout
+    if request_timeout is None:
+        request_timeout = gateway.config.request_timeout
     if owned_source.get():
         return acquire()
     # A source probe invoked by an existing coordinator must use that gateway's
@@ -77,9 +98,9 @@ def read(gateway, operation, params, acquire, *, cacheable=True):
 
         until = deadline.get()
         remaining = (
-            gateway.config.source_timeout
+            source_timeout
             if until is None
-            else min(gateway.config.source_timeout, until - time.monotonic())
+            else min(source_timeout, until - time.monotonic())
         )
         if remaining <= 0:
             raise TimeoutError("Data request expired before nested acquisition")
@@ -105,10 +126,44 @@ def read(gateway, operation, params, acquire, *, cacheable=True):
         return cached["payload"]["value"]
     from backtest.loaders.acquisition import source_deadline
 
-    until = time.monotonic() + gateway.config.request_timeout
+    until = time.monotonic() + request_timeout
     parent_deadline = source_deadline.get()
     if parent_deadline is not None:
         until = min(until, parent_deadline)
+
+    if long_document:
+        # A slow renderer must not block both shared coordinators. Admission
+        # is nonblocking, and the document token stays held even if the caller
+        # times out, until the underlying HTTP worker actually completes.
+        remaining = until - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("Data gateway document request expired")
+        if not gateway.document_slots.acquire(blocking=False):
+            raise GatewayBusy("Data gateway document reader busy; retry shortly")
+        try:
+
+            def acquire_document():
+                document_read_budget.set(True)
+                return acquire()
+
+            # The caller and worker must share the shorter source deadline.
+            # Waiting for the outer request deadline would report a source
+            # timeout only after the (potentially much longer) queue budget.
+            source_wait = min(remaining, source_timeout)
+            wait_until = time.monotonic() + source_wait
+            future = gateway.submit_source(acquire_document, {}, source_wait)
+        except Exception:
+            gateway.document_slots.release()
+            raise
+        future.add_done_callback(lambda _: gateway.document_slots.release())
+        try:
+            return future.result(
+                timeout=max(0, min(until, wait_until) - time.monotonic())
+            )
+        except TimeoutError as exc:
+            raise TimeoutError(
+                "Data gateway document deadline exceeded; retry shortly"
+            ) from exc
 
     def execute():
         from .scheduling import deadline
@@ -118,7 +173,7 @@ def read(gateway, operation, params, acquire, *, cacheable=True):
         remaining = until - time.monotonic()
         if remaining <= 0:
             raise TimeoutError("Data request expired in queue")
-        value = gateway.invoke(lambda: acquire(), {}, min(remaining, gateway.config.source_timeout))
+        value = gateway.invoke(lambda: acquire(), {}, min(remaining, source_timeout))
         fits = not isinstance(value, str) or len(value) <= gateway.config.entry_bytes
         if cacheable and fits and _usable(value):
             # iterencode avoids building an oversized serialized duplicate of
@@ -159,8 +214,11 @@ def read(gateway, operation, params, acquire, *, cacheable=True):
         raise TimeoutError("Data gateway deadline exceeded; retry shortly") from exc
 
 
-def public_data_read(*, cacheable=True):
+def public_data_read(*, cacheable=True, timeout_profile=None):
     """Decorate a public JSON data tool without changing its public schema."""
+
+    if timeout_profile not in (None, "web_reader"):
+        raise ValueError("unsupported public data reader timeout profile")
 
     def decorate(function):
         signature = inspect.signature(function)
@@ -176,13 +234,23 @@ def public_data_read(*, cacheable=True):
             bound.apply_defaults()
             params = {k: v for k, v in bound.arguments.items() if k != "self"}
             operation = f"tool:{type(self).__module__}.{type(self).__qualname__}"
+            gateway = current_gateway.get() or get_gateway()
             try:
                 return read(
-                    (current_gateway.get() or get_gateway()),
+                    gateway,
                     operation,
                     params,
                     lambda: function(self, *args, **kwargs),
                     cacheable=cacheable,
+                    source_timeout=(
+                        gateway.config.web_reader_source_timeout
+                        if timeout_profile == "web_reader" else None
+                    ),
+                    request_timeout=(
+                        gateway.config.web_reader_request_timeout
+                        if timeout_profile == "web_reader" else None
+                    ),
+                    long_document=timeout_profile == "web_reader",
                 )
             except (GatewayError, TimeoutError) as exc:
                 return json.dumps(
