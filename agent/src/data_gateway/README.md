@@ -117,6 +117,8 @@ Delta remains missing. No synthetic substitute is generated when sources fail.
 | `SOURCE_TIMEOUT` | 6 s | Wait budget per source attempt |
 | `HTTP_BATCH_SYMBOLS` | 4 | Symbols per serial HTTP-loader invocation and scan request (capped at eight); direct BaoStock batches may share one eight-symbol session |
 | `REQUEST_TIMEOUT` | 15 s | Overall acquisition wait budget |
+| `WEB_READER_SOURCE_TIMEOUT` | 25 s | Dedicated per-source budget for opt-in `read_url` document fetches |
+| `WEB_READER_REQUEST_TIMEOUT` | 30 s | Outer document-fetch budget, including shared queue time |
 | `HTTP_TIMEOUT` | 5 s | Cboe socket/read deadline |
 | `TTL` / `STALE_TTL` | 60 / 900 s | Cache freshness / maximum stale reuse |
 | `COOLDOWN` / `HEALTH_TTL` | 30 / 300 s | Failure recovery / local route memory lifetime |
@@ -209,8 +211,11 @@ Internal injected resolver hooks retain their existing integration contract.
 
 Shared HTTP clients and bundled skill examples enter the same acquisition
 boundary. A nested provider operation already inside a gateway source slot
-runs inline; it never queues behind itself. Source timeout remains 6 seconds,
-request deadline 15 seconds, with 4 source slots and 16 pending requests.
+runs inline; it never queues behind itself. Most sources retain a 6-second source timeout and a 15-second request deadline.
+The opt-in `read_url` reader alone uses bounded document budgets (25/30
+seconds by default). It retains the same 4 source slots and 16 pending requests,
+never persistently caches external documents, and caps its Jina HTTP timeout to
+the remaining source budget. Parent deadlines, when present, remain binding.
 Timed-out source work retains its slot until it actually ends. Curl and POST
 transports now also cap their socket timeout to the remaining source budget.
 Large opaque results are not silently truncated to meet the 2 MiB entry limit;
