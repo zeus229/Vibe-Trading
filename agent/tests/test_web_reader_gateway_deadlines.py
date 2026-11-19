@@ -1,5 +1,6 @@
 """Web-reader gateway deadline regressions; no external network access."""
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import threading
 import time
@@ -126,3 +127,112 @@ def test_reader_rejects_private_targets_without_fetch(reader_gateway, monkeypatc
     result = json.loads(WebReaderTool().execute(url="http://127.0.0.1/secret"))
     assert result["status"] == "error"
     assert result["error"] == "target URL is not allowed"
+
+
+def test_slow_document_does_not_hold_shared_coordinators(tmp_path, monkeypatch):
+    """An admitted slow document cannot starve ordinary requests or a second coordinator."""
+    import src.data_gateway as gateway_module
+    import src.tools.web_reader_tool as module
+    from src.data_gateway.reads import read
+
+    entered, release = threading.Event(), threading.Event()
+    gateway = MarketDataGateway(
+        Config(
+            cache_dir=tmp_path,
+            workers=3,
+            source_timeout=0.08,
+            request_timeout=0.2,
+            web_reader_source_timeout=0.4,
+            web_reader_request_timeout=0.5,
+        ),
+        {},
+    )
+    monkeypatch.setattr(gateway_module, "get_gateway", lambda: gateway)
+
+    def get(url, *, headers, timeout):
+        entered.set()
+        release.wait(1)
+
+        class Response:
+            status_code = 200
+            text = "Title: Released source"
+
+        return Response()
+
+    monkeypatch.setattr(module.requests, "get", get)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            first = pool.submit(WebReaderTool().execute, url="https://example.org/slow")
+            assert entered.wait(1)
+            # An additional long reader is rejected without consuming another
+            # coordinator or waiting for its own long timeout.
+            second_started = time.monotonic()
+            second = json.loads(
+                WebReaderTool().execute(url="https://example.org/another")
+            )
+            assert second["error_code"] == "data_gateway_unavailable"
+            assert "busy" in second["error"]
+            assert time.monotonic() - second_started < 0.1
+
+            # Both shared coordinators and two source slots remain available.
+            started = time.monotonic()
+            normal = read(
+                gateway, "test:ordinary", {},
+                lambda: {"ok": True}, cacheable=False,
+            )
+            assert normal == {"ok": True}
+            assert time.monotonic() - started < gateway.config.request_timeout
+            assert not first.done()
+            release.set()
+            assert json.loads(first.result(timeout=1))["status"] == "ok"
+    finally:
+        release.set()
+        gateway.close()
+
+
+def test_expired_parent_deadline_prevents_any_http_dispatch(
+    reader_gateway, monkeypatch,
+):
+    """A nested request must fail before GET once its parent's deadline elapsed."""
+    import src.tools.web_reader_tool as module
+    from backtest.loaders.acquisition import source_deadline
+    from src.data_gateway.reads import owned_source
+
+    calls = []
+
+    def get(*args, **kwargs):
+        calls.append(1)
+        pytest.fail("expired parent deadline dispatched an HTTP request")
+
+    monkeypatch.setattr(module.requests, "get", get)
+    parent = source_deadline.set(time.monotonic() - 1)
+    owned = owned_source.set(True)
+    try:
+        response = json.loads(module.read_url("https://example.org/expired"))
+        assert response["status"] == "error"
+        assert "deadline expired" in response["error"]
+        assert calls == []
+    finally:
+        owned_source.reset(owned)
+        source_deadline.reset(parent)
+
+
+def test_direct_read_url_retains_legacy_http_timeout(reader_gateway, monkeypatch):
+    """The 30s transport contract for direct read_url consumers is unchanged."""
+    import src.tools.web_reader_tool as module
+
+    observed = []
+
+    def get(url, *, headers, timeout):
+        observed.append(timeout)
+
+        class Response:
+            status_code = 200
+            text = "Title: Direct reader"
+
+        return Response()
+
+    monkeypatch.setattr(module.requests, "get", get)
+    result = json.loads(module.read_url("https://example.org/direct"))
+    assert result["status"] == "ok"
+    assert observed == [30]
