@@ -141,6 +141,7 @@ def read(
         if not gateway.document_slots.acquire(blocking=False):
             raise GatewayBusy("Data gateway document reader busy; retry shortly")
         try:
+
             def acquire_document():
                 document_read_budget.set(True)
                 return acquire()
@@ -150,9 +151,7 @@ def read(
             # timeout only after the (potentially much longer) queue budget.
             source_wait = min(remaining, source_timeout)
             wait_until = time.monotonic() + source_wait
-            future = gateway.submit_source(
-                acquire_document, {}, source_wait
-            )
+            future = gateway.submit_source(acquire_document, {}, source_wait)
         except Exception:
             gateway.document_slots.release()
             raise
