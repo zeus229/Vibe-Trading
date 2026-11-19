@@ -32,6 +32,10 @@ class Config:
     http_batch_symbols: int = 4
     source_timeout: float = 6
     request_timeout: float = 15
+    # Document reads through remote renderers can take longer than quote APIs.
+    # These budgets opt in only for read_url; source slots remain bounded.
+    web_reader_source_timeout: float = 25
+    web_reader_request_timeout: float = 30
     ttl: float = 60
     stale_ttl: float = 900
     cooldown: float = 30
@@ -79,6 +83,8 @@ class Config:
             http_batch_symbols=int(number("HTTP_BATCH_SYMBOLS", 4, 1, 8)),
             source_timeout=number("SOURCE_TIMEOUT", 6, 0.1, 30),
             request_timeout=number("REQUEST_TIMEOUT", 15, 0.2, 60),
+            web_reader_source_timeout=number("WEB_READER_SOURCE_TIMEOUT", 25, 0.1, 30),
+            web_reader_request_timeout=number("WEB_READER_REQUEST_TIMEOUT", 30, 0.2, 60),
             ttl=number("TTL", 60, 1, 3600),
             stale_ttl=number("STALE_TTL", 900, 1, 86400),
             cooldown=number("COOLDOWN", 30, 1, 300),
