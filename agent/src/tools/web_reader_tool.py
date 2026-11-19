@@ -5,6 +5,7 @@ from __future__ import annotations
 import ipaddress
 import json
 import logging
+import re
 import time
 from urllib.parse import urlsplit
 
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 _JINA_PREFIX = "https://r.jina.ai/"
 _TIMEOUT = 30
 _MAX_LENGTH = 8000
+_MAX_FIND_TERMS = 4
+_MAX_FIND_TERM_LENGTH = 120
+_MAX_HITS_PER_TERM = 2
+_FIND_CONTEXT_CHARS = 425
 _CACHED_MARKER = "Warning: This is a cached snapshot"
 
 
@@ -62,8 +67,88 @@ def _url_allowed(url: str) -> tuple[bool, str]:
     return True, ""
 
 
+
+def _select_document_excerpt(text: str, find: list[str] | None, start_char: int | None) -> dict:
+    """Select bounded, source-positioned excerpts without returning the whole page.
+
+    All offsets are Unicode character indices in the original Jina response.
+    Search terms are literal, case-insensitive strings (not regex expressions).
+    """
+    if find is not None and start_char is not None:
+        raise ValueError("find and start_char cannot be combined")
+    if find is not None:
+        if (
+            not isinstance(find, list)
+            or not 1 <= len(find) <= _MAX_FIND_TERMS
+            or any(
+                not isinstance(term, str)
+                or not 1 <= len(term.strip()) <= _MAX_FIND_TERM_LENGTH
+                for term in find
+            )
+        ):
+            raise ValueError("find must contain 1 to 4 non-empty strings of at most 120 characters")
+        sections = []
+        counts = {}
+        for term in find:
+            term = term.strip()
+            matches = list(re.finditer(re.escape(term), text, flags=re.IGNORECASE))
+            counts[term] = len(matches)
+            for match in matches[:_MAX_HITS_PER_TERM]:
+                start = max(0, match.start() - _FIND_CONTEXT_CHARS)
+                end = min(len(text), match.end() + _FIND_CONTEXT_CHARS)
+                sections.append({
+                    "term": term,
+                    "match_start": match.start(),
+                    "start": start,
+                    "end": end,
+                    "text": text[start:end],
+                })
+        sections.sort(key=lambda item: item["match_start"])
+        chunks = []
+        for section in sections:
+            label = (
+                f"[{section['term']} at char {section['match_start']}; "
+                f"excerpt {section['start']}:{section['end']}]"
+            )
+            candidate = label + "\n" + section["text"]
+            remaining = _MAX_LENGTH - sum(len(part) for part in chunks) - 2 * len(chunks)
+            if remaining <= len(label) + 1:
+                break
+            chunks.append(candidate[:remaining])
+        return {
+            "content": "\n\n".join(chunks),
+            "find": find,
+            "match_counts": counts,
+            "excerpts": [
+                {key: value for key, value in section.items() if key != "text"}
+                for section in sections[:len(chunks)]
+            ],
+            "truncated": len(text) > len("\n\n".join(chunks)),
+        }
+    if start_char is not None:
+        if type(start_char) is not int or not 0 <= start_char <= len(text):
+            raise ValueError("start_char must be an integer within the document length")
+        end = min(len(text), start_char + _MAX_LENGTH)
+        return {
+            "content": text[start_char:end],
+            "range_start": start_char,
+            "range_end": end,
+            "truncated": start_char != 0 or end != len(text),
+        }
+    if len(text) > _MAX_LENGTH:
+        return {
+            "content": text[:_MAX_LENGTH] + f"\n\n... (truncated, total {len(text)} chars)",
+        }
+    return {"content": text}
+
+
 @managed_reader
-def read_url(url: str, no_cache: bool = False) -> str:
+def read_url(
+    url: str,
+    no_cache: bool = False,
+    find: list[str] | None = None,
+    start_char: int | None = None,
+) -> str:
     """Fetch web page content via the Jina Reader API.
 
     The full URL (including query string) is sent to the third-party Jina
@@ -73,6 +158,9 @@ def read_url(url: str, no_cache: bool = False) -> str:
     Args:
         url: Target URL.
         no_cache: When true, ask the reader for a fresh (uncached) fetch.
+        find: Optional literal phrases to find in the full response, returning
+            brief source-positioned excerpts instead of the first 8,000 chars.
+        start_char: Optional source character offset for reading later sections.
 
     Returns:
         JSON result with title, content, url; ``cached: true`` is added
@@ -82,6 +170,17 @@ def read_url(url: str, no_cache: bool = False) -> str:
     allowed, error = _url_allowed(target_url)
     if not allowed:
         return json.dumps({"status": "error", "error": error}, ensure_ascii=False)
+
+    # Validate selection arguments before making a remote HTTP request.
+    if start_char is not None and (type(start_char) is not int or start_char < 0):
+        return json.dumps({
+            "status": "error",
+            "error": "start_char must be a non-negative integer",
+        }, ensure_ascii=False)
+    try:
+        _select_document_excerpt("", find, start_char if start_char is None else 0)
+    except ValueError as exc:
+        return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
 
     timeout = _TIMEOUT
     try:
@@ -121,15 +220,17 @@ def read_url(url: str, no_cache: bool = False) -> str:
                 title = line[6:].strip()
                 break
 
-        if len(text) > _MAX_LENGTH:
-            text = text[:_MAX_LENGTH] + f"\n\n... (truncated, total {len(resp.text)} chars)"
+        try:
+            selection = _select_document_excerpt(text, find, start_char)
+        except ValueError as exc:
+            return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
 
         result = {
             "status": "ok",
             "title": title,
             "url": target_url,
-            "content": text,
             "length": len(resp.text),
+            **selection,
         }
         if _CACHED_MARKER in resp.text:
             result["cached"] = True
@@ -150,7 +251,12 @@ class WebReaderTool(BaseTool):
     """Web reader tool."""
 
     name = "read_url"
-    description = "Fetch web page content: provide a URL and receive the page as Markdown text. Useful for reading docs, articles, API references, etc."
+    description = (
+        "Read a public web page as Markdown. For long financial filings and "
+        "reports, use optional find phrases to extract matching sections with "
+        "character offsets, or start_char to inspect a later window. Standard "
+        "reads return only the first 8,000 characters."
+    )
     parameters = {
         "type": "object",
         "properties": {
@@ -164,6 +270,26 @@ class WebReaderTool(BaseTool):
                     "previous result was compacted or replayed."
                 ),
                 "default": False,
+            },
+            "find": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional 1-4 literal phrases to locate anywhere in a long "
+                    "page (such as 'revenue' or 'net income'). Returns brief "
+                    "excerpts with original character offsets, not only the start "
+                    "of the page. Use this before another broad read."
+                ),
+                "maxItems": 4,
+            },
+            "start_char": {
+                "type": "integer",
+                "description": (
+                    "Optional original character offset for the next 8,000-character "
+                    "window. Use an excerpt's start/end offsets to inspect tables "
+                    "around an identified phrase. Cannot combine with find."
+                ),
+                "minimum": 0,
             },
         },
         "required": ["url"],
@@ -182,4 +308,9 @@ class WebReaderTool(BaseTool):
             no_cache = boolean_argument(kwargs.get("no_cache", False), field="no_cache")
         except ValueError as exc:
             return json.dumps({"status": "error", "error": str(exc)}, ensure_ascii=False)
-        return read_url(kwargs["url"], no_cache=no_cache)
+        return read_url(
+            kwargs["url"],
+            no_cache=no_cache,
+            find=kwargs.get("find"),
+            start_char=kwargs.get("start_char"),
+        )

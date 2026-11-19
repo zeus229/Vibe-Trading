@@ -175,6 +175,30 @@ full-expiration coverage, network-route learning/expiry, historical fallback,
 cache cleanup, timeouts and authentication. One-machine validation is not a
 global network SLA.
 
+### Selective reading of long public pages (candidate, not deployed)
+
+`read_url` traditionally returns at most the first 8,000 characters of the
+Jina-rendered page; this is insufficient to inspect the body of a financial
+filing whose table of contents fills the initial excerpt. The optional
+`find=["Revenue", "Net income"]` parameter searches the **full response text**
+for literal, case-insensitive phrases and returns bounded excerpts (up to two
+per term, with original character offsets and counts). Alternatively,
+`start_char=N` returns a later 8,000-character window. The ordinary
+`read_url(url)` response and truncation remain unchanged. Search/offset
+validation occurs before HTTP, and the existing target-URL restrictions,
+security scan, 25/30-second document budgets and one-document admission apply
+to **all** modes. The response identifies all excerpts as raw source text,
+not validated accounting facts; currency, period, and quarterly vs year-to-date
+columns must still be checked before citing numbers.
+
+This first iteration does **not** cache complete documents or deduplicate
+concurrent identical URLs. Every request fetches Jina again, so the agent
+should first ask for multiple relevant phrases in one call and refrain from
+parallel repeated reads. `busy` and general `web_search` deadline problems
+remain separate follow-up investigations. Until validated with a real
+conversational 3Q26 YPF flow, this is a candidate only, **not** an upstream
+contribution or a production result.
+
 ### Shared consumers (2026-11-15)
 
 The existing page routes, CLI and Agent/MCP market-data tools now share the
